@@ -3,7 +3,7 @@ const userService = require('./user.service');
 const ApiError = require('../utils/ApiError');
 const httpStatus = require('http-status');
 const bcrypt = require('bcrypt');
-const {abi: polygonTokenContractABI} = require('./MyToken.json');
+const {abi: polygonTokenContractABI} = require('./myToken.json');
 const {ethers} = require('ethers');
 const config = require('../config/config');
 
