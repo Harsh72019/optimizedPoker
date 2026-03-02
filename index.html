@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Poker Socket Test</title>
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+  <style>
+    body { font-family: monospace; background: #111; color: #eee; padding: 20px; }
+    .container { display: flex; gap: 20px; }
+    .panel {
+      width: 50%;
+      border: 1px solid #444;
+      padding: 10px;
+      background: #1a1a1a;
+      border-radius: 8px;
+    }
+    button { 
+      margin: 3px; 
+      padding: 8px 12px;
+      background: #333;
+      color: #fff;
+      border: 1px solid #555;
+      cursor: pointer;
+      border-radius: 4px;
+    }
+    button:hover { background: #444; }
+    textarea {
+      width: 100%;
+      height: 400px;
+      background: #000;
+      color: #0f0;
+      font-size: 11px;
+      border: 1px solid #333;
+      padding: 8px;
+      font-family: monospace;
+    }
+    input { 
+      width: 100%; 
+      margin-bottom: 8px;
+      padding: 8px;
+      background: #222;
+      color: #fff;
+      border: 1px solid #444;
+      border-radius: 4px;
+    }
+    .status { 
+      padding: 5px; 
+      margin: 5px 0;
+      border-radius: 4px;
+      font-size: 12px;
+    }
+    .connected { background: #1a4d1a; }
+    .disconnected { background: #4d1a1a; }
+    .btn-group { margin: 10px 0; border-top: 1px solid #333; padding-top: 10px; }
+    .btn-group label { display: block; margin: 5px 0; color: #888; font-size: 11px; }
+  </style>
+</head>
+<body>
+
+<h2>🃏 Poker WebSocket Test Client</h2>
+
+<div class="container">
+
+  <!-- PLAYER A -->
+  <div class="panel">
+    <h3>Player A</h3>
+    <div id="statusA" class="status disconnected">⚫ Disconnected</div>
+    <input id="tokenA" placeholder="Paste JWT Token Here" />
+    <input id="tableA" placeholder="Table ID" value="table1"/>
+    <input id="buyinA" placeholder="Buy In" value="1000"/>
+
+    <div class="btn-group">
+      <label>Connection</label>
+      <button onclick="connect('A')">🔌 Connect</button>
+      <button onclick="disconnect('A')">❌ Disconnect</button>
+    </div>
+
+    <div class="btn-group">
+      <label>Table Actions</label>
+      <button onclick="joinTable('A')">🪑 Join Table</button>
+      <button onclick="leaveTable('A')">🚪 Leave Table</button>
+    </div>
+
+    <div class="btn-group">
+      <label>Player Status</label>
+      <button onclick="setAway('A')">💤 Set Away</button>
+      <button onclick="setBack('A')">👋 Set Back</button>
+    </div>
+
+    <div class="btn-group">
+      <label>Game Actions</label>
+      <button onclick="action('A','check')">✅ Check</button>
+      <button onclick="action('A','call')">📞 Call</button>
+      <button onclick="action('A','fold')">🚫 Fold</button>
+      <button onclick="action('A','raise')">⬆️ Raise 200</button>
+      <button onclick="action('A','all-in')">💰 All-In</button>
+    </div>
+
+    <div class="btn-group">
+      <label>Console Log</label>
+      <button onclick="clearLog('A')">🗑️ Clear</button>
+    </div>
+
+    <textarea id="logA" readonly></textarea>
+  </div>
+
+  <!-- PLAYER B -->
+  <div class="panel">
+    <h3>Player B</h3>
+    <div id="statusB" class="status disconnected">⚫ Disconnected</div>
+    <input id="tokenB" placeholder="Paste JWT Token Here" />
+    <input id="tableB" placeholder="Table ID" value="table1"/>
+    <input id="buyinB" placeholder="Buy In" value="1000"/>
+
+    <div class="btn-group">
+      <label>Connection</label>
+      <button onclick="connect('B')">🔌 Connect</button>
+      <button onclick="disconnect('B')">❌ Disconnect</button>
+    </div>
+
+    <div class="btn-group">
+      <label>Table Actions</label>
+      <button onclick="joinTable('B')">🪑 Join Table</button>
+      <button onclick="leaveTable('B')">🚪 Leave Table</button>
+    </div>
+
+    <div class="btn-group">
+      <label>Player Status</label>
+      <button onclick="setAway('B')">💤 Set Away</button>
+      <button onclick="setBack('B')">👋 Set Back</button>
+    </div>
+
+    <div class="btn-group">
+      <label>Game Actions</label>
+      <button onclick="action('B','check')">✅ Check</button>
+      <button onclick="action('B','call')">📞 Call</button>
+      <button onclick="action('B','fold')">🚫 Fold</button>
+      <button onclick="action('B','raise')">⬆️ Raise 200</button>
+      <button onclick="action('B','all-in')">💰 All-In</button>
+    </div>
+
+    <div class="btn-group">
+      <label>Console Log</label>
+      <button onclick="clearLog('B')">🗑️ Clear</button>
+    </div>
+
+    <textarea id="logB" readonly></textarea>
+  </div>
+
+</div>
+
+<script>
+
+const sockets = {};
+
+function log(player, message) {
+  const logBox = document.getElementById("log" + player);
+  const timestamp = new Date().toLocaleTimeString();
+  logBox.value += `[${timestamp}] ${message}\n`;
+  logBox.scrollTop = logBox.scrollHeight;
+}
+
+function clearLog(player) {
+  document.getElementById("log" + player).value = "";
+}
+
+function updateStatus(player, connected) {
+  const statusDiv = document.getElementById("status" + player);
+  if (connected) {
+    statusDiv.className = "status connected";
+    statusDiv.textContent = "🟢 Connected";
+  } else {
+    statusDiv.className = "status disconnected";
+    statusDiv.textContent = "⚫ Disconnected";
+  }
+}
+
+function connect(player) {
+  const token = document.getElementById("token" + player).value;
+
+  const socket = io("https://1bt6qcfk-3000.inc1.devtunnels.ms/");
+
+  sockets[player] = socket;
+  sockets[player].token = token;
+
+  socket.on("connect", () => {
+    log(player, "✅ Connected: " + socket.id);
+    updateStatus(player, true);
+  });
+
+  socket.on("disconnect", () => {
+    log(player, "❌ Disconnected");
+    updateStatus(player, false);
+  });
+
+  // Specific event handlers
+  socket.on("roomJoined", (data) => {
+    log(player, "🪑 ROOM JOINED: " + JSON.stringify(data, null, 2));
+  });
+
+  socket.on("roomLeft", (data) => {
+    log(player, "🚪 ROOM LEFT: " + JSON.stringify(data, null, 2));
+  });
+
+  socket.on("playerJoined", (data) => {
+    log(player, "👤 PLAYER JOINED: " + JSON.stringify(data));
+  });
+
+  socket.on("playerLeft", (data) => {
+    log(player, "👋 PLAYER LEFT: " + JSON.stringify(data));
+  });
+
+  socket.on("gameStarted", (data) => {
+    log(player, "🎲 GAME STARTED: " + JSON.stringify(data, null, 2));
+  });
+
+  socket.on("tableInfo", (data) => {
+    log(player, "📊 TABLE INFO: Phase=" + data.data?.phase + " Pot=" + data.data?.pot);
+  });
+
+  socket.on("playerTurn", (data) => {
+    log(player, "🎯 PLAYER TURN: " + JSON.stringify(data));
+  });
+
+  socket.on("communityCardsDealt", (data) => {
+    log(player, "🃏 COMMUNITY CARDS: " + JSON.stringify(data));
+  });
+
+  socket.on("showdownResults", (data) => {
+    log(player, "🏆 SHOWDOWN: " + JSON.stringify(data, null, 2));
+  });
+
+  socket.on("playerActionStarted", (data) => {
+    log(player, "▶️ ACTION STARTED: " + JSON.stringify(data));
+  });
+
+  socket.on("playerActionEnded", (data) => {
+    log(player, "⏹️ ACTION ENDED: " + JSON.stringify(data));
+  });
+
+  socket.on("actionTaken", (data) => {
+    log(player, "✔️ ACTION TAKEN: " + JSON.stringify(data));
+  });
+
+  socket.on("playerFolded", (data) => {
+    log(player, "🚫 PLAYER FOLDED: " + JSON.stringify(data));
+  });
+
+  socket.on("playerAllIn", (data) => {
+    log(player, "💰 PLAYER ALL-IN: " + JSON.stringify(data));
+  });
+
+  socket.on("playerTimeout", (data) => {
+    log(player, "⏰ PLAYER TIMEOUT: " + JSON.stringify(data));
+  });
+
+  socket.on("playerAutoFolded", (data) => {
+    log(player, "🤖 AUTO FOLDED: " + JSON.stringify(data));
+  });
+
+  socket.on("currentPlayerTurn", (data) => {
+    log(player, "👉 CURRENT TURN: " + JSON.stringify(data));
+  });
+
+  socket.on("dealerAssigned", (data) => {
+    log(player, "🎴 DEALER ASSIGNED: " + JSON.stringify(data));
+  });
+
+  socket.on("smallBlind", (data) => {
+    log(player, "💵 SMALL BLIND: " + JSON.stringify(data));
+  });
+
+  socket.on("bigBlind", (data) => {
+    log(player, "💰 BIG BLIND: " + JSON.stringify(data));
+  });
+
+  socket.on("receiveHand", (data) => {
+    log(player, "🎴 HAND RECEIVED: " + JSON.stringify(data));
+  });
+
+  socket.on("newPhase", (data) => {
+    log(player, "🔄 NEW PHASE: " + JSON.stringify(data));
+  });
+
+  socket.on("betsReset", (data) => {
+    log(player, "💸 BETS RESET: " + JSON.stringify(data));
+  });
+
+  socket.on("newRoundStarting", (data) => {
+    log(player, "🔁 NEW ROUND STARTING: " + JSON.stringify(data));
+  });
+
+  socket.on("gameOver", (data) => {
+    log(player, "🏁 GAME OVER: " + JSON.stringify(data));
+  });
+
+  socket.on("winners", (data) => {
+    log(player, "🏆 WINNERS: " + JSON.stringify(data));
+  });
+
+  socket.on("revealCards", (data) => {
+    log(player, "🃏 CARDS REVEALED: " + JSON.stringify(data));
+  });
+
+  socket.on("winningProbability", (data) => {
+    log(player, "📊 WIN PROBABILITY: " + JSON.stringify(data));
+  });
+
+  socket.on("turnTimerStarted", (data) => {
+    log(player, "⏱️ TIMER STARTED: " + JSON.stringify(data));
+  });
+
+  socket.on("waitingCountdown", (data) => {
+    log(player, "⏳ WAITING: " + JSON.stringify(data));
+  });
+
+  socket.on("showdownDelay", (data) => {
+    log(player, "⏸️ SHOWDOWN DELAY: " + JSON.stringify(data));
+  });
+
+  socket.on("playerAway", (data) => {
+    log(player, "💤 PLAYER AWAY: " + JSON.stringify(data));
+  });
+
+  socket.on("playerBack", (data) => {
+    log(player, "👋 PLAYER BACK: " + JSON.stringify(data));
+  });
+
+  socket.on("awaySet", (data) => {
+    log(player, "✅ AWAY STATUS SET");
+  });
+
+  socket.on("backSet", (data) => {
+    log(player, "✅ BACK STATUS SET");
+  });
+
+  socket.on("unableToJoin", (data) => {
+    log(player, "❌ UNABLE TO JOIN: " + data.error);
+  });
+
+  socket.on("unableToLeave", (data) => {
+    log(player, "❌ UNABLE TO LEAVE: " + data.error);
+  });
+
+  socket.on("awayError", (data) => {
+    log(player, "❌ AWAY ERROR: " + data.error);
+  });
+
+  socket.on("backError", (data) => {
+    log(player, "❌ BACK ERROR: " + data.error);
+  });
+
+  socket.on("error", (err) => {
+    log(player, "🚨 ERROR: " + JSON.stringify(err));
+  });
+
+  // Catch-all for any other events
+  socket.onAny((event, data) => {
+    const knownEvents = [
+      'connect', 'disconnect', 'roomJoined', 'roomLeft', 'playerJoined', 
+      'playerLeft', 'gameStarted', 'tableInfo', 'playerTurn', 
+      'communityCardsDealt', 'showdownResults', 'playerAway', 'playerBack',
+      'awaySet', 'backSet', 'unableToJoin', 'unableToLeave', 'awayError', 
+      'backError', 'error', 'playerActionStarted', 'playerActionEnded',
+      'actionTaken', 'playerFolded', 'playerAllIn', 'playerTimeout',
+      'playerAutoFolded', 'currentPlayerTurn', 'dealerAssigned', 'smallBlind',
+      'bigBlind', 'receiveHand', 'newPhase', 'betsReset', 'newRoundStarting',
+      'gameOver', 'winners', 'revealCards', 'winningProbability',
+      'turnTimerStarted', 'waitingCountdown', 'showdownDelay'
+    ];
+    if (!knownEvents.includes(event)) {
+      log(player, "📩 " + event + " -> " + JSON.stringify(data));
+    }
+  });
+}
+
+function disconnect(player) {
+  if (sockets[player]) {
+    sockets[player].disconnect();
+    log(player, "🔌 Disconnecting...");
+  }
+}
+
+function joinTable(player) {
+  const socket = sockets[player];
+  if (!socket) return log(player, "❌ Not connected");
+  
+  const tableId = document.getElementById("table" + player).value;
+  const buyIn = parseInt(document.getElementById("buyin" + player).value);
+  const token = socket.token;
+
+  socket.emit("joinTable", { tableId, buyIn, token });
+  log(player, "➡️ joinTable emitted");
+}
+
+function leaveTable(player) {
+  const socket = sockets[player];
+  if (!socket) return log(player, "❌ Not connected");
+  
+  const token = socket.token;
+  socket.emit("leaveTable", { token });
+  log(player, "➡️ leaveTable emitted");
+}
+
+function setAway(player) {
+  const socket = sockets[player];
+  if (!socket) return log(player, "❌ Not connected");
+  
+  const token = socket.token;
+  socket.emit("setAway", { token });
+  log(player, "➡️ setAway emitted");
+}
+
+function setBack(player) {
+  const socket = sockets[player];
+  if (!socket) return log(player, "❌ Not connected");
+  
+  const token = socket.token;
+  socket.emit("setBack", { token });
+  log(player, "➡️ setBack emitted");
+}
+
+function action(player, type) {
+  const socket = sockets[player];
+  if (!socket) return log(player, "❌ Not connected");
+
+  const token = socket.token;
+  if (type === "raise") {
+    socket.emit("playerAction", { action: "raise", amount: 200, token });
+    log(player, "➡️ raise 200 emitted");
+  } else {
+    socket.emit("playerAction", { action: type, token });
+    log(player, "➡️ " + type + " emitted");
+  }
+}
+
+</script>
+
+</body>
+</html>

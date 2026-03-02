@@ -1,0 +1,16 @@
+exports.userService = require('./user.service');
+exports.authService = require('./auth.service');
+exports.adminService = require('./admin.service');
+// exports.tournamentService = require('./tournament.service');
+exports.templateService = require('./template.service');
+// exports.redisService = require('./redis.service');
+// exports.gameService = require('./game.service');
+exports.blockchainService = require('./blockchain.service');
+exports.tableService = require('./table.service');
+exports.playerService = require('./player.service');
+// exports.queueMatcher = require('./queueMatcher.service');
+exports.matchmakingService = require('./matchmaking.service');
+exports.cooldownService = require('./cooldown.service');
+exports.reputationService = require('./reputation.service');
+exports.queueService = require('./queue.service');
+exports.fundingService = require('./funding.service');
