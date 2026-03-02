@@ -7,7 +7,7 @@ class RedisClient {
       port: process.env.REDIS_PORT,
       username: process.env.REDIS_USERNAME, // needed for Redis Cloud
       password: process.env.REDIS_PASSWORD,
-      tls: {}, // ✅ VERY IMPORTANT
+      // tls: {}, // ✅ VERY IMPORTANT
       retryStrategy: (times) => Math.min(times * 50, 2000),
     });
 
