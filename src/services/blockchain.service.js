@@ -35,11 +35,7 @@ const usedNonces = new Set();
 const pendingTransactions = new Map();
 // Withdrawal queue - REDIS ONLY
 const withdrawalQueue = new Queue('withdrawals', {
-  redis: {
-    host: config.REDIS_HOST,
-    port: config.REDIS_PORT,
-    password: config.REDIS_PASSWORD,
-  },
+  redis: process.env.REDIS_URL,
   defaultJobOptions: {
     attempts: 3, // Reduced attempts for faster testing
     backoff: {
