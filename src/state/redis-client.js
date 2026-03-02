@@ -1,14 +1,13 @@
-// src/state/redis-client.js
-
 const Redis = require('ioredis');
-const config = require('../config/config');
 
 class RedisClient {
   constructor() {
     this.redis = new Redis({
-      host: config.REDIS_HOST,
-      port: config.REDIS_PORT,
-      password: "",
+      host: process.env.REDIS_HOST,
+      port: process.env.REDIS_PORT,
+      username: process.env.REDIS_USERNAME, // needed for Redis Cloud
+      password: process.env.REDIS_PASSWORD,
+      tls: {}, // ✅ VERY IMPORTANT
       retryStrategy: (times) => Math.min(times * 50, 2000),
     });
 
