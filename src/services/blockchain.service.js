@@ -27,7 +27,7 @@ const rakePercent = 2;
 
 const TABLE_CREATION = ethers.keccak256(ethers.toUtf8Bytes('TABLE_CREATION'));
 const walletFactoryAbi = require('./walletfactory.json').abi;
-const { abi: polygonTokenContractABI } = require('./MyToken.json');
+const { abi: polygonTokenContractABI } = require('./myToken.json');
 // Track used nonces to prevent replay attacks
 const usedNonces = new Set();
 
