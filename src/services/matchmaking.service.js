@@ -5,7 +5,7 @@ const { MATCHMAKING_TIERS } = require('../constants/constants');
 const {findTableWithVacanciesInSubTier} = require('./table.service');
 const reputationService = require('./reputation.service');
 const cooldownService = require('./cooldown.service');
-// const queueMatcher = require('./queueMatcher.service');
+const queueMatcher = require('./queueMatcher.service');
 const { updateJoinAttempt, getAmountRequiredToJoinSubTier, findAvailableTableWithCooldown, updateFlowRate } = require('../utils/matchmakingHelper');
 
 class MatchmakingLayerService {
