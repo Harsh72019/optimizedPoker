@@ -118,77 +118,27 @@ class GameOrchestrator {
             await gameStateManager.deleteGame(tableId);
 
             // 4️⃣ Load fresh table state
-            const tableState = await tableManager.getTable(tableId);
+            const tableState =
+                await tableManager.getTable(tableId);
 
-            // 5️⃣ Update cooldowns for all players
-            const mongoHelper = require('../models/customdb');
-            const cooldownService = require('../services/cooldown.service');
-            const participantIds = tableState.players
-                .filter(p => p.userId && !p.userId.startsWith('bot'))
-                .map(p => p.userId);
-            
-            if (participantIds.length > 0) {
-                try {
-                    const tableDoc = await mongoHelper.findById(mongoHelper.COLLECTIONS.TABLES, tableId);
-                    if (tableDoc.success && tableDoc.data && tableDoc.data.subTierId) {
-                        const subTierResult = await mongoHelper.findById(mongoHelper.COLLECTIONS.SUB_TIERS, tableDoc.data.subTierId);
-                        if (subTierResult.success && subTierResult.data && subTierResult.data.tierId) {
-                            await cooldownService.updateCooldownsOnSeat(tableId, subTierResult.data.tierId, participantIds);
-                            console.log(`📊 Updated cooldowns for ${participantIds.length} players`);
-                        }
-                    }
-                } catch (cooldownError) {
-                    console.error(`❌ Error updating cooldowns:`, cooldownError.message);
-                }
-            }
-
-            // 6️⃣ Handle rebuy logic for players with insufficient chips
-            const tableDoc = await mongoHelper.findById(mongoHelper.COLLECTIONS.TABLES, tableId);
-            if (tableDoc.success && tableDoc.data && tableDoc.data.subTierId) {
-                const subTierResult = await mongoHelper.findById(mongoHelper.COLLECTIONS.SUB_TIERS, tableDoc.data.subTierId);
-                if (subTierResult.success && subTierResult.data) {
-                    const bb = subTierResult.data.tableConfig.bb;
-                    const minChipsRequired = bb * 2.5;
-                    const maxBuyIn = bb * 100;
-
-                    for (const player of tableState.players) {
-                        if (player.chips < minChipsRequired) {
-                            if (player.isBot) {
-                                // Replenish bot chips
-                                player.chips = maxBuyIn;
-                                console.log(`🤖 Bot ${player.username} replenished with ${maxBuyIn} chips`);
-                            } else {
-                                // Check if player has autoRenew enabled
-                                const userDoc = await mongoHelper.findById(mongoHelper.COLLECTIONS.USERS, player.userId);
-                                if (userDoc.success && userDoc.data && userDoc.data.autoRenew) {
-                                    // Auto-rebuy for human player
-                                    player.chips = maxBuyIn;
-                                    console.log(`💰 Auto-rebuy for ${player.username}: ${maxBuyIn} chips`);
-                                } else {
-                                    // Mark for manual rebuy
-                                    console.log(`⚠️ ${player.username} needs manual rebuy (${player.chips} < ${minChipsRequired})`);
-                                }
-                            }
-                        }
-                    }
-
-                    await tableManager.saveTable(tableId, tableState);
-                }
-            }
-
-            // 7️⃣ Remove disconnected players
+            // 5️⃣ Remove disconnected players
             for (const p of tableState.players) {
                 if (p.disconnected) {
-                    await tableManager.removePlayer(tableId, p.userId);
+                    await tableManager.removePlayer(
+                        tableId,
+                        p.userId
+                    );
                 }
             }
 
-            // 8️⃣ Reload table after cleanup
-            const updatedTable = await tableManager.getTable(tableId);
+            // 6️⃣ Reload table after cleanup
+            const updatedTable =
+                await tableManager.getTable(tableId);
 
-            const seatedCount = updatedTable.players.filter(
-                p => p.chips > 0 && !p.disconnected
-            ).length;
+            const seatedCount =
+                updatedTable.players.filter(
+                    p => p.chips > 0 && !p.disconnected
+                ).length;
 
             if (seatedCount < 2) {
                 console.log(`🔄 Not enough players to restart`);
