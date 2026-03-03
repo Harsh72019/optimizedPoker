@@ -40,6 +40,7 @@ class QueueMatcherService {
 
     // 2. Check funds
     const required = subTier.tableConfig.bb * 100; // 100 BB requirement
+    console.log(player.chips , required);
     if (player.chips < required) {
       throw new ApiError(402, 'insufficient_funds');
     }
