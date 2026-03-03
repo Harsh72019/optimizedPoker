@@ -209,9 +209,10 @@ class ConnectionHandler {
                 console.error('Failed to sync to MongoDB:', err.message)
             );
 
-            emitSuccess(this.socket, 'roomJoined', { tableId: finalTableId, tableState }, 'Joined table successfully');
-
             const gameState = await require('../../state/game-state').getGame(finalTableId);
+            const showLoading =gameState && gameState?.status === 'IDLE' ? true : false;
+            emitSuccess(this.socket, 'roomJoined', { tableId: finalTableId, tableState ,showLoading }, 'Joined table successfully');
+
 
             // Format data for frontend
             const formattedData = this.formatTableData(tableState, gameState);
