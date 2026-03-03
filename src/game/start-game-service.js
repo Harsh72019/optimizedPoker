@@ -142,14 +142,22 @@ class StartGameService {
             emitSuccess(
                 this.io.to(tableId),
                 'smallBlind',
-                { position: gameState.smallBlindPosition, amount: smallBlindAmount },
+                { 
+                    position: gameState.smallBlindPosition, 
+                    amount: smallBlindAmount,
+                    player: gameState.players.find(p => p.seatPosition === gameState.smallBlindPosition)
+                },
                 'Small blind posted'
             );
 
             emitSuccess(
                 this.io.to(tableId),
                 'bigBlind',
-                { position: gameState.bigBlindPosition, amount: bigBlindAmount },
+                { 
+                    position: gameState.bigBlindPosition, 
+                    amount: bigBlindAmount,
+                    player: gameState.players.find(p => p.seatPosition === gameState.bigBlindPosition)
+                },
                 'Big blind posted'
             );
 
