@@ -57,10 +57,16 @@ class StartGameService {
             );
             const tableState = await tableManager.getTable(tableId);
 
+            console.log(`🔍 [DEBUG] Redis tableState:`, JSON.stringify(tableState, null, 2));
+            console.log(`🔍 [DEBUG] Players count: ${tableState.players.length}`);
+            console.log(`🔍 [DEBUG] Players:`, tableState.players.map(p => ({ userId: p.userId, chips: p.chips })));
+
             // Remove ghost players
             tableState.players = tableState.players.filter(
                 p => p.chips && p.chips > 0
             );
+
+            console.log(`🔍 [DEBUG] After filter - Players count: ${tableState.players.length}`);
 
             if (tableState.players.length < 2) {
                 throw new Error('Not enough players');
