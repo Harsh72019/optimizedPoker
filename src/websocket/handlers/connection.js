@@ -123,15 +123,35 @@ class ConnectionHandler {
 
     async handleJoinTable(data) {
         try {
-            const { tableId, buyIn, token } = data;
+            const { tableId, blockChainTableId, buyIn, token } = data;
             const user = await verifyEventToken(token, this.socket);
             const userId = user._id.toString();
 
             this.socket.user = user;
 
+            // Get table ID from blockChainTableId if provided
+            let finalTableId = tableId;
+            if (blockChainTableId && !tableId) {
+                const mongoHelper = require('../../models/customdb');
+                const tableResult = await mongoHelper.find(mongoHelper.COLLECTIONS.TABLES, { 
+                    tableBlockchainId: blockChainTableId 
+                });
+                
+                if (!tableResult.success || !tableResult.data || tableResult.data.length === 0) {
+                    throw new Error('Table not found with blockchain ID: ' + blockChainTableId);
+                }
+                
+                finalTableId = tableResult.data[0]._id.toString();
+                console.log(`🔗 Resolved blockChainTableId ${blockChainTableId} to tableId ${finalTableId}`);
+            }
+
+            if (!finalTableId) {
+                throw new Error('No tableId or blockChainTableId provided');
+            }
+
             // Get table and fetch subTier to validate buyIn
             const mongoHelper = require('../../models/customdb');
-            const tableDoc = await mongoHelper.findById(mongoHelper.COLLECTIONS.TABLES, tableId);
+            const tableDoc = await mongoHelper.findById(mongoHelper.COLLECTIONS.TABLES, finalTableId);
             
             if (!tableDoc.success || !tableDoc.data) {
                 throw new Error('Table not found');
@@ -157,7 +177,7 @@ class ConnectionHandler {
             }
 
             const { tableState, isReconnect } = await tableManager.seatPlayer(
-                tableId,
+                finalTableId,
                 {
                     userId,
                     username: user.username,
@@ -166,8 +186,8 @@ class ConnectionHandler {
                 }
             );
 
-            this.socket.join(tableId);
-            this.socket.tableId = tableId;
+            this.socket.join(finalTableId);
+            this.socket.tableId = finalTableId;
             this.socket.handsPlayed = 0; // Track hands played
 
             // Get full user document for walletAddress
@@ -185,37 +205,37 @@ class ConnectionHandler {
             }
 
             // Sync to MongoDB TABLES.currentPlayers
-            this.syncPlayerToMongoTable(tableId, userId, 'join').catch(err => 
+            this.syncPlayerToMongoTable(finalTableId, userId, 'join').catch(err => 
                 console.error('Failed to sync to MongoDB:', err.message)
             );
 
-            emitSuccess(this.socket, 'roomJoined', { tableId, tableState }, 'Joined table successfully');
+            emitSuccess(this.socket, 'roomJoined', { tableId: finalTableId, tableState }, 'Joined table successfully');
 
-            const gameState = await require('../../state/game-state').getGame(tableId);
+            const gameState = await require('../../state/game-state').getGame(finalTableId);
 
             // Format data for frontend
             const formattedData = this.formatTableData(tableState, gameState);
             emitSuccess(this.socket, 'tableInfo', formattedData, 'Table info');
 
             if (!isReconnect) {
-                emitSuccess(this.io.to(tableId), 'playerJoined', formattedData, `${user.username} joined`);
+                emitSuccess(this.io.to(finalTableId), 'playerJoined', formattedData, `${user.username} joined`);
                 const seatedCount = tableState.players.length;
-                await this.orchestrator.onPlayerSeated(tableId, seatedCount);
-                console.log(`👤 ${userId} seated at table ${tableId}`);
+                await this.orchestrator.onPlayerSeated(finalTableId, seatedCount);
+                console.log(`👤 ${userId} seated at table ${finalTableId}`);
             } else {
-                console.log(`🔄 ${userId} reconnected to table ${tableId}`);
+                console.log(`🔄 ${userId} reconnected to table ${finalTableId}`);
                 
                 // Check if we need to start waiting timer
                 const seatedCount = tableState.players.filter(p => !p.disconnected).length;
                 if (seatedCount >= 2 && !gameState) {
                     console.log(`⏳ Triggering waiting timer after reconnect`);
-                    await this.orchestrator.onPlayerSeated(tableId, seatedCount);
+                    await this.orchestrator.onPlayerSeated(finalTableId, seatedCount);
                 }
                 
                 // If game is active and it's player's turn, restart timer
                 if (gameState && gameState.currentPlayerId === userId) {
                     console.log(`⏱️ Restarting timer for reconnected player ${userId}`);
-                    this.orchestrator.timerManager.startTimer(tableId, userId);
+                    this.orchestrator.timerManager.startTimer(finalTableId, userId);
                 }
             }
 
