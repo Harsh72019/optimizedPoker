@@ -105,6 +105,7 @@ class TableManagerService {
         if (existing) {
             existing.disconnected = false;
             existing.socketId = player.socketId;
+            existing.chips = player.chips; // Update chips on reconnect
 
             await this.saveTable(tableId, table);
 
@@ -122,7 +123,7 @@ class TableManagerService {
             userId: player.userId,
             username: player.username,
             seatPosition,
-            chips: player.chips,
+            chips: player.chips, // ✅ CRITICAL: Set chips field
             disconnected: false,
             socketId: player.socketId,
         });

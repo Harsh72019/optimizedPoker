@@ -123,11 +123,18 @@ class ConnectionHandler {
 
     async handleJoinTable(data) {
         try {
-            const { tableId, blockChainTableId, buyIn, token } = data;
+            const { tableId, blockChainTableId, buyIn, chipsInPlay, token } = data;
             const user = await verifyEventToken(token, this.socket);
             const userId = user._id.toString();
 
             this.socket.user = user;
+
+            // Use chipsInPlay if provided, otherwise buyIn
+            const finalBuyIn = chipsInPlay || buyIn;
+
+            if (!finalBuyIn) {
+                throw new Error('No buyIn or chipsInPlay provided');
+            }
 
             // Get table ID from blockChainTableId if provided
             let finalTableId = tableId;
@@ -172,7 +179,7 @@ class ConnectionHandler {
             const maxBuyIn = parseFloat((bb * 100).toFixed(2));
 
             // Validate buyIn against calculated range
-            if (buyIn < minBuyIn || buyIn > maxBuyIn) {
+            if (finalBuyIn < minBuyIn || finalBuyIn > maxBuyIn) {
                 throw new Error(`Buy-in must be between ${minBuyIn} and ${maxBuyIn}`);
             }
 
@@ -181,7 +188,7 @@ class ConnectionHandler {
                 {
                     userId,
                     username: user.username,
-                    chips: buyIn,
+                    chips: finalBuyIn,
                     socketId: this.socket.id
                 }
             );
@@ -196,10 +203,10 @@ class ConnectionHandler {
 
             // Transfer buy-in from player to table (async with retry) - using existing blockchain service
             if (walletAddress) {
-                blockchainService.prepareTableForJoin(table, buyIn, walletAddress).catch(err => 
+                blockchainService.prepareTableForJoin(table, finalBuyIn, walletAddress).catch(err => 
                     console.error('💰 [BLOCKCHAIN] Transfer error:', err.message)
                 );
-                console.log(`💰 [BLOCKCHAIN] Initiated transfer for ${buyIn} chips (async)`);
+                console.log(`💰 [BLOCKCHAIN] Initiated transfer for ${finalBuyIn} chips (async)`);
             } else {
                 console.warn(`⚠️ [BLOCKCHAIN] No wallet address for user ${userId}, skipping transfer`);
             }
