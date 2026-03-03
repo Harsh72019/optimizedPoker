@@ -41,9 +41,9 @@ class QueueMatcherService {
     // 2. Check funds
     const required = subTier.tableConfig.bb * 100; // 100 BB requirement
     console.log(player.chips , required);
-    if (player.chips < required) {
-      throw new ApiError(402, 'insufficient_funds');
-    }
+    // if (player.chips < required) {
+    //   throw new ApiError(402, 'insufficient_funds');
+    // }
 
     // 3. Enqueue player (only if not already in queue)
     let position = await queueService.getQueuePosition(playerId, subTierId);
