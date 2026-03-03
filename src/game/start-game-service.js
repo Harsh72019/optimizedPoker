@@ -135,7 +135,10 @@ class StartGameService {
             emitSuccess(
                 this.io.to(tableId),
                 'dealerAssigned',
-                gameState.dealerPosition,
+                {
+                    position: gameState.dealerPosition,
+                    player: gameState.players.find(p => p.seatPosition === gameState.dealerPosition)
+                },
                 'Dealer assigned'
             );
 
