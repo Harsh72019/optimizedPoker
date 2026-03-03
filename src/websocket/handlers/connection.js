@@ -210,8 +210,16 @@ class ConnectionHandler {
             );
 
             const gameState = await require('../../state/game-state').getGame(finalTableId);
-            const showLoading =gameState && gameState?.status === 'IDLE' ? true : false;
-            emitSuccess(this.socket, 'roomJoined', { tableId: finalTableId, tableState ,showLoading }, 'Joined table successfully');
+            
+            // showLoading: true if waiting for game to start (30s timer), false if game already ongoing
+            const tableStatus = await tableManager.getStatus(finalTableId);
+            const showLoading = !gameState || tableStatus === 'WAITING' || tableStatus === 'IDLE';
+            
+            emitSuccess(this.socket, 'roomJoined', { 
+                tableId: finalTableId, 
+                tableState, 
+                showLoading 
+            }, 'Joined table successfully');
 
 
             // Format data for frontend
