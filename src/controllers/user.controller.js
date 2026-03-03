@@ -293,8 +293,17 @@ const checkTableExistence = async (req, res) => {
     });
   } catch (error) {
     console.error('Error in joinTable:', error);
+    
+    // Handle ApiError with proper status code
+    if (error.statusCode) {
+      return res.status(error.statusCode).send({
+        message: error.message,
+        status: false,
+      });
+    }
+    
     res.status(500).send({
-      error: error.message,
+      message: error.message,
       status: false,
     });
   }
