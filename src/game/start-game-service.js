@@ -168,7 +168,6 @@ class StartGameService {
                 this.io.to(tableId).emit('receiveHand', {
                     status: true,
                     data: {
-                        playerId: player.id,
                         hand: player.cards
                     },
                     message: 'Hand dealt'

@@ -54,6 +54,9 @@ class PlayerActionService {
 
             emitSuccess(this.io.to(tableId), 'playerActionStarted', { playerId, action, amount }, 'Action started');
 
+            let tableState = await require('../table/table-manager.service').getTable(tableId);
+            const actingPlayer = tableState.players.find(p => p.userId === normalizedPlayerId);
+
             this.applyAction(gameState, player, action, amount, validation);
             console.log(`✅ [ACTION APPLIED] ${action} by ${playerId}`);
 
@@ -67,7 +70,16 @@ class PlayerActionService {
                 emitSuccess(this.io.to(tableId), 'playerAllIn', { playerId, amount: player.chips }, 'Player all-in');
             }
 
-            emitSuccess(this.io.to(tableId), 'actionTaken', { playerId, action, amount }, 'Action taken');
+            const actionData = {
+                playerId: normalizedPlayerId,
+                username: actingPlayer?.username || 'Player',
+                action,
+                amount,
+                result: true,
+                timestamp: new Date().toISOString()
+            };
+
+            emitSuccess(this.io.to(tableId), 'actionTaken', actionData, this.getActionMessage(action, actionData.username, amount));
             emitSuccess(this.io.to(tableId), 'playerActionEnded', { playerId, action }, 'Action ended');
 
             if (GameStateMachine.isBettingRoundComplete(gameState)) {
@@ -82,7 +94,7 @@ class PlayerActionService {
             await gameStateManager.updateGame(tableId, gameState);
             console.log(`💾 [STATE SAVED] Phase: ${gameState.phase}, Pot: ${gameState.pot}`);
 
-            const tableState = await require('../table/table-manager.service').getTable(tableId);
+            tableState = await require('../table/table-manager.service').getTable(tableId);
             const formattedData = this.formatTableData(tableState, gameState);
             emitSuccess(this.io.to(tableId), 'tableInfo', formattedData, 'Table updated');
 
@@ -93,8 +105,8 @@ class PlayerActionService {
             }
 
             if (gameState.phase !== 'COMPLETED') {
-                const playerTurnData = this.formatPlayerTurnData(gameState, gameState.currentPlayerId);
-                emitSuccess(this.io.to(tableId), 'playerTurn', playerTurnData, 'Player turn');
+                const playerTurnData = this.formatPlayerTurnData(gameState, gameState.currentPlayerId, tableState);
+                emitSuccess(this.io.to(tableId), 'playerTurn', playerTurnData, `${playerTurnData.username}, it's your turn to act.`);
                 emitSuccess(this.io.to(tableId), 'currentPlayerTurn', gameState.currentPlayerId, 'Current turn');
                 this.timerManager.startTimer(tableId, gameState.currentPlayerId);
             } else {
@@ -317,14 +329,18 @@ class PlayerActionService {
         console.log(`🔄 [NEW ROUND] ${gameState.phase} begins`);
     }
 
-    formatPlayerTurnData(gameState, playerId) {
+    formatPlayerTurnData(gameState, playerId, tableState) {
         const player = gameState.players.find(p => p.id === playerId);
         if (!player) return { playerId };
+
+        const tablePlayer = tableState?.players.find(p => p.userId === playerId);
+        const username = tablePlayer?.username || 'Player';
 
         const currentBet = gameState.currentBet || 0;
         const playerBet = gameState.streetBets[playerId] || 0;
         const callAmount = Math.max(0, currentBet - playerBet);
-        const minRaise = currentBet + (gameState.lastRaiseAmount || gameState.bigBlind || 0);
+        const betIncrement = gameState.bigBlind || 0.04;
+        const minRaise = currentBet + (gameState.lastRaiseAmount || betIncrement);
         const maxRaise = player.chips + playerBet;
 
         const availableOptions = [];
@@ -340,18 +356,22 @@ class PlayerActionService {
             availableOptions.push('raise');
         }
 
+        const raiseSteps = [
+            { label: '2x BB', value: betIncrement * 2 },
+            { label: '3x BB', value: betIncrement * 3 },
+            { label: 'Pot', value: gameState.pot || 0 },
+            { label: 'All-in', value: maxRaise }
+        ].filter(step => step.value <= maxRaise && step.value >= minRaise);
+
         return {
             playerId,
+            username,
             availableOptions,
             callAmount,
-            minRaiseAmount: minRaise,
-            maxRaiseAmount: maxRaise,
-            raiseSteps: [
-                { label: '2x BB', value: (gameState.bigBlind || 0) * 2 },
-                { label: '3x BB', value: (gameState.bigBlind || 0) * 3 },
-                { label: 'Pot', value: gameState.pot || 0 },
-                { label: 'All-in', value: maxRaise }
-            ].filter(step => step.value <= maxRaise && step.value >= minRaise)
+            minRaiseAmount: minRaise > maxRaise ? null : minRaise,
+            maxRaiseAmount: maxRaise >= minRaise ? maxRaise : null,
+            raiseSteps: raiseSteps.length > 0 ? raiseSteps : null,
+            betIncrement
         };
     }
 
@@ -444,6 +464,23 @@ class PlayerActionService {
                 bigBlindPosition: gameState.bigBlindPosition
             } : null
         };
+    }
+
+    getActionMessage(action, username, amount) {
+        switch (action) {
+            case 'check':
+                return `${username} checked.`;
+            case 'fold':
+                return `${username} folded.`;
+            case 'call':
+                return `${username} called ${amount} chips.`;
+            case 'raise':
+                return `${username} raised to ${amount} chips.`;
+            case 'all-in':
+                return `${username} went all-in with ${amount} chips.`;
+            default:
+                return `${username} performed ${action}.`;
+        }
     }
 }
 

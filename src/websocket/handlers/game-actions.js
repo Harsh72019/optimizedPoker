@@ -39,13 +39,21 @@ class GameActionHandler {
         const tableId = this.socket.tableId;
         if (!tableId) return;
 
-        const gameState = await require('../state/game-state').getGame(tableId);
+        const gameState = await require('../../state/game-state').getGame(tableId);
         if (!gameState) return;
 
-        const ProbabilityCalculator = require('../game/probability-calculator');
+        const tableManager = require('../../table/table-manager.service');
+        const tableState = await tableManager.getTable(tableId);
+
+        const ProbabilityCalculator = require('../../game/probability-calculator');
         const probabilities = ProbabilityCalculator.calculateWinningProbabilities(gameState);
         
-        emitSuccess(this.socket, 'winningProbability', { probabilities }, 'Probabilities calculated');
+        probabilities.forEach(prob => {
+          const player = tableState.players.find(p => p.userId === prob.playerId);
+          if (player?.socketId) {
+            emitSuccess(this.io.to(player.socketId), 'winningProbability', { probability: prob.probability }, 'Updated winning probability.');
+          }
+        });
       } catch (err) {
         emitError(this.socket, 'errorFetchingProbability', err.message);
       }
