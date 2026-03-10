@@ -255,6 +255,36 @@ class ConnectionHandler {
                 }
             }
 
+            // Send mid-game state if game is active
+            if (gameState && gameState.phase !== 'COMPLETED') {
+                const player = gameState.players.find(p => p.id === userId);
+                
+                // Send player's hole cards if they're in the game
+                if (player && player.cards) {
+                    emitSuccess(this.socket, 'receiveHand', {playerId : player.id, hand: player.cards }, 'Your cards');
+                }
+                
+                // Send community cards if any are dealt
+                if (gameState.boardCards && gameState.boardCards.length > 0) {
+                    emitSuccess(this.socket, 'communityCardsDealt', gameState.boardCards, 'Community cards');
+                }
+                
+                // Send current player turn info
+                if (gameState.currentPlayerId) {
+                    const PlayerActionService = require('../../game/player-action.service');
+                    const actionService = new PlayerActionService(this.io, this.orchestrator.timerManager, this.orchestrator);
+                    const turnData = actionService.formatPlayerTurnData(gameState, gameState.currentPlayerId, tableState);
+                    
+                    if (gameState.currentPlayerId === userId) {
+                        emitSuccess(this.socket, 'playerTurn', turnData, 'Your turn');
+                    } else {
+                        emitSuccess(this.socket, 'currentPlayerTurn', turnData, 'Current turn');
+                    }
+                }
+                
+                console.log(`🎮 Sent mid-game state to ${userId}: cards=${player?.cards?.length || 0}, board=${gameState.boardCards?.length || 0}`);
+            }
+
         } catch (err) {
             console.log(err)
             emitError(this.socket, 'unableToJoin', err.message);
