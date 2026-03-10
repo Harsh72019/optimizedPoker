@@ -373,7 +373,7 @@ class PlayerActionService {
         };
     }
 
-    handleShowdown(gameState) {
+    async handleShowdown(gameState) {
         for (const id in gameState.streetBets) {
             gameState.pot += gameState.streetBets[id];
             gameState.streetBets[id] = 0;
@@ -391,8 +391,33 @@ class PlayerActionService {
             console.log(`💵 Player ${r.playerId} wins ${r.amount}`);
         });
 
+        // Get table state for usernames
+        const tableState = await require('../table/table-manager.service').getTable(gameState.tableId);
+        
+        // Format winners data according to required structure
+        const formattedWinners = [{
+            potType: "Main Pot",
+            amount: gameState.pot,
+            winners: results.map(r => {
+                const winner = gameState.players.find(p => p.id === r.playerId);
+                const tablePlayer = tableState.players.find(p => p.userId === r.playerId);
+                
+                return {
+                    username: tablePlayer?.username || 'Player',
+                    amount: r.amount,
+                    status: 'active',
+                    winningHand: r.handName || 'High Card',
+                    cards: {
+                        holeCards: winner.cards.map(card => ({ ...card, used: true })),
+                        communityCards: gameState.boardCards.map(card => ({ ...card, used: false })),
+                        bestHand: r.bestHand || winner.cards
+                    }
+                };
+            })
+        }];
+
         emitSuccess(this.io.to(gameState.tableId), 'showdownResults', { winners: results }, 'Showdown complete');
-        emitSuccess(this.io.to(gameState.tableId), 'winners', results, 'Winners');
+        emitSuccess(this.io.to(gameState.tableId), 'winners', formattedWinners, 'Winners');
         emitSuccess(this.io.to(gameState.tableId), 'callShowDown', {}, 'Showdown called');
         
         // Reveal cards one by one

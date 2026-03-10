@@ -165,13 +165,15 @@ class StartGameService {
             );
 
             gameState.players.forEach(player => {
-                this.io.to(tableId).emit('receiveHand', {
-                    status: true,
-                    data: {
+                emitSuccess(
+                    this.io.to(tableId),
+                    'receiveHand',
+                    {
+                        playerId: player.id,
                         hand: player.cards
                     },
-                    message: 'Hand dealt'
-                });
+                    'Hand dealt'
+                )
             });
 
             console.log(`✅ [GAME STARTED] First turn: ${gameState.currentPlayerId}`);

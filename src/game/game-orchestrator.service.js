@@ -4,6 +4,7 @@ const StartGameService = require('./start-game-service.js');
 const gameStateManager = require('../state/game-state');
 const handPersister = require('../workers/hand-persister');
 const tableManager = require('../table/table-manager.service');
+const { emitSuccess } = require('../websocket/socket-emitter.js');
 class GameOrchestrator {
     constructor(io, timerManager) {
         this.io = io;
@@ -29,7 +30,7 @@ class GameOrchestrator {
             if (seatedCount < 2) return;
 
             const gameState = await gameStateManager.getGame(tableId);
-            
+
             if (gameState) {
                 console.log(`🔄 Player joined mid-game at table ${tableId} - will join next hand`);
                 return;
@@ -39,7 +40,7 @@ class GameOrchestrator {
 
             console.log(`⏳ Starting 30s waiting for table ${tableId}`);
 
-            this.io.to(tableId).emit('waitingCountdown', { seconds: 30 });
+            emitSuccess(this.io.to(tableId), 'waitingCountdown', { seconds: 30 }, 'Waiting countdown');
 
             const timeout = setTimeout(async () => {
                 await this.startHand(tableId);
@@ -77,9 +78,10 @@ class GameOrchestrator {
         try {
             await tableManager.setStatus(tableId, 'SHOWDOWN_DELAY');
             console.log(`🏁 Hand completed at table ${tableId}`);
-            this.io.to(tableId).emit('showdownDelay', { seconds: 10 });
-            this.io.to(tableId).emit('newRoundStarting', { seconds: 10 });
+            emitSuccess(this.io.to(tableId), 'showdownDelay', { seconds: 10 }, 'Showdown delay');
 
+
+            emitSuccess(this.io.to(tableId), 'newRoundStarting', { seconds: 10 }, 'New round starting');
             // Increment handsPlayed for all connected players
             const sockets = await this.io.in(tableId).fetchSockets();
             sockets.forEach(socket => {
