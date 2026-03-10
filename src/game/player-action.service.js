@@ -106,11 +106,6 @@ class PlayerActionService {
             }
 
             if (gameState.phase !== 'COMPLETED') {
-                const playerTurnData = this.formatPlayerTurnData(gameState, gameState.currentPlayerId, tableState);
-                const currentPlayer = tableState.players.find(p => p.userId === gameState.currentPlayerId);
-                if (currentPlayer?.socketId) {
-                    emitSuccess(this.io.to(currentPlayer.socketId), 'playerTurn', playerTurnData, `${playerTurnData.username}, it's your turn to act.`);
-                }
                 emitSuccess(this.io.to(tableId), 'currentPlayerTurn', gameState.currentPlayerId, 'Current turn');
                 this.timerManager.startTimer(tableId, gameState.currentPlayerId);
             } else {
