@@ -66,7 +66,9 @@ class PotCalculator {
       } else {
         distributions.push({
           playerId: w.playerId,
-          amount: share
+          amount: share,
+          handName: w.handName,
+          bestHand: w.bestHand
         });
       }
     });

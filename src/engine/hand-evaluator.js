@@ -13,13 +13,25 @@ class HandEvaluator {
   }
 
   static determineWinners(players, boardCards) {
+    console.log('[DEBUG] Raw board cards:', JSON.stringify(boardCards));
+    
     const evaluated = players
       .filter(p => p.status !== 'FOLDED')
       .map(player => {
+        console.log(`[DEBUG] Player ${player.id} raw cards:`, JSON.stringify(player.cards));
+        
         const normalizedPlayerCards = player.cards.map(card => this.normalizeCard(card)).filter(Boolean);
         const normalizedBoardCards = boardCards.map(card => this.normalizeCard(card)).filter(Boolean);
+        
+        console.log(`[DEBUG] Player ${player.id} normalized cards:`, normalizedPlayerCards);
+        console.log(`[DEBUG] Normalized board cards:`, normalizedBoardCards);
+        
         const combined = [...normalizedPlayerCards, ...normalizedBoardCards];
+        console.log(`[DEBUG] Player ${player.id} combined cards:`, combined);
+        
         const hand = this.evaluate(combined);
+        console.log(`[DEBUG] Player ${player.id} evaluated hand:`, hand.name, hand.descr);
+        
         return {
           playerId: player.id,
           hand: hand,

@@ -289,7 +289,7 @@ class PlayerActionService {
 
         const nextPhase = GameStateMachine.nextPhase(gameState.phase);
         gameState.phase = nextPhase;
-        emitSuccess(this.io.to(gameState.tableId), 'newPhase', { phase: nextPhase }, 'New phase');
+        emitSuccess(this.io.to(gameState.tableId), 'newPhase', { phase: nextPhase },`${nextPhase} phase started`);
 
         if (nextPhase === 'FLOP') {
             gameState.boardCards.push(gameState.deck.pop(), gameState.deck.pop(), gameState.deck.pop());
@@ -402,7 +402,7 @@ class PlayerActionService {
         results.forEach(r => {
             const winner = gameState.players.find(p => p.id === r.playerId);
             winner.chips += r.amount;
-            console.log(`💵 Player ${r.playerId} wins ${r.amount} with ${r.handName || 'Unknown Hand'}`);
+            console.log(`💵 Player ${r.playerId} wins ${r.amount} with ${r.handName || 'High Card'}`);
         });
 
         // Get table state for usernames
