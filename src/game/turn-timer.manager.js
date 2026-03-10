@@ -45,13 +45,14 @@ class TurnTimerManager {
 
       const tablePlayer = tableState.players.find(p => p.userId === playerId);
 
+      const PlayerActionService = require('./player-action.service');
+      const actionService = new PlayerActionService(this.io, this, this.orchestrator);
+      const playerTurnData = actionService.formatPlayerTurnData(gameState, playerId, tableState);
       // Emit playerTurn to specific player
       if (tablePlayer?.socketId) {
-        const PlayerActionService = require('./player-action.service');
-        const actionService = new PlayerActionService(this.io, this, this.orchestrator);
-        const playerTurnData = actionService.formatPlayerTurnData(gameState, playerId, tableState);
         emitSuccess(this.io.to(tablePlayer.socketId), 'playerTurn', playerTurnData, `${playerTurnData.username}, it's your turn to act.`);
       }
+  emitSuccess(this.io.to(tableId), 'currentPlayerTurn', playerTurnData, 'Current turn');
 
       /* ------------------------------------ */
       /* 🤖 BOT LOGIC                         */

@@ -106,7 +106,6 @@ class PlayerActionService {
             }
 
             if (gameState.phase !== 'COMPLETED') {
-                emitSuccess(this.io.to(tableId), 'currentPlayerTurn', gameState.currentPlayerId, 'Current turn');
                 this.timerManager.startTimer(tableId, gameState.currentPlayerId);
             } else {
                 console.log(`🏁 [HAND COMPLETE] Starting cleanup`);
