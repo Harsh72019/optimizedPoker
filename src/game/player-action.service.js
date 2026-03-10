@@ -261,8 +261,22 @@ class PlayerActionService {
             gameState.pot = 0;
             gameState.phase = 'COMPLETED';
             emitSuccess(this.io.to(gameState.tableId), 'gameOver', { winner: { playerId: winner.id, amount: winAmount } }, 'Game over');
-            emitSuccess(this.io.to(gameState.tableId), 'winners', [{ playerId: winner.id, amount: winAmount }], 'Winner');
-            emitSuccess(this.io.to(gameState.tableId), 'callShowDown', {}, 'Showdown called');
+            const formattedWinners = [{
+                potType: "Main Pot",
+                amount: winAmount,
+                winners: [{
+                    username: 'Player',
+                    amount: winAmount,
+                    status: 'active',
+                    winningHand: 'High Card',
+                    cards: {
+                        holeCards: winner.cards || [],
+                        communityCards: gameState.boardCards || [],
+                        bestHand: winner.cards || []
+                    }
+                }]
+            }];
+            emitSuccess(this.io.to(gameState.tableId), 'winners', formattedWinners, 'Winner');
             return;
         }
 
@@ -388,7 +402,7 @@ class PlayerActionService {
         results.forEach(r => {
             const winner = gameState.players.find(p => p.id === r.playerId);
             winner.chips += r.amount;
-            console.log(`💵 Player ${r.playerId} wins ${r.amount}`);
+            console.log(`💵 Player ${r.playerId} wins ${r.amount} with ${r.handName || 'Unknown Hand'}`);
         });
 
         // Get table state for usernames
@@ -418,7 +432,6 @@ class PlayerActionService {
 
         emitSuccess(this.io.to(gameState.tableId), 'showdownResults', { winners: results }, 'Showdown complete');
         emitSuccess(this.io.to(gameState.tableId), 'winners', formattedWinners, 'Winners');
-        emitSuccess(this.io.to(gameState.tableId), 'callShowDown', {}, 'Showdown called');
         
         // Reveal cards one by one
         gameState.players.filter(p => p.status !== 'FOLDED').forEach(p => {
