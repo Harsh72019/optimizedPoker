@@ -64,8 +64,7 @@ class PlayerActionService {
             // Emit specific action events
             if (action === 'fold') {
                 const tableState = await require('../table/table-manager.service').getTable(tableId);
-                const updatedGameState = await gameStateManager.getGame(tableId);
-                const formattedData = this.formatTableData(tableState, updatedGameState);
+                const formattedData = this.formatTableData(tableState, gameState);
                 emitSuccess(this.io.to(tableId), 'playerFolded', formattedData, 'Player folded');
             } else if (action === 'all-in') {
                 emitSuccess(this.io.to(tableId), 'playerAllIn', { playerId, amount: player.chips }, 'Player all-in');
@@ -93,10 +92,11 @@ class PlayerActionService {
             }
 
             await gameStateManager.updateGame(tableId, gameState);
+            const refreshedGameState = await gameStateManager.getGame(tableId);
             console.log(`💾 [STATE SAVED] Phase: ${gameState.phase}, Pot: ${gameState.pot}`);
 
             tableState = await require('../table/table-manager.service').getTable(tableId);
-            const formattedData = this.formatTableData(tableState, gameState);
+            const formattedData = this.formatTableData(tableState, refreshedGameState);
             emitSuccess(this.io.to(tableId), 'tableInfo', formattedData, 'Table updated');
 
             // Calculate and emit winning probabilities
@@ -474,6 +474,7 @@ class PlayerActionService {
     formatTableData(tableState, gameState) {
         const formattedPlayers = tableState.players.map(player => {
             const gamePlayer = gameState?.players.find(p => p.id === player.userId);
+            console.log(`[DEBUG] Player ${player.userId} - gamePlayer status: ${gamePlayer?.status}`);
             return {
                 _id: player.userId,
                 username: player.username,
