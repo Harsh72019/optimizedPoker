@@ -19,7 +19,7 @@ class TurnTimerManager {
     this.actionService = actionService;
   }
 
-  async startTimer(tableId, playerId, seconds = 300) {
+  async startTimer(tableId, playerId, seconds = 20) {
     this.clearTimer(tableId);
 
     try {

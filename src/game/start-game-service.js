@@ -147,7 +147,7 @@ class StartGameService {
                 'smallBlind',
                 { 
                     position: gameState.smallBlindPosition, 
-                    amount: smallBlindAmount,
+                    smallBlind: smallBlindAmount,
                     player: gameState.players.find(p => p.seatPosition === gameState.smallBlindPosition)
                 },
                 'Small blind posted'
@@ -158,7 +158,7 @@ class StartGameService {
                 'bigBlind',
                 { 
                     position: gameState.bigBlindPosition, 
-                    amount: bigBlindAmount,
+                    bigBlind: bigBlindAmount,
                     player: gameState.players.find(p => p.seatPosition === gameState.bigBlindPosition)
                 },
                 'Big blind posted'
