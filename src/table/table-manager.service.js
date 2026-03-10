@@ -39,7 +39,8 @@ class TableManagerService {
             const table = {
                 players: [bot],
                 dealerPosition: 1,
-                status: 'IDLE'
+                status: 'IDLE',
+                tableBlockchainId : tableDoc?.data?.tableBlockchainId
             };
 
             await this.saveTable(tableId, table);

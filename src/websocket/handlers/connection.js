@@ -328,15 +328,25 @@ class ConnectionHandler {
             const walletAddress = userDoc.success && userDoc.data ? userDoc.data.walletAddress : null;
             
             if (finalChips > 0 && walletAddress) {
-                blockchainService.queueWithdrawal({
-                    userAddress: walletAddress,
-                    amount: finalChips,
-                    tableId: tableId,
-                    userId: userId
-                }).catch(err => 
+                // Get user email for blockchain service
+                const userEmail = userDoc.success && userDoc.data ? userDoc.data.email : null;
+                const username = user.username;
+                const tableBlockchainId = tableStateBefore.tableBlockchainId;
+                
+                blockchainService.queueWithdrawal(
+                    userId,
+                    tableId, 
+                    tableBlockchainId,
+                    finalChips,
+                    walletAddress,
+                    userEmail,
+                    username
+                ).catch(err => 
                     console.error('💰 [BLOCKCHAIN] Withdrawal queue error:', err.message)
                 );
                 console.log(`💰 [BLOCKCHAIN] Queued withdrawal for ${finalChips} chips (async)`);
+            } else {
+                console.log(`⚠️ [BLOCKCHAIN] Skipping withdrawal - chips: ${finalChips}, wallet: ${walletAddress ? 'present' : 'missing'}`);
             }
 
             // Sync to MongoDB TABLES.currentPlayers
