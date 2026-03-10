@@ -19,7 +19,7 @@ class TurnTimerManager {
     this.actionService = actionService;
   }
 
-  async startTimer(tableId, playerId, seconds = 20) {
+  async startTimer(tableId, playerId, seconds = 300) {
     this.clearTimer(tableId);
 
     try {
@@ -51,7 +51,7 @@ class TurnTimerManager {
 
       if (tablePlayer?.isBot) {
         console.log(`🤖 Bot turn: ${playerId}`);
-        await new Promise(r => setTimeout(r, 800));
+        await new Promise(r => setTimeout(r, 5000));
         await this.botManager.handleBotTurn(
           tableId,
           player,
@@ -67,7 +67,7 @@ class TurnTimerManager {
 
       if (player.isAway) {
         console.log(`💤 Away auto-action: ${playerId}`);
-        await new Promise(r => setTimeout(r, 800));
+        await new Promise(r => setTimeout(r, 5000));
         const autoAction = await this.awayManager.handleAwayTurn(tableId, player, gameState);
 
         if (autoAction) {

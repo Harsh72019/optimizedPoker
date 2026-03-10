@@ -51,8 +51,14 @@ class ProbabilityCalculator {
       'T': 10, 'J': 11, 'Q': 12, 'K': 13, 'A': 14
     };
     const SUIT_MAP = { 'h': 'Heart', 'd': 'Diamond', 'c': 'Club', 's': 'Spade' };
-
+    
     return cards.map(card => {
+      // If card is already an object with the correct format, return as is
+      if (typeof card === 'object' && card.cardFace && card.suit && card.value) {
+        return card;
+      }
+      
+      // Otherwise, convert from string format (legacy support)
       const value = card.slice(0, -1);
       const suit = card.slice(-1);
       return {

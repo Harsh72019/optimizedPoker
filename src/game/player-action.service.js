@@ -30,6 +30,9 @@ class PlayerActionService {
         if (!locked) throw new Error('Table busy');
 
         try {
+            
+            emitSuccess(this.io.to(tableId), 'playerActionStarted', { playerId, action, amount }, 'Action started');
+
             const gameState = await gameStateManager.getGame(tableId);
             if (!gameState) throw new Error('Game not found');
             if (gameState.phase === 'COMPLETED') {
@@ -51,8 +54,6 @@ class PlayerActionService {
             if (!validation.options.includes(action)) {
                 throw new Error('Invalid action');
             }
-
-            emitSuccess(this.io.to(tableId), 'playerActionStarted', { playerId, action, amount }, 'Action started');
 
             let tableState = await require('../table/table-manager.service').getTable(tableId);
             const actingPlayer = tableState.players.find(p => p.userId === normalizedPlayerId);
@@ -106,7 +107,10 @@ class PlayerActionService {
 
             if (gameState.phase !== 'COMPLETED') {
                 const playerTurnData = this.formatPlayerTurnData(gameState, gameState.currentPlayerId, tableState);
-                emitSuccess(this.io.to(tableId), 'playerTurn', playerTurnData, `${playerTurnData.username}, it's your turn to act.`);
+                const currentPlayer = tableState.players.find(p => p.userId === gameState.currentPlayerId);
+                if (currentPlayer?.socketId) {
+                    emitSuccess(this.io.to(currentPlayer.socketId), 'playerTurn', playerTurnData, `${playerTurnData.username}, it's your turn to act.`);
+                }
                 emitSuccess(this.io.to(tableId), 'currentPlayerTurn', gameState.currentPlayerId, 'Current turn');
                 this.timerManager.startTimer(tableId, gameState.currentPlayerId);
             } else {
@@ -283,7 +287,7 @@ class PlayerActionService {
             gameState.boardCards.push(gameState.deck.pop(), gameState.deck.pop(), gameState.deck.pop());
             console.log(`🃏 [FLOP] ${gameState.boardCards.slice(0, 3).join(', ')}`);
             emitSuccess(this.io.to(gameState.tableId), 'communityCardsDealt', 
-                gameState.boardCards.slice(0, 3), 'Flop dealt');
+                gameState.boardCards, 'Flop dealt');
             
             const probabilities = ProbabilityCalculator.calculateWinningProbabilities(gameState);
             emitSuccess(this.io.to(gameState.tableId), 'winningProbability', probabilities, 'Probabilities updated');
@@ -293,7 +297,7 @@ class PlayerActionService {
             gameState.boardCards.push(gameState.deck.pop());
             console.log(`🃏 [TURN] ${gameState.boardCards[3]}`);
             emitSuccess(this.io.to(gameState.tableId), 'communityCardsDealt', 
-                [gameState.boardCards[3]], 'Turn dealt');
+                gameState.boardCards, 'Turn dealt');
             
             const probabilities = ProbabilityCalculator.calculateWinningProbabilities(gameState);
             emitSuccess(this.io.to(gameState.tableId), 'winningProbability', probabilities, 'Probabilities updated');
@@ -303,7 +307,7 @@ class PlayerActionService {
             gameState.boardCards.push(gameState.deck.pop());
             console.log(`🃏 [RIVER] ${gameState.boardCards[4]}`);
             emitSuccess(this.io.to(gameState.tableId), 'communityCardsDealt', 
-                [gameState.boardCards[4]], 'River dealt');
+                gameState.boardCards, 'River dealt');
             
             const probabilities = ProbabilityCalculator.calculateWinningProbabilities(gameState);
             emitSuccess(this.io.to(gameState.tableId), 'winningProbability', probabilities, 'Probabilities updated');
