@@ -42,12 +42,15 @@ class HandEvaluator {
 
     if (evaluated.length === 0) return [];
 
-    evaluated.sort((a, b) => b.hand.compare(a.hand));
-
-    const bestHand = evaluated[0].hand;
+    // Find all hands with the best rank
+    const allHands = evaluated.map(e => e.hand);
+    const winners = Hand.winners(allHands);
+    
+    console.log('[DEBUG] All hands:', evaluated.map(e => `${e.playerId}: ${e.handName}`));
+    console.log('[DEBUG] Winning hands:', winners.map(h => h.descr));
 
     return evaluated
-      .filter(p => p.hand.compare(bestHand) === 0)
+      .filter(e => winners.includes(e.hand))
       .map(p => ({ 
         playerId: p.playerId, 
         handName: p.handName,
