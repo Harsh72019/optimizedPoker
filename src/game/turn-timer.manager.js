@@ -49,11 +49,20 @@ class TurnTimerManager {
       const actionService = new PlayerActionService(this.io, this, this.orchestrator);
       const playerTurnData = actionService.formatPlayerTurnData(gameState, playerId, tableState);
       // Emit playerTurn to specific player
+
+      if (tablePlayer?.socketId) {
+        this.io.to(tableId).except(tablePlayer.socketId).emit('currentPlayerTurn', {
+          status: true,
+          data: { playerId },
+          message: 'Current turn'
+        });
+      }
       if (tablePlayer?.socketId) {
         console.log(`🎯 Player turn data:`, JSON.stringify(playerTurnData, null, 2));
         emitSuccess(this.io.to(tablePlayer.socketId), 'playerTurn', playerTurnData, `${playerTurnData.username}, it's your turn to act.`);
       }
-  emitSuccess(this.io.to(tableId), 'currentPlayerTurn', { playerId }, 'Current turn');
+      // Emit currentPlayerTurn to all OTHER players (excluding current player)
+      
 
       /* ------------------------------------ */
       /* 🤖 BOT LOGIC                         */
