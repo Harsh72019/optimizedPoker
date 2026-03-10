@@ -80,8 +80,6 @@ class GameOrchestrator {
             console.log(`🏁 Hand completed at table ${tableId}`);
             emitSuccess(this.io.to(tableId), 'showdownDelay', { seconds: 10 }, 'Showdown delay');
 
-
-            emitSuccess(this.io.to(tableId), 'newRoundStarting', { seconds: 10 }, 'New round starting');
             // Increment handsPlayed for all connected players
             const sockets = await this.io.in(tableId).fetchSockets();
             sockets.forEach(socket => {
@@ -92,6 +90,7 @@ class GameOrchestrator {
             });
 
             const timeout = setTimeout(async () => {
+                emitSuccess(this.io.to(tableId), 'newRoundStarting', { seconds: 10 }, 'New round starting');
                 await this.prepareNextHand(tableId);
             }, 10000);
 
