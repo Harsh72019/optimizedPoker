@@ -90,9 +90,9 @@ class GameOrchestrator {
             });
 
             const timeout = setTimeout(async () => {
-                emitSuccess(this.io.to(tableId), 'newRoundStarting', { seconds: 10 }, 'New round starting');
+                emitSuccess(this.io.to(tableId), 'newRoundStarting', { seconds: 8 }, 'New round starting');
                 await this.prepareNextHand(tableId);
-            }, 10000);
+            }, 8000);
 
             await tableManager.setStatus(tableId, 'WAITING');
             this.restartTimers.set(tableId, timeout);
