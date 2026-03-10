@@ -50,6 +50,7 @@ class TurnTimerManager {
       const playerTurnData = actionService.formatPlayerTurnData(gameState, playerId, tableState);
       // Emit playerTurn to specific player
       if (tablePlayer?.socketId) {
+        console.log(`🎯 Player turn data:`, JSON.stringify(playerTurnData, null, 2));
         emitSuccess(this.io.to(tablePlayer.socketId), 'playerTurn', playerTurnData, `${playerTurnData.username}, it's your turn to act.`);
       }
   emitSuccess(this.io.to(tableId), 'currentPlayerTurn', playerTurnData, 'Current turn');
