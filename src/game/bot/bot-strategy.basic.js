@@ -1,45 +1,57 @@
 // src/game/bot/bot-strategy.basic.js
 
 const PokerEngine = require('../../engine/poker-engine');
+const BotBehaviour = require('../../utils/botBehaviour');
 
 class BasicBotStrategy {
+  constructor() {
+    this.botBehaviours = new Map();
+  }
+
+  getBotBehaviour(botId) {
+    if (!this.botBehaviours.has(botId)) {
+      this.botBehaviours.set(botId, new BotBehaviour(botId, 'hard'));
+    }
+    return this.botBehaviours.get(botId);
+  }
+
   decide(bot, gameState) {
-    const validation =
-      PokerEngine.validateAction(bot, gameState);
+    const validation = PokerEngine.validateAction(bot, gameState);
+    const behaviour = this.getBotBehaviour(bot.id);
 
-    const pot = gameState.pot;
-    const callAmount = validation.callAmount || 0;
+    const gameData = {
+      phase: gameState.phase?.toLowerCase() || 'preflop',
+      pot: gameState.pot + Object.values(gameState.streetBets || {}).reduce((a, b) => a + b, 0),
+      betToCall: validation.callAmount || 0,
+      playersInHand: gameState.players.filter(p => p.status !== 'FOLDED').length,
+      totalPlayers: gameState.players.length,
+      position: bot.seatPosition || 0,
+      minBet: gameState.bigBlind || 0.04
+    };
 
-    // If check possible → check 60% of time
-    if (validation.options.includes('check')) {
-      return { type: 'check' };
+    const playerData = {
+      cards: bot.cards || [],
+      communityCards: gameState.boardCards || [],
+      chips: bot.chips || 0,
+      currentBet: gameState.streetBets?.[bot.id] || 0,
+      pot: gameData.pot
+    };
+
+    const decision = behaviour.makeDecision(gameData, playerData);
+
+    if (!validation.options.includes(decision.action)) {
+      if (validation.options.includes('check')) return { type: 'check' };
+      if (validation.options.includes('fold')) return { type: 'fold' };
+      return { type: validation.options[0] };
     }
 
-    // Small calls allowed
-    if (
-      validation.options.includes('call') &&
-      callAmount < bot.chips * 0.2
-    ) {
-      return { type: 'call' };
+    if (decision.action === 'raise') {
+      const minRaise = validation.minRaise || validation.minRaiseAmount || gameState.bigBlind || 0.04;
+      const amount = Math.max(decision.amount, minRaise);
+      return { type: 'raise', amount: Math.min(amount, bot.chips) };
     }
 
-    // Occasional raise (30% chance)
-    if (validation.options.includes('raise')) {
-      const raiseAmount =
-        Math.min(
-          validation.minRaiseAmount,
-          bot.chips * 0.3
-        );
-
-      if (Math.random() < 0.3) {
-        return {
-          type: 'raise',
-          amount: raiseAmount
-        };
-      }
-    }
-
-    return { type: 'fold' };
+    return { type: decision.action, amount: decision.amount };
   }
 }
 

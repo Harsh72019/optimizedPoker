@@ -236,6 +236,110 @@ const tournamentSchema = new Schema(
     timeZone: {type: String, required: true},
     generatedBlindLevels: Array, // Cache for blind levels
     startingChips: {type: Number},
+    
+    // Financial Configuration
+    hostId: {
+      type: Schema.Types.ObjectId,
+      ref: 'User',
+      index: true
+    },
+    isPrivate: {
+      type: Boolean,
+      default: false,
+      index: true
+    },
+    tier: {
+      type: Number,
+      min: 1,
+      max: 5,
+      required: function() { return this.isPrivate || !this.isOfficial; }
+    },
+    hostUplift: {
+      type: Number,
+      min: 0,
+      max: 2.5,
+      default: 0
+    },
+    hostRewardPercent: {
+      type: Number,
+      min: 0,
+      max: 25,
+      default: 0
+    },
+    participationThreshold: {
+      type: Number,
+      enum: [25, 50, 75, 100],
+      default: 75
+    },
+    estimatedHours: {
+      type: Number,
+      min: 0.5,
+      max: 12,
+      default: 2
+    },
+    timerSeconds: {
+      type: Number,
+      enum: [5, 10, 15, 20, 30],
+      default: 30
+    },
+    
+    // Financial Tracking
+    setupFeeAmount: {
+      type: Number,
+      default: 0
+    },
+    effectiveRake: {
+      type: Number,
+      min: 0,
+      max: 20
+    },
+    hostRewardPaid: {
+      type: Number,
+      default: 0
+    },
+    affiliateId: {
+      type: Schema.Types.ObjectId,
+      ref: 'User'
+    },
+    financialStatus: {
+      type: String,
+      enum: ['PENDING', 'SETUP_FEE_CHARGED', 'SETTLED', 'REFUNDED'],
+      default: 'PENDING'
+    },
+    gameFinancialsId: {
+      type: Schema.Types.ObjectId,
+      ref: 'GameFinancials'
+    },
+    
+    // Official tournament fields
+    isOfficial: {
+      type: Boolean,
+      default: false,
+      index: true
+    },
+    createdBy: {
+      type: Schema.Types.ObjectId,
+      ref: 'Admin'
+    },
+    startedBy: {
+      type: Schema.Types.ObjectId,
+      ref: 'Admin'
+    },
+    startedAt: {
+      type: Date
+    },
+    completedAt: {
+      type: Date
+    },
+    cancelledBy: {
+      type: Schema.Types.ObjectId,
+      ref: 'Admin'
+    },
+    rakePercentage: {
+      type: Number,
+      min: 0,
+      max: 15
+    }
   },
   {
     timestamps: true,

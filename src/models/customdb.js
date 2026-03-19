@@ -508,6 +508,16 @@ const COLLECTIONS = {
   COOLDOWNS: 'cooldowns',
   FUNDING_RECORDS: 'fundingrecords',
   RECRUIT_EARNINGS: 'recruitearnings',
+  // Financial Collections
+  GAME_FINANCIALS: 'gamefinancials',
+  SETUP_FEE_LEDGER: 'setupfeeledger',
+  RAKE_LEDGER: 'rakeledger',
+  HOST_REWARD_LEDGER: 'hostrewardledger',
+  AFFILIATE_LEDGER: 'affiliateledger',
+  ROUNDING_POOL_LEDGER: 'roundingpoolledger',
+  TRANSACTION_LEDGER: 'transactionledger',
+  ADMIN_CONFIG: 'adminconfig',
+  PRIVATE_TABLES: 'privatetables'
 };
 
 // Model key mappings for validation

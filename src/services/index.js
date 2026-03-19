@@ -14,3 +14,17 @@ exports.cooldownService = require('./cooldown.service');
 exports.reputationService = require('./reputation.service');
 exports.queueService = require('./queue.service');
 exports.fundingService = require('./funding.service');
+
+// Financial Services
+exports.financialService = require('./financial.service');
+exports.setupFeeService = require('./setup-fee.service');
+exports.settlementService = require('./settlement.service');
+exports.commissionPreviewService = require('./commission-preview.service');
+exports.rakeTierService = require('./rake-tier.service');
+exports.financialIntegrationService = require('./financial-integration.service');
+exports.cashGameRakeService = require('./cash-game-rake.service');
+exports.multiTableTournamentService = require('./multi-table-tournament.service');
+exports.walletIntegrationService = require('./wallet-integration.service');
+exports.trustedHostService = require('./trusted-host.service');
+exports.officialTournamentService = require('./official-tournament.service');
+exports.gameEngineIntegrationService = require('./game-engine-integration.service');

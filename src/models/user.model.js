@@ -144,7 +144,63 @@ const userSchema = new mongoose.Schema(
     recruits: [{
       type: String,
       ref: 'User'
-    }]
+    }],
+    
+    // Financial fields
+    balance: {
+      type: Number,
+      default: 0,
+      index: true
+    },
+    
+    // Trusted Host fields
+    isTrustedHost: {
+      type: Boolean,
+      default: false,
+      index: true
+    },
+    trustedHostPromotedBy: {
+      type: String,
+      ref: 'Admin'
+    },
+    trustedHostPromotedAt: {
+      type: Date
+    },
+    trustedHostReason: {
+      type: String
+    },
+    trustedHostRevokedBy: {
+      type: String,
+      ref: 'Admin'
+    },
+    trustedHostRevokedAt: {
+      type: Date
+    },
+    trustedHostRevokeReason: {
+      type: String
+    },
+    
+    // User verification
+    isVerified: {
+      type: Boolean,
+      default: false,
+      index: true
+    },
+    verifiedAt: {
+      type: Date
+    },
+    
+    // User rating
+    rating: {
+      type: Number,
+      default: 0,
+      min: 0,
+      max: 5
+    },
+    ratingCount: {
+      type: Number,
+      default: 0
+    }
   },
   {timestamps: true}
 );

@@ -7,6 +7,8 @@ const tournamentRoute = require('./tournament.route');
 const templateRoute = require('./template.route');
 const tableRoute = require('./table.route');
 const matchmakingRoute = require('./matchmaking.routes');
+const financialRoute = require('./financial.routes');
+const privateTableRoute = require('./private-table.route');
 
 const router = express.Router();
 
@@ -17,5 +19,7 @@ router.use('/template', templateRoute);
 router.use('/tournament', tournamentRoute);
 router.use('/table', tableRoute);
 router.use('/matchmaking', matchmakingRoute);
+router.use('/financial', financialRoute);
+router.use('/private-table', privateTableRoute);
 
 module.exports = router;

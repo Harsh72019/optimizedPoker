@@ -76,6 +76,35 @@ class PotCalculator {
 
   return distributions;
 }
+
+  /**
+   * Calculate rake for cash games and integrate with financial system
+   */
+  static async calculateAndCollectRake(tableId, handNumber, potAmount, playersInvolved, tableConfig = {}) {
+    try {
+      // Only collect rake for cash games
+      if (tableConfig.gameType !== 'CASH_GAME') {
+        return { rakeCollected: 0 };
+      }
+
+      const gameEngineIntegrationService = require('../services/game-engine-integration.service');
+      
+      const rakeResult = await gameEngineIntegrationService.onCashGameHandCompleted({
+        tableId,
+        handNumber,
+        potSize: potAmount,
+        playersInvolved,
+        rakePercentage: tableConfig.rakePercentage || 5.0,
+        hostUplift: tableConfig.hostUplift || 0
+      });
+
+      return rakeResult;
+      
+    } catch (error) {
+      console.error(`❌ Rake collection failed for table ${tableId}:`, error);
+      return { rakeCollected: 0, error: error.message };
+    }
+  }
 }
 
 module.exports = PotCalculator;

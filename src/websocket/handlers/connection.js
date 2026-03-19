@@ -123,11 +123,16 @@ class ConnectionHandler {
 
     async handleJoinTable(data) {
         try {
-            const { tableId, blockChainTableId, buyIn, chipsInPlay, token } = data;
+            const { tableId, blockChainTableId, buyIn, chipsInPlay, token, privateTableId } = data;
             const user = await verifyEventToken(token, this.socket);
             const userId = user._id.toString();
 
             this.socket.user = user;
+
+            // 🆕 Handle private table join
+            if (privateTableId) {
+                return await this.handlePrivateTableJoin(privateTableId, userId, user, buyIn || chipsInPlay);
+            }
 
             // Use chipsInPlay if provided, otherwise buyIn
             const finalBuyIn = chipsInPlay || buyIn;
@@ -288,6 +293,95 @@ class ConnectionHandler {
         } catch (err) {
             console.log(err)
             emitError(this.socket, 'unableToJoin', err.message);
+        }
+    }
+
+    /**
+     * Handle private table join - players join the underlying table after private table starts
+     */
+    async handlePrivateTableJoin(privateTableId, userId, user, buyIn) {
+        try {
+            const { PrivateTable } = require('../../models');
+            const privateTable = await PrivateTable.findById(privateTableId);
+            
+            if (!privateTable) {
+                throw new Error('Private table not found');
+            }
+            
+            if (privateTable.status !== 'ACTIVE') {
+                throw new Error('Private table is not active');
+            }
+            
+            if (!privateTable.registeredPlayers.includes(userId)) {
+                throw new Error('You are not registered for this private table');
+            }
+            
+            // Get the underlying table ID
+            const underlyingTableId = privateTable.underlyingTableId;
+            if (!underlyingTableId) {
+                throw new Error('Underlying table not found');
+            }
+            
+            // Join the underlying table with the private table buy-in
+            const finalBuyIn = privateTable.buyIn;
+            
+            const { tableState, isReconnect } = await tableManager.seatPlayer(
+                underlyingTableId,
+                {
+                    userId,
+                    username: user.username,
+                    chips: finalBuyIn,
+                    socketId: this.socket.id
+                }
+            );
+            
+            this.socket.join(underlyingTableId);
+            this.socket.tableId = underlyingTableId;
+            this.socket.privateTableId = privateTableId;
+            this.socket.handsPlayed = 0;
+            
+            // Sync to MongoDB
+            this.syncPlayerToMongoTable(underlyingTableId, userId, 'join').catch(err => 
+                console.error('Failed to sync to MongoDB:', err.message)
+            );
+            
+            const gameState = await require('../../state/game-state').getGame(underlyingTableId);
+            const tableStatus = await tableManager.getStatus(underlyingTableId);
+            const showLoading = !gameState || tableStatus === 'WAITING' || tableStatus === 'IDLE';
+            
+            emitSuccess(this.socket, 'roomJoined', { 
+                tableId: underlyingTableId,
+                privateTableId,
+                tableState, 
+                showLoading 
+            }, 'Joined private table game successfully');
+            
+            const formattedData = this.formatTableData(tableState, gameState);
+            emitSuccess(this.socket, 'tableInfo', formattedData, 'Private table info');
+            
+            if (!isReconnect) {
+                emitSuccess(this.io.to(underlyingTableId), 'playerJoined', formattedData, `${user.username} joined private table`);
+                const seatedCount = tableState.players.length;
+                await this.orchestrator.onPlayerSeated(underlyingTableId, seatedCount);
+                console.log(`🎮 [PRIVATE] ${userId} seated at private table ${privateTableId} -> underlying table ${underlyingTableId}`);
+            }
+            
+            // Send mid-game state if needed
+            if (gameState && gameState.phase !== 'COMPLETED') {
+                const player = gameState.players.find(p => p.id === userId);
+                
+                if (player && player.cards) {
+                    emitSuccess(this.socket, 'receiveHand', {playerId : player.id, hand: player.cards }, 'Your cards');
+                }
+                
+                if (gameState.boardCards && gameState.boardCards.length > 0) {
+                    emitSuccess(this.socket, 'communityCardsDealt', gameState.boardCards, 'Community cards');
+                }
+            }
+            
+        } catch (err) {
+            console.error('Private table join error:', err.message);
+            emitError(this.socket, 'unableToJoinPrivateTable', err.message);
         }
     }
     async handleLeaveTable(data) {
