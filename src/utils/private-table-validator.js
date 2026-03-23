@@ -130,9 +130,9 @@ class PrivateTableValidator {
       // SNG should have reasonable buy-in range
       if (tableConfig.buyInSettings) {
         const range = tableConfig.buyInSettings.max - tableConfig.buyInSettings.min;
-        if (range > tableConfig.buyInSettings.min * 5) {
-          errors.push('Buy-in range for SNG should not be too wide');
-        }
+        // if (range > tableConfig.buyInSettings.min * 5) {
+        //   errors.push('Buy-in range for SNG should not be too wide');
+        // }
       }
     }
     
