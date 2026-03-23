@@ -32,6 +32,7 @@ class PrivateTableHandler {
             const hostId = user._id.toString();
 
             // Validate table configuration
+            console.log(token , tableConfig);
             const validation = PrivateTableValidator.validate(tableConfig);
             if (!validation.valid) {
                 throw new Error('Invalid table configuration: ' + validation.errors.join(', '));
