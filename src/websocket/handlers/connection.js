@@ -301,18 +301,28 @@ class ConnectionHandler {
      */
     async handlePrivateTableJoin(privateTableId, userId, user, buyIn) {
         try {
-            const { PrivateTable } = require('../../models');
-            const privateTable = await PrivateTable.findById(privateTableId);
+            const mongoHelper = require('../../models/customdb');
+            const privateTableResult = await mongoHelper.findById(
+                mongoHelper.COLLECTIONS.PRIVATE_TABLES, 
+                privateTableId
+            );
             
-            if (!privateTable) {
+            if (!privateTableResult.success || !privateTableResult.data) {
                 throw new Error('Private table not found');
             }
+            
+            const privateTable = privateTableResult.data;
             
             if (privateTable.status !== 'ACTIVE') {
                 throw new Error('Private table is not active');
             }
             
-            if (!privateTable.registeredPlayers.includes(userId)) {
+            // Check if user is registered for this private table
+            const isRegistered = privateTable.registeredPlayers.some(
+                p => p.userId?.toString() === userId.toString()
+            );
+            
+            if (!isRegistered) {
                 throw new Error('You are not registered for this private table');
             }
             
@@ -322,8 +332,9 @@ class ConnectionHandler {
                 throw new Error('Underlying table not found');
             }
             
-            // Join the underlying table with the private table buy-in
-            const finalBuyIn = privateTable.buyIn;
+            // Use private table buy-in settings
+            const config = privateTable.privateConfig || {};
+            const finalBuyIn = config.buyInSettings?.min || privateTable.buyIn;
             
             const { tableState, isReconnect } = await tableManager.seatPlayer(
                 underlyingTableId,
@@ -353,7 +364,15 @@ class ConnectionHandler {
                 tableId: underlyingTableId,
                 privateTableId,
                 tableState, 
-                showLoading 
+                showLoading,
+                privateTableInfo: {
+                    gameType: privateTable.gameType,
+                    stakes: config.stakes,
+                    features: {
+                        rebuy: config.rebuy,
+                        antesStraddles: config.antesStraddles
+                    }
+                }
             }, 'Joined private table game successfully');
             
             const formattedData = this.formatTableData(tableState, gameState);
@@ -376,6 +395,15 @@ class ConnectionHandler {
                 
                 if (gameState.boardCards && gameState.boardCards.length > 0) {
                     emitSuccess(this.socket, 'communityCardsDealt', gameState.boardCards, 'Community cards');
+                }
+                
+                // Send private table specific game state
+                if (gameState.privateTableConfig) {
+                    emitSuccess(this.socket, 'privateTableGameState', {
+                        stakes: gameState.privateTableConfig.stakes,
+                        timer: gameState.privateTableConfig.timer,
+                        features: gameState.privateTableConfig.features
+                    }, 'Private table game configuration');
                 }
             }
             

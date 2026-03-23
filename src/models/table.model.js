@@ -45,6 +45,35 @@ const tableSchema = new Schema(
       type: Map,
       of: Number,
       default: new Map()
+    },
+    
+    // Private table integration
+    isPrivate: {
+      type: Boolean,
+      default: false
+    },
+    
+    privateTableId: {
+      type: String,
+      ref: 'PrivateTable'
+    },
+    
+    // Store private table configuration for game engine access
+    privateConfig: {
+      stakes: {
+        type: {
+          type: String,
+          enum: ['FIXED_LIMIT', 'POT_LIMIT', 'NO_LIMIT', 'CUSTOM']
+        },
+        blinds: {
+          small: Number,
+          big: Number
+        }
+      },
+      turnTimer: Number,
+      rebuy: Boolean,
+      antesStraddles: Boolean,
+      buyInReentryRules: String
     }
   },
   { timestamps: true }

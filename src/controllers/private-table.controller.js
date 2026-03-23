@@ -3,97 +3,59 @@ const crypto = require("crypto");
 
 const catchAsync = require("../utils/catchAsync");
 const mongoHelper = require('../models/customdb');
-
-const gameEngineIntegrationService = require("../services/game-engine-integration.service");
-const walletIntegrationService = require("../services/wallet-integration.service");
-
+const privateTableService = require('../services/private-table.service');
+const PrivateTableValidator = require('../utils/private-table-validator');
 
 /* ------------------------------------------------ */
 /* CREATE PRIVATE TABLE */
 /* ------------------------------------------------ */
 
 const createPrivateTable = catchAsync(async (req, res) => {
-
-  const hostId = req.user.id;
-
-  const {
-    gameType,
-    name,
-    description,
-    buyIn,
-    declaredCapacity,
-    participationThreshold,
-    tier,
-    hostUplift = 0,
-    hostRewardPercent = 0,
-    estimatedHours,
-    timerSeconds,
-    scheduledStartTime,
-    password,
-    tags = []
-  } = req.body;
-
-  const tableId = `pvt_${crypto.randomUUID()}`;
-
-  const financialSetup = await gameEngineIntegrationService.onPrivateTableCreated({
-    tableId,
-    hostId,
-    gameType,
-    buyIn,
-    maxPlayers: declaredCapacity,
-    participationThreshold,
-    tier,
-    hostUplift,
-    hostRewardPercent,
-    estimatedHours,
-    timerSeconds
-  });
-
-  const privateTableData = {
-    _id: tableId,
-    hostId,
-    gameType,
-    name,
-    description,
-    buyIn,
-    declaredCapacity,
-    participationThreshold,
-    tier,
-
-    tierRake: financialSetup.tierRake,
-    hostUplift,
-    effectiveRake: financialSetup.effectiveRake,
-    hostRewardPercent,
-
-    estimatedHours,
-    timerSeconds,
-
-    setupFeeAmount: financialSetup.setupFee.chargedAmount,
-    setupFeePaid: true,
-    setupFeeTransactionId: financialSetup.setupFee.transactionId,
-
-    scheduledStartTime: scheduledStartTime
-      ? new Date(scheduledStartTime)
-      : null,
-
-    password,
-    tags,
-
-    status: "WAITING_FOR_PLAYERS",
-    registeredPlayers: [],
-    waitlist: []
-  };
-
-  const createResult = await mongoHelper.create(mongoHelper.COLLECTIONS.PRIVATE_TABLES, privateTableData);
+  // Debug logging
+  console.log('🚀 ~ createPrivateTable ~ req.user:', req.user);
+  console.log('🚀 ~ createPrivateTable ~ req.body:', req.body);
   
-  if (!createResult.success) {
-    throw new Error(`Failed to create private table: ${createResult.error}`);
+  // Handle missing authentication
+  if (!req.user || !req.user._id) {
+    return res.status(httpStatus.UNAUTHORIZED).json({
+      success: false,
+      message: 'Authentication required. Please provide a valid token.'
+    });
+  }
+  
+  const hostId = req.user._id;
+  const tableConfig = req.body;
+
+  // Validate table configuration using the same validator as socket handler
+  const validation = PrivateTableValidator.validate(tableConfig);
+  if (!validation.valid) {
+    return res.status(httpStatus.BAD_REQUEST).json({
+      success: false,
+      message: 'Invalid table configuration',
+      errors: validation.errors
+    });
   }
 
-  res.status(httpStatus.CREATED).json({
-    success: true,
-    data: createResult.data
-  });
+  try {
+    // Use the same service as socket handler
+    const result = await privateTableService.createPrivateTable(hostId, tableConfig);
+
+    res.status(httpStatus.CREATED).json({
+      success: true,
+      data: {
+        privateTable: result.privateTable,
+        setupFee: result.setupFee.chargedAmount,
+        financialPreview: result.financialPreview
+      },
+      message: 'Private table created successfully'
+    });
+  } catch (error) {
+    console.error('🚀 ~ createPrivateTable ~ error:', error);
+    res.status(httpStatus.BAD_REQUEST).json({
+      success: false,
+      message: error.message
+    });
+  }
 });
 
 
@@ -102,26 +64,76 @@ const createPrivateTable = catchAsync(async (req, res) => {
 /* ------------------------------------------------ */
 
 const getPrivateTable = catchAsync(async (req, res) => {
-
   const { tableId } = req.params;
 
-  const table = await PrivateTable
-    .findById(tableId)
-    .populate("hostId", "username email")
-    .populate("registeredPlayers.userId", "username")
-    .populate("winners.userId", "username");
+  try {
+    console.log('🔍 [getPrivateTable] TableId:', tableId);
+    
+    // Get basic table data first
+    const table = await privateTableService.getPrivateTable(tableId);
 
-  if (!table) {
-    return res.status(httpStatus.NOT_FOUND).json({
+    console.log('🔍 [getPrivateTable] Result:', table ? 'Found' : 'Not found');
+
+    if (!table) {
+      return res.status(httpStatus.NOT_FOUND).json({
+        success: false,
+        message: "Private table not found"
+      });
+    }
+
+    // Manually populate host information
+    if (table.hostId) {
+      const hostResult = await mongoHelper.findById(
+        mongoHelper.COLLECTIONS.USERS,
+        table.hostId
+      );
+      
+      if (hostResult.success && hostResult.data) {
+        table.host = {
+          username: hostResult.data.username,
+          email: hostResult.data.email
+        };
+      }
+    }
+
+    // Manually populate registered players
+    if (table.registeredPlayers && Array.isArray(table.registeredPlayers)) {
+      const populatedPlayers = [];
+      for (const player of table.registeredPlayers) {
+        if (player.userId) {
+          const userResult = await mongoHelper.findById(
+            mongoHelper.COLLECTIONS.USERS,
+            player.userId
+          );
+          
+          if (userResult.success && userResult.data) {
+            populatedPlayers.push({
+              ...player,
+              user: {
+                username: userResult.data.username
+              }
+            });
+          } else {
+            populatedPlayers.push(player);
+          }
+        } else {
+          populatedPlayers.push(player);
+        }
+      }
+      table.registeredPlayers = populatedPlayers;
+    }
+
+    res.json({
+      success: true,
+      data: table
+    });
+  } catch (error) {
+    console.error('🔍 [getPrivateTable] Error:', error);
+    res.status(httpStatus.INTERNAL_SERVER_ERROR).json({
       success: false,
-      message: "Private table not found"
+      message: error.message
     });
   }
-
-  res.json({
-    success: true,
-    data: table
-  });
 });
 
 
@@ -130,127 +142,133 @@ const getPrivateTable = catchAsync(async (req, res) => {
 /* ------------------------------------------------ */
 
 const joinPrivateTable = catchAsync(async (req, res) => {
-
   const { tableId } = req.params;
-  const userId = req.user.id;
+  const userId = req.user._id;
   const { password } = req.body;
 
-  const table = await PrivateTable.findById(tableId);
-
-  if (!table) {
-    return res.status(httpStatus.NOT_FOUND).json({
-      success: false,
-      message: "Private table not found"
-    });
-  }
-
-  if (table.password && table.password !== password) {
-    return res.status(httpStatus.UNAUTHORIZED).json({
-      success: false,
-      message: "Invalid password"
-    });
-  }
-
-  if (table.status !== "WAITING_FOR_PLAYERS") {
-    return res.status(httpStatus.BAD_REQUEST).json({
-      success: false,
-      message: "Table not accepting players"
-    });
-  }
-
-  if (table.isFull) {
-    return res.status(httpStatus.BAD_REQUEST).json({
-      success: false,
-      message: "Table is full"
-    });
-  }
-
-  const alreadyJoined = table.registeredPlayers.find(
-    p => p.userId.toString() === userId
-  );
-
-  if (alreadyJoined) {
-    return res.status(httpStatus.BAD_REQUEST).json({
-      success: false,
-      message: "Already joined"
-    });
-  }
-
-  const buyInResult = await walletIntegrationService.chargeBuyIn(
-    userId,
-    table.buyIn,
-    tableId
-  );
-
-  await table.addPlayer(userId, buyInResult.transactionId);
-
-  await table.reload?.();
-
-  if (table.canStart()) {
-
-    await table.startGame();
-
-    await gameEngineIntegrationService.startPrivateTable({
-      tableId,
-      players: table.registeredPlayers
-    });
-
-  }
-
-  res.json({
-    success: true,
-    data: {
-      table,
-      buyInCharged: table.buyIn,
-      transactionId: buyInResult.transactionId,
-      gameStarted: table.status === "ACTIVE"
+  try {
+    // Check password first if required
+    const privateTable = await privateTableService.getPrivateTable(tableId);
+    if (!privateTable) {
+      return res.status(httpStatus.NOT_FOUND).json({
+        success: false,
+        message: "Private table not found"
+      });
     }
-  });
 
+    if (privateTable.password && privateTable.password !== password) {
+      return res.status(httpStatus.UNAUTHORIZED).json({
+        success: false,
+        message: "Invalid password"
+      });
+    }
+
+    // Use the same service as socket handler
+    const result = await privateTableService.registerPlayer(tableId, userId);
+
+    res.json({
+      success: true,
+      data: {
+        tableId,
+        registered: result.registered,
+        waitlisted: result.waitlisted,
+        position: result.position,
+        tableStatus: result.tableStatus,
+        playersRegistered: result.playersRegistered,
+        spotsRemaining: result.spotsRemaining
+      },
+      message: result.registered ? 'Joined private table' : 'Added to waitlist'
+    });
+  } catch (error) {
+    res.status(httpStatus.BAD_REQUEST).json({
+      success: false,
+      message: error.message
+    });
+  }
 });
 
+
+/* ------------------------------------------------ */
+/* START PRIVATE TABLE */
+/* ------------------------------------------------ */
+
+const startPrivateTable = catchAsync(async (req, res) => {
+  const { tableId } = req.params;
+  const hostId = req.user._id;
+
+  try {
+    // Use the same service as socket handler
+    const result = await privateTableService.startPrivateTable(tableId, hostId);
+
+    res.json({
+      success: true,
+      data: {
+        tableId,
+        gameType: result.privateTable.gameType,
+        underlyingTableId: result.gameResult.underlyingTable?._id,
+        tournamentId: result.gameResult.tournament?._id,
+        message: result.message
+      },
+      message: 'Private table started successfully'
+    });
+  } catch (error) {
+    res.status(httpStatus.BAD_REQUEST).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
 
 /* ------------------------------------------------ */
 /* LEAVE TABLE */
 /* ------------------------------------------------ */
 
 const leavePrivateTable = catchAsync(async (req, res) => {
-
   const { tableId } = req.params;
-  const userId = req.user.id;
+  const userId = req.user._id;
 
-  const table = await PrivateTable.findById(tableId);
+  try {
+    const privateTable = await privateTableService.getPrivateTable(tableId);
 
-  if (!table) {
-    return res.status(httpStatus.NOT_FOUND).json({
-      success: false,
-      message: "Private table not found"
-    });
-  }
-
-  if (table.status !== "WAITING_FOR_PLAYERS") {
-    return res.status(httpStatus.BAD_REQUEST).json({
-      success: false,
-      message: "Cannot leave after game start"
-    });
-  }
-
-  await table.removePlayer(userId);
-
-  const refundResult = await walletIntegrationService.refundBuyIns(
-    [userId],
-    table.buyIn,
-    tableId
-  );
-
-  res.json({
-    success: true,
-    data: {
-      table,
-      refund: refundResult[0]
+    if (!privateTable) {
+      return res.status(httpStatus.NOT_FOUND).json({
+        success: false,
+        message: "Private table not found"
+      });
     }
-  });
 
+    if (privateTable.status !== "WAITING_FOR_PLAYERS") {
+      return res.status(httpStatus.BAD_REQUEST).json({
+        success: false,
+        message: "Cannot leave after game start"
+      });
+    }
+
+    // Remove player from registered players
+    const updatedPlayers = privateTable.registeredPlayers.filter(
+      p => p.userId?.toString() !== userId.toString()
+    );
+
+    await mongoHelper.updateById(
+      mongoHelper.COLLECTIONS.PRIVATE_TABLES,
+      tableId,
+      { registeredPlayers: updatedPlayers }
+    );
+
+    res.json({
+      success: true,
+      data: {
+        tableId,
+        playersRemaining: updatedPlayers.length
+      },
+      message: 'Left private table successfully'
+    });
+  } catch (error) {
+    res.status(httpStatus.INTERNAL_SERVER_ERROR).json({
+      success: false,
+      message: error.message
+    });
+  }
 });
 
 
@@ -259,36 +277,23 @@ const leavePrivateTable = catchAsync(async (req, res) => {
 /* ------------------------------------------------ */
 
 const getHostTables = catchAsync(async (req, res) => {
+  const hostId = req.user._id;
+  const { status, gameType } = req.query;
 
-  const hostId = req.user.id;
+  try {
+    // Use the same service as socket handler
+    const tables = await privateTableService.getHostTables(hostId, status);
 
-  const {
-    status,
-    gameType,
-    page = 1,
-    limit = 10
-  } = req.query;
-
-  const filter = { hostId };
-
-  if (status) filter.status = status;
-  if (gameType) filter.gameType = gameType;
-
-  const tables = await PrivateTable.paginate(filter, {
-    page: Number(page),
-    limit: Number(limit),
-    sort: { createdAt: -1 },
-    populate: [
-      { path: "registeredPlayers.userId", select: "username" },
-      { path: "winners.userId", select: "username" }
-    ]
-  });
-
-  res.json({
-    success: true,
-    data: tables
-  });
-
+    res.json({
+      success: true,
+      data: tables
+    });
+  } catch (error) {
+    res.status(httpStatus.INTERNAL_SERVER_ERROR).json({
+      success: false,
+      message: error.message
+    });
+  }
 });
 
 
@@ -297,108 +302,77 @@ const getHostTables = catchAsync(async (req, res) => {
 /* ------------------------------------------------ */
 
 const getAvailableTables = catchAsync(async (req, res) => {
+  const { gameType, minBuyIn, maxBuyIn } = req.query;
+  console.log('🔍 [getAvailableTables] Query params:', { gameType, minBuyIn, maxBuyIn });
 
-  const {
-    gameType,
-    minBuyIn,
-    maxBuyIn,
-    page = 1,
-    limit = 20
-  } = req.query;
+  try {
+    const filter = {
+      status: "WAITING_FOR_PLAYERS"
+    };
 
-  const filter = {
-    status: "WAITING_FOR_PLAYERS",
-    password: { $exists: false }
-  };
+    // Only add password filter if we want to exclude password-protected tables
+    // For now, let's include all tables
+    // filter.password = { $exists: false };
 
-  if (gameType) filter.gameType = gameType;
-
-  if (minBuyIn || maxBuyIn) {
-
-    filter.buyIn = {};
-
-    if (minBuyIn) filter.buyIn.$gte = Number(minBuyIn);
-    if (maxBuyIn) filter.buyIn.$lte = Number(maxBuyIn);
-
-  }
-
-  const tables = await PrivateTable.paginate(filter, {
-    page: Number(page),
-    limit: Number(limit),
-    sort: { createdAt: -1 },
-    populate: [
-      { path: "hostId", select: "username" }
-    ]
-  });
-
-  res.json({
-    success: true,
-    data: tables
-  });
-
-});
-
-
-/* ------------------------------------------------ */
-/* COMPLETE GAME */
-/* ------------------------------------------------ */
-
-const completeGame = catchAsync(async (req, res) => {
-
-  const { tableId } = req.params;
-  const { winners } = req.body;
-
-  const table = await PrivateTable.findById(tableId);
-
-  if (!table) {
-    return res.status(httpStatus.NOT_FOUND).json({
-      success: false,
-      message: "Private table not found"
-    });
-  }
-
-  if (table.status !== "ACTIVE") {
-    return res.status(httpStatus.BAD_REQUEST).json({
-      success: false,
-      message: "Game not active"
-    });
-  }
-
-  await table.completeGame(winners);
-
-  const settlement =
-    await gameEngineIntegrationService.onTournamentCompleted({
-
-      gameId: tableId,
-      gameType: table.gameType,
-      hostId: table.hostId,
-      buyIn: table.buyIn,
-      declaredCapacity: table.declaredCapacity,
-      actualParticipants: table.currentPlayerCount,
-      participationThreshold: table.participationThreshold,
-      tierRake: table.tierRake,
-      hostUplift: table.hostUplift,
-      hostRewardPercent: table.hostRewardPercent,
-      setupFeeAmount: table.setupFeeAmount,
-      affiliateId: table.affiliateId,
-      winners
-
-    });
-
-  table.gameFinancialsId = settlement.gameFinancials._id;
-  table.settlementCompleted = true;
-  table.settlementCompletedAt = new Date();
-
-  await table.save();
-
-  res.json({
-    success: true,
-    data: {
-      table,
-      settlement: settlement.settlement
+    if (gameType) {
+      // Map the new gameType values to legacy values for database compatibility
+      const gameTypeMap = {
+        'SNG': 'PRIVATE_SNG',
+        'TOURNAMENT': 'PRIVATE_TOURNAMENT'
+      };
+      filter.gameType = gameTypeMap[gameType] || gameType;
     }
-  });
 
+    if (minBuyIn || maxBuyIn) {
+      filter.buyIn = {};
+      if (minBuyIn) filter.buyIn.$gte = Number(minBuyIn);
+      if (maxBuyIn) filter.buyIn.$lte = Number(maxBuyIn);
+    }
+
+    console.log('🔍 [getAvailableTables] Filter:', filter);
+
+    const tablesResult = await mongoHelper.find(
+      mongoHelper.COLLECTIONS.PRIVATE_TABLES,
+      filter
+    );
+
+    console.log('🔍 [getAvailableTables] Query result:', tablesResult);
+
+    let tables = [];
+    if (tablesResult.success && tablesResult.data) {
+      tables = Array.isArray(tablesResult.data) ? tablesResult.data : [tablesResult.data];
+    }
+
+    // Populate host information manually if needed
+    const populatedTables = [];
+    for (const table of tables || []) {
+      if (table.hostId) {
+        const hostResult = await mongoHelper.findById(
+          mongoHelper.COLLECTIONS.USERS,
+          table.hostId
+        );
+        
+        if (hostResult.success && hostResult.data) {
+          table.host = {
+            username: hostResult.data.username
+          };
+        }
+      }
+      populatedTables.push(table);
+    }
+
+    res.json({
+      success: true,
+      data: populatedTables,
+      count: populatedTables.length
+    });
+  } catch (error) {
+    console.error('🔍 [getAvailableTables] Error:', error);
+    res.status(httpStatus.INTERNAL_SERVER_ERROR).json({
+      success: false,
+      message: error.message
+    });
+  }
 });
 
 
@@ -407,62 +381,39 @@ const completeGame = catchAsync(async (req, res) => {
 /* ------------------------------------------------ */
 
 const cancelTable = catchAsync(async (req, res) => {
-
   const { tableId } = req.params;
   const { reason } = req.body;
-  const userId = req.user.id;
+  const userId = req.user._id;
 
-  const table = await PrivateTable.findById(tableId);
+  try {
+    // Use the same service as socket handler
+    const result = await privateTableService.cancelPrivateTable(tableId, userId, reason);
 
-  if (!table) {
-    return res.status(httpStatus.NOT_FOUND).json({
+    res.json({
+      success: true,
+      data: {
+        tableId,
+        cancelled: result.cancelled,
+        refundAmount: result.refundAmount,
+        reason: result.reason
+      },
+      message: 'Private table cancelled successfully'
+    });
+  } catch (error) {
+    res.status(httpStatus.BAD_REQUEST).json({
       success: false,
-      message: "Private table not found"
+      message: error.message
     });
   }
-
-  if (table.hostId.toString() !== userId) {
-    return res.status(httpStatus.FORBIDDEN).json({
-      success: false,
-      message: "Only host can cancel"
-    });
-  }
-
-  if (table.status === "COMPLETED") {
-    return res.status(httpStatus.BAD_REQUEST).json({
-      success: false,
-      message: "Cannot cancel completed game"
-    });
-  }
-
-  await table.cancelGame(reason);
-
-  const playerIds = table.registeredPlayers.map(p => p.userId);
-
-  const refundResults = await walletIntegrationService.refundBuyIns(
-    playerIds,
-    table.buyIn,
-    tableId
-  );
-
-  res.json({
-    success: true,
-    data: {
-      table,
-      totalRefunded: refundResults.length * table.buyIn
-    }
-  });
-
 });
-
 
 module.exports = {
   createPrivateTable,
   getPrivateTable,
   joinPrivateTable,
+  startPrivateTable,
   leavePrivateTable,
   getHostTables,
   getAvailableTables,
-  completeGame,
   cancelTable
 };

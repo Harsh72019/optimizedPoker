@@ -1,0 +1,267 @@
+// src/game/private-table-start-game.service.js
+
+const gameStateManager = require('../state/game-state');
+const Deck = require('../engine/deck');
+const StartGameBuilder = require('./start-game.builder');
+const tableManager = require('../table/table-manager.service');
+const mongoHelper = require('../models/customdb');
+const { emitSuccess } = require('../websocket/socket-emitter');
+const privateTableGameConfig = require('../services/private-table-game-config.service');
+
+class PrivateTableStartGameService {
+    constructor(io, timerManager) {
+        this.io = io;
+        this.timerManager = timerManager;
+    }
+
+    async start(tableId) {
+        console.log(`🎲 [PRIVATE GAME START] Initializing hand for table ${tableId}`);
+        const locked = await gameStateManager.acquireLock(tableId);
+        if (!locked) throw new Error('Table busy');
+
+        let gameState;
+
+        try {
+            // Get private table configuration
+            const privateConfig = await privateTableGameConfig.getPrivateTableGameConfig(tableId);
+            
+            if (!privateConfig) {
+                // Fall back to regular game start if not a private table
+                const StartGameService = require('./start-game-service');
+                const regularService = new StartGameService(this.io, this.timerManager);
+                return await regularService.start(tableId);
+            }
+
+            console.log(`🔧 [PRIVATE CONFIG] Using private table config:`, {
+                gameType: privateConfig.gameType,
+                stakes: privateConfig.config.stakes?.type,
+                blinds: privateConfig.gameConfig.blinds,
+                timer: privateConfig.gameConfig.timer.turnTimer
+            });
+
+            const tableState = await tableManager.getTable(tableId);
+            
+            // Remove ghost players
+            tableState.players = tableState.players.filter(p => p.chips && p.chips > 0);
+
+            if (tableState.players.length < privateConfig.gameConfig.players.min) {
+                throw new Error(`Not enough players (minimum ${privateConfig.gameConfig.players.min})`);
+            }
+
+            // Use private table blinds
+            const smallBlindAmount = privateConfig.gameConfig.blinds.small;
+            const bigBlindAmount = privateConfig.gameConfig.blinds.big;
+
+            console.log(`🎴 [PRIVATE BLINDS] SB: ${smallBlindAmount}, BB: ${bigBlindAmount}, Type: ${privateConfig.gameConfig.stakes.type}`);
+
+            gameState = StartGameBuilder.buildInitialState({
+                tableId,
+                seatedPlayers: tableState.players,
+                smallBlind: smallBlindAmount,
+                bigBlind: bigBlindAmount,
+                dealerPosition: tableState.dealerPosition
+            });
+
+            // Apply private table specific configurations
+            gameState.privateTableConfig = privateConfig.gameConfig;
+            gameState.lastRaiseAmount = bigBlindAmount;
+
+            // Initialize tracking maps
+            gameState.players.forEach(p => {
+                gameState.streetBets[p.id] = 0;
+                gameState.totalContributions[p.id] = 0;
+            });
+
+            // Handle antes if enabled
+            if (privateConfig.gameConfig.features.antesEnabled) {
+                const antesResult = privateTableGameConfig.calculateAntes(privateConfig.gameConfig, gameState.players);
+                
+                gameState.players.forEach(p => {
+                    const anteAmount = antesResult.antes[p.id] || 0;
+                    if (anteAmount > 0) {
+                        p.chips -= anteAmount;
+                        gameState.streetBets[p.id] += anteAmount;
+                        gameState.totalContributions[p.id] += anteAmount;
+                    }
+                });
+
+                gameState.totalAntes = antesResult.totalAntes;
+                console.log(`🎯 [ANTES] Posted ${antesResult.totalAntes} in antes`);
+            }
+
+            // Deduct blinds
+            gameState.players.forEach(p => {
+                if (p.seatPosition === gameState.smallBlindPosition) {
+                    const amount = Math.min(smallBlindAmount, p.chips);
+                    p.chips -= amount;
+                    gameState.streetBets[p.id] += amount;
+                    gameState.totalContributions[p.id] += amount;
+                }
+
+                if (p.seatPosition === gameState.bigBlindPosition) {
+                    const amount = Math.min(bigBlindAmount, p.chips);
+                    p.chips -= amount;
+                    gameState.streetBets[p.id] += amount;
+                    gameState.totalContributions[p.id] += amount;
+                    gameState.currentBet = amount;
+                }
+            });
+
+            // Deal cards
+            gameState.deck = Deck.generate();
+            gameState.players.forEach(player => {
+                player.cards = [
+                    gameState.deck.pop(),
+                    gameState.deck.pop()
+                ];
+            });
+
+            gameState.currentPlayerId = this.getFirstPlayerAfterBigBlind(gameState);
+
+            await gameStateManager.createGame(tableId, gameState);
+            await tableManager.setStatus(tableId, 'IN_PROGRESS');
+
+            // Emit game start events with private table info
+            emitSuccess(
+                this.io.to(tableId),
+                'privateGameStarted',
+                {
+                    ...this.formatGameStartData(tableState, gameState),
+                    privateTableConfig: {
+                        gameType: privateConfig.gameType,
+                        stakes: privateConfig.gameConfig.stakes,
+                        features: privateConfig.gameConfig.features,
+                        timer: privateConfig.gameConfig.timer
+                    }
+                },
+                'Private table game started successfully'
+            );
+
+            // Emit standard events
+            this.emitGameEvents(tableId, gameState, smallBlindAmount, bigBlindAmount);
+
+            console.log(`✅ [PRIVATE GAME STARTED] First turn: ${gameState.currentPlayerId}`);
+
+        } catch (err) {
+            console.error(`❌ Private game start error for ${tableId}:`, err.message);
+            throw err;
+        } finally {
+            await gameStateManager.releaseLock(tableId);
+        }
+
+        if (gameState) {
+            // Use private table timer settings
+            const timerSeconds = gameState.privateTableConfig?.timer?.turnTimer || 30;
+            await this.timerManager.startTimer(tableId, gameState.currentPlayerId, timerSeconds);
+        }
+    }
+
+    getFirstPlayerAfterBigBlind(gameState) {
+        const active = gameState.players
+            .filter(p => p.status === 'ACTIVE')
+            .sort((a, b) => a.seatPosition - b.seatPosition);
+
+        const bbIndex = active.findIndex(
+            p => p.seatPosition === gameState.bigBlindPosition
+        );
+
+        return active[(bbIndex + 1) % active.length].id;
+    }
+
+    emitGameEvents(tableId, gameState, smallBlindAmount, bigBlindAmount) {
+        // Dealer assignment
+        emitSuccess(
+            this.io.to(tableId),
+            'dealerAssigned',
+            {
+                position: gameState.dealerPosition,
+                player: gameState.players.find(p => p.seatPosition === gameState.dealerPosition)
+            },
+            'Dealer assigned'
+        );
+
+        // Small blind
+        emitSuccess(
+            this.io.to(tableId),
+            'smallBlind',
+            { 
+                position: gameState.smallBlindPosition, 
+                smallBlind: smallBlindAmount,
+                player: gameState.players.find(p => p.seatPosition === gameState.smallBlindPosition)
+            },
+            'Small blind posted'
+        );
+
+        // Big blind
+        emitSuccess(
+            this.io.to(tableId),
+            'bigBlind',
+            { 
+                position: gameState.bigBlindPosition, 
+                bigBlind: bigBlindAmount,
+                player: gameState.players.find(p => p.seatPosition === gameState.bigBlindPosition)
+            },
+            'Big blind posted'
+        );
+
+        // Antes if any
+        if (gameState.totalAntes > 0) {
+            emitSuccess(
+                this.io.to(tableId),
+                'antesPosted',
+                { 
+                    totalAntes: gameState.totalAntes,
+                    players: gameState.players.filter(p => gameState.streetBets[p.id] > 0)
+                },
+                'Antes posted'
+            );
+        }
+
+        // Deal hands
+        gameState.players.forEach(player => {
+            emitSuccess(
+                this.io.to(tableId),
+                'receiveHand',
+                {
+                    playerId: player.id,
+                    hand: player.cards
+                },
+                'Hand dealt'
+            );
+        });
+    }
+
+    formatGameStartData(tableState, gameState) {
+        const formattedPlayers = tableState.players.map(player => {
+            const gamePlayer = gameState.players.find(p => p.id === player.userId);
+            return {
+                _id: player.userId,
+                username: player.username,
+                chips: player.chips,
+                seatPosition: player.seatPosition,
+                status: gamePlayer?.status || 'ACTIVE',
+                socketId: player.socketId,
+                isAway: player.isAway || false,
+                currentRoundBet: gameState.streetBets[player.userId] || 0
+            };
+        });
+
+        return {
+            maxPlayers: gameState.privateTableConfig?.players?.max || tableState.maxPlayers || 9,
+            currentPlayers: formattedPlayers,
+            gameState: {
+                pot: gameState.pot || 0,
+                phase: gameState.phase,
+                currentPlayerId: gameState.currentPlayerId,
+                currentBet: gameState.currentBet || 0,
+                boardCards: gameState.boardCards || [],
+                dealerPosition: gameState.dealerPosition,
+                smallBlindPosition: gameState.smallBlindPosition,
+                bigBlindPosition: gameState.bigBlindPosition,
+                totalAntes: gameState.totalAntes || 0
+            }
+        };
+    }
+}
+
+module.exports = PrivateTableStartGameService;

@@ -1,7 +1,7 @@
 const express = require("express");
 
 const validate = require("../../middlewares/validate");
-// const auth = require("../../middlewares/auth");
+const { protect } = require("../../controllers/auth.controller");
 
 const privateTableValidation = require("../../validations/private-table.validation");
 const privateTableController = require("../../controllers/private-table.controller");
@@ -15,15 +15,30 @@ const router = express.Router();
 router
   .route("/")
   .post(
-    // auth(),
+    protect,
     validate(privateTableValidation.createPrivateTable),
     privateTableController.createPrivateTable
   )
   .get(
-    // auth(),
-    validate(privateTableValidation.getAvailableTables),
+    // validate(privateTableValidation.getAvailableTables),
+    protect,
     privateTableController.getAvailableTables
   );
+
+/* ------------------------------------------------ */
+/* TEST CREATE (NO AUTH) */
+/* ------------------------------------------------ */
+
+router.post(
+  "/test",
+  validate(privateTableValidation.createPrivateTable),
+  (req, res, next) => {
+    // Mock user for testing
+    req.user = { id: 'test_host_123' };
+    next();
+  },
+  privateTableController.createPrivateTable
+);
 
 
 /* ------------------------------------------------ */
@@ -32,7 +47,7 @@ router
 
 router.get(
   "/host",
-//   auth(),
+  protect,
   validate(privateTableValidation.getHostTables),
   privateTableController.getHostTables
 );
@@ -44,7 +59,6 @@ router.get(
 
 router.get(
   "/:tableId",
-//   auth(),
   validate(privateTableValidation.getPrivateTable),
   privateTableController.getPrivateTable
 );
@@ -56,9 +70,21 @@ router.get(
 
 router.post(
   "/:tableId/join",
-//   auth(),
+  protect,
   validate(privateTableValidation.joinPrivateTable),
   privateTableController.joinPrivateTable
+);
+
+
+/* ------------------------------------------------ */
+/* START TABLE */
+/* ------------------------------------------------ */
+
+router.post(
+  "/:tableId/start",
+  protect,
+  validate(privateTableValidation.startPrivateTable),
+  privateTableController.startPrivateTable
 );
 
 
@@ -68,21 +94,9 @@ router.post(
 
 router.post(
   "/:tableId/leave",
-//   auth(),
+  protect,
   validate(privateTableValidation.leavePrivateTable),
   privateTableController.leavePrivateTable
-);
-
-
-/* ------------------------------------------------ */
-/* COMPLETE GAME (ENGINE / ADMIN) */
-/* ------------------------------------------------ */
-
-router.post(
-  "/:tableId/complete",
-//   auth(),
-  validate(privateTableValidation.completeGame),
-  privateTableController.completeGame
 );
 
 
@@ -92,7 +106,7 @@ router.post(
 
 router.post(
   "/:tableId/cancel",
-//   auth(),
+  protect,
   validate(privateTableValidation.cancelTable),
   privateTableController.cancelTable
 );

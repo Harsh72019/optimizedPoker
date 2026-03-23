@@ -4,6 +4,7 @@ const verifyEventToken = require('../verify-event-token');
 const { emitSuccess, emitError } = require('../socket-emitter');
 const privateTableService = require('../../services/private-table.service');
 const financialIntegrationService = require('../../services/financial-integration.service');
+const PrivateTableValidator = require('../../utils/private-table-validator');
 
 class PrivateTableHandler {
     constructor(io, socket, orchestrator) {
@@ -30,12 +31,10 @@ class PrivateTableHandler {
             const user = await verifyEventToken(token, this.socket);
             const hostId = user._id.toString();
 
-            // Validate required fields
-            const requiredFields = ['name', 'gameType', 'buyIn', 'declaredCapacity', 'participationThreshold', 'tier', 'estimatedHours', 'timerSeconds'];
-            for (const field of requiredFields) {
-                if (!tableConfig[field]) {
-                    throw new Error(`Missing required field: ${field}`);
-                }
+            // Validate table configuration
+            const validation = PrivateTableValidator.validate(tableConfig);
+            if (!validation.valid) {
+                throw new Error('Invalid table configuration: ' + validation.errors.join(', '));
             }
 
             // Create private table with financial setup
@@ -50,7 +49,7 @@ class PrivateTableHandler {
             console.log(`🎮 Private table created: ${result.privateTable._id} by ${user.username}`);
 
         } catch (err) {
-            console.error('Create private table error:', err.message);
+            console.error('Create private table error:', err);
             emitError(this.socket, 'createPrivateTableError', err.message);
         }
     }
@@ -103,7 +102,7 @@ class PrivateTableHandler {
             console.log(`👤 ${user.username} joined private table ${tableId}`);
 
         } catch (err) {
-            console.error('Join private table error:', err.message);
+            console.error('Join private table error:', err);
             emitError(this.socket, 'joinPrivateTableError', err.message);
         }
     }
@@ -170,7 +169,7 @@ class PrivateTableHandler {
             console.log(`🚀 Private table ${tableId} started by ${user.username}`);
 
         } catch (err) {
-            console.error('Start private table error:', err.message);
+            console.error('Start private table error:', err);
             emitError(this.socket, 'startPrivateTableError', err.message);
         }
     }
@@ -188,7 +187,7 @@ class PrivateTableHandler {
             emitSuccess(this.socket, 'privateTableInfo', privateTable, 'Private table info');
 
         } catch (err) {
-            console.error('Get private table info error:', err.message);
+            console.error('Get private table info error:', err);
             emitError(this.socket, 'getPrivateTableInfoError', err.message);
         }
     }
@@ -203,7 +202,7 @@ class PrivateTableHandler {
             emitSuccess(this.socket, 'privateTablePreview', preview, 'Financial preview generated');
 
         } catch (err) {
-            console.error('Get private table preview error:', err.message);
+            console.error('Get private table preview error:', err);
             emitError(this.socket, 'getPrivateTablePreviewError', err.message);
         }
     }
@@ -219,7 +218,7 @@ class PrivateTableHandler {
             emitSuccess(this.socket, 'hostTables', tables, 'Host tables retrieved');
 
         } catch (err) {
-            console.error('Get host tables error:', err.message);
+            console.error('Get host tables error:', err);
             emitError(this.socket, 'getHostTablesError', err.message);
         }
     }
@@ -244,7 +243,7 @@ class PrivateTableHandler {
             console.log(`❌ Private table ${tableId} cancelled by ${user.username}`);
 
         } catch (err) {
-            console.error('Cancel private table error:', err.message);
+            console.error('Cancel private table error:', err);
             emitError(this.socket, 'cancelPrivateTableError', err.message);
         }
     }
@@ -291,7 +290,7 @@ class PrivateTableHandler {
             console.log(`👁️ ${user.username} spectating table ${underlyingTableId} as ${role}`);
 
         } catch (err) {
-            console.error('Spectate private table error:', err.message);
+            console.error('Spectate private table error:', err);
             emitError(this.socket, 'spectatePrivateTableError', err.message);
         }
     }

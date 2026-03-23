@@ -13,28 +13,66 @@ class PrivateTableService {
     const {
       name,
       description,
-      gameType,
+      gameType, // 'SNG' or 'TOURNAMENT'
+      stakes, // { type: 'FIXED_LIMIT' | 'POT_LIMIT' | 'NO_LIMIT' | 'CUSTOM', blinds: { small: number, big: number } }
+      turnTimer, // in seconds
+      playerCapacity, // { min: number, max: number }
+      tableDuration, // 'TIMED' or 'INFINITY'
+      buyInSettings, // { min: number, max: number }
+      invitationControl, // { type: 'PASSWORD' | 'INVITE', password?: string }
+      rebuy = false,
+      antesStraddles = false,
+      buyInReentryRules = 'ALLOWED_ON_REBUY_ONLY',
+      scheduledStartTime,
+      allowSpectators = false,
+      affiliateId,
+      // Legacy fields for compatibility
       buyIn,
       declaredCapacity,
-      participationThreshold,
-      tier,
+      participationThreshold = 50,
+      tier = 3,
       hostUplift = 0,
       hostRewardPercent = 0,
-      estimatedHours,
-      timerSeconds,
-      scheduledStartTime,
-      password,
-      allowSpectators = false,
-      blindStructure,
-      payoutStructure,
-      affiliateId
+      estimatedHours = 2,
+      timerSeconds
     } = tableConfig;
     
+    // Map new config to legacy format for existing system compatibility
+    const mappedConfig = {
+      name,
+      description,
+      gameType: gameType === 'SNG' ? 'PRIVATE_SNG' : 'PRIVATE_TOURNAMENT',
+      buyIn: buyIn || buyInSettings.min,
+      declaredCapacity: declaredCapacity || playerCapacity.max,
+      participationThreshold: participationThreshold || Math.ceil((playerCapacity.min / playerCapacity.max) * 100),
+      tier,
+      hostUplift,
+      hostRewardPercent,
+      estimatedHours: tableDuration === 'INFINITY' ? 12 : estimatedHours,
+      timerSeconds: timerSeconds || turnTimer,
+      scheduledStartTime,
+      password: invitationControl.type === 'PASSWORD' ? invitationControl.password : null,
+      allowSpectators,
+      affiliateId,
+      // New private table specific fields
+      privateConfig: {
+        stakes,
+        turnTimer,
+        playerCapacity,
+        tableDuration,
+        buyInSettings,
+        invitationControl,
+        rebuy,
+        antesStraddles,
+        buyInReentryRules
+      }
+    };
+    
     // Validate host permissions and uplift
-    await this.validateHostConfiguration(hostId, gameType, hostUplift, hostRewardPercent);
+    await this.validateHostConfiguration(hostId, mappedConfig.gameType, hostUplift, hostRewardPercent);
     
     // Get tier rake
-    const tierRake = gameType === 'PRIVATE_SNG' 
+    const tierRake = mappedConfig.gameType === 'PRIVATE_SNG' 
       ? await rakeTierService.getSNGRake(tier)
       : await rakeTierService.getTournamentRake(tier);
     
@@ -45,20 +83,20 @@ class PrivateTableService {
     const setupFeeResult = await setupFeeService.chargeSetupFee(
       tempId,
       hostId,
-      { buyIn, declaredCapacity, hours: estimatedHours, timerSeconds }
+      { buyIn: mappedConfig.buyIn, declaredCapacity: mappedConfig.declaredCapacity, hours: mappedConfig.estimatedHours, timerSeconds: mappedConfig.timerSeconds }
     );
     
     // Create private table record using mongoHelper (let it generate Doc_ ID)
     const privateTableData = {
-      name,
-      description,
+      name: mappedConfig.name,
+      description: mappedConfig.description,
       hostId,
-      gameType,
-      buyIn,
-      declaredCapacity,
-      participationThreshold,
-      estimatedHours,
-      timerSeconds,
+      gameType: mappedConfig.gameType,
+      buyIn: mappedConfig.buyIn,
+      declaredCapacity: mappedConfig.declaredCapacity,
+      participationThreshold: mappedConfig.participationThreshold,
+      estimatedHours: mappedConfig.estimatedHours,
+      timerSeconds: mappedConfig.timerSeconds,
       tier,
       hostUplift,
       hostRewardPercent,
@@ -68,12 +106,10 @@ class PrivateTableService {
       setupFeePaid: true,
       setupFeeTransactionId: setupFeeResult.ledgerEntry._id,
       status: 'WAITING_FOR_PLAYERS',
-      scheduledStartTime: scheduledStartTime ? new Date(scheduledStartTime) : null,
-      password,
-      allowSpectators,
-      blindStructure,
-      payoutStructure: payoutStructure || this.getDefaultPayoutStructure(declaredCapacity),
-      affiliateId,
+      scheduledStartTime: mappedConfig.scheduledStartTime ? new Date(mappedConfig.scheduledStartTime) : null,
+      password: mappedConfig.password,
+      allowSpectators: mappedConfig.allowSpectators,
+      affiliateId: mappedConfig.affiliateId,
       createdBy: 'HOST',
       registeredPlayers: [],
       waitlist: [],
@@ -81,6 +117,8 @@ class PrivateTableService {
       winners: [],
       settlementCompleted: false,
       isPrivate: true,
+      // Store new private table configuration
+      privateConfig: mappedConfig.privateConfig,
       stats: {
         totalHandsPlayed: 0,
         averagePotSize: 0,
@@ -258,29 +296,37 @@ class PrivateTableService {
    * Start Private SNG (creates underlying table using existing system)
    */
   async startPrivateSNG(privateTable) {
+    // Use private config if available, otherwise fall back to legacy fields
+    const config = privateTable.privateConfig || {};
+    const buyIn = config.buyInSettings?.min || privateTable.buyIn;
+    
     // Find a suitable SubTier for the buy-in amount
-    const subTier = await this.findSubTierForBuyIn(privateTable.buyIn);
+    const subTier = await this.findSubTierForBuyIn(buyIn);
     
     if (!subTier) {
       throw new Error('No suitable table configuration found for this buy-in');
     }
     
-    // Create underlying table using existing system
+    // Create underlying table using existing system with private config
+    const tableData = {
+      maxPlayers: privateTable.registeredPlayers.length,
+      subTierId: subTier._id,
+      currentPlayers: [],
+      gameRoundsCompleted: 0,
+      dealerPosition: null,
+      currentTurnPosition: null,
+      smallBlindPosition: null,
+      bigBlindPosition: null,
+      status: 'in-use',
+      isPrivate: true,
+      privateTableId: privateTable._id,
+      // Store private table configuration for game engine
+      privateConfig: config
+    };
+    
     const tableResult = await mongoHelper.create(
       mongoHelper.COLLECTIONS.TABLES,
-      {
-        maxPlayers: privateTable.registeredPlayers.length,
-        subTierId: subTier._id,
-        currentPlayers: [],
-        gameRoundsCompleted: 0,
-        dealerPosition: null,
-        currentTurnPosition: null,
-        smallBlindPosition: null,
-        bigBlindPosition: null,
-        status: 'in-use',
-        isPrivate: true,
-        privateTableId: privateTable._id
-      },
+      tableData,
       mongoHelper.MODELS.TABLE
     );
     
@@ -300,7 +346,8 @@ class PrivateTableService {
     return {
       underlyingTable,
       playersToAdd: privateTable.registeredPlayers.length,
-      subTier
+      subTier,
+      privateConfig: config
     };
   }
   
@@ -308,11 +355,15 @@ class PrivateTableService {
    * Start Private Tournament
    */
   async startPrivateTournament(privateTable) {
+    // Use private config if available, otherwise fall back to legacy fields
+    const config = privateTable.privateConfig || {};
+    const buyIn = config.buyInSettings?.min || privateTable.buyIn;
+    
     // Create tournament record using mongoHelper
     const tournamentData = {
       name: privateTable.name,
       description: privateTable.description,
-      buyIn: privateTable.buyIn,
+      buyIn,
       maxPlayers: privateTable.declaredCapacity,
       startTime: new Date(),
       registrationDeadline: new Date(),
@@ -323,17 +374,32 @@ class PrivateTableService {
       hostRewardPercent: privateTable.hostRewardPercent,
       participationThreshold: privateTable.participationThreshold,
       estimatedHours: privateTable.estimatedHours,
-      timerSeconds: privateTable.timerSeconds,
-      startingChips: privateTable.blindStructure?.startingChips || 10000,
-      levelDuration: privateTable.blindStructure?.levelDuration || 15,
-      payoutStructure: privateTable.payoutStructure,
+      timerSeconds: config.turnTimer || privateTable.timerSeconds,
+      startingChips: 10000,
+      levelDuration: 15,
       timeZone: 'UTC',
       tierRake: privateTable.tierRake,
       effectiveRake: privateTable.effectiveRake,
       setupFeeAmount: privateTable.setupFeeAmount,
       affiliateId: privateTable.affiliateId,
-      registeredPlayers: privateTable.registeredPlayers.map(p => p.userId)
+      registeredPlayers: privateTable.registeredPlayers.map(p => p.userId),
+      // Private tournament specific configurations
+      privateConfig: config
     };
+    
+    // Apply private table specific configurations
+    if (config.stakes) {
+      tournamentData.stakes = config.stakes;
+    }
+    if (config.rebuy !== undefined) {
+      tournamentData.rebuyAllowed = config.rebuy;
+    }
+    if (config.antesStraddles !== undefined) {
+      tournamentData.antesStraddles = config.antesStraddles;
+    }
+    if (config.buyInReentryRules) {
+      tournamentData.buyInReentryRules = config.buyInReentryRules;
+    }
     
     const tournamentResult = await mongoHelper.create(
       mongoHelper.COLLECTIONS.TOURNAMENTS,

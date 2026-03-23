@@ -15,10 +15,7 @@ const tableId = Joi.string().pattern(/^pvt_[a-zA-Z0-9\-_]+$/);
 
 const createPrivateTable = {
   body: Joi.object({
-    gameType: Joi.string()
-      .valid("PRIVATE_SNG", "PRIVATE_TOURNAMENT")
-      .required(),
-
+    // New private table configuration structure
     name: Joi.string()
       .min(3)
       .max(100)
@@ -29,60 +26,74 @@ const createPrivateTable = {
       .max(1000)
       .allow("", null),
 
-    buyIn: Joi.number()
-      .positive()
-      .precision(2)
+    gameType: Joi.string()
+      .valid("SNG", "TOURNAMENT")
       .required(),
 
-    declaredCapacity: Joi.number()
+    // Stakes configuration
+    stakes: Joi.object({
+      type: Joi.string()
+        .valid("FIXED_LIMIT", "POT_LIMIT", "NO_LIMIT", "CUSTOM")
+        .required(),
+      blinds: Joi.object({
+        small: Joi.number().positive().required(),
+        big: Joi.number().positive().required()
+      }).required()
+    }).required(),
+
+    // Timer configuration
+    turnTimer: Joi.number()
       .integer()
-      .min(2)
-      .max(90)
+      .min(5)
+      .max(300)
       .required(),
 
-    participationThreshold: Joi.number()
-      .valid(25, 50, 75, 100)
+    // Player capacity
+    playerCapacity: Joi.object({
+      min: Joi.number().integer().min(2).max(90).required(),
+      max: Joi.number().integer().min(2).max(90).required()
+    }).required(),
+
+    // Table duration
+    tableDuration: Joi.string()
+      .valid("TIMED", "INFINITY")
       .required(),
 
-    tier: Joi.number()
-      .integer()
-      .min(1)
-      .max(5)
-      .required(),
+    // Buy-in settings
+    buyInSettings: Joi.object({
+      min: Joi.number().positive().required(),
+      max: Joi.number().positive().required()
+    }).required(),
 
-    hostUplift: Joi.number()
-      .min(0)
-      .max(2.5)
-      .default(0),
+    // Invitation control
+    invitationControl: Joi.object({
+      type: Joi.string().valid("PASSWORD", "INVITE").required(),
+      password: Joi.string().min(4).max(20).when('type', {
+        is: 'PASSWORD',
+        then: Joi.required(),
+        otherwise: Joi.optional()
+      })
+    }).required(),
 
-    hostRewardPercent: Joi.number()
-      .min(0)
-      .max(25)
-      .default(0),
+    // Features
+    rebuy: Joi.boolean().default(false),
+    antesStraddles: Joi.boolean().default(false),
+    buyInReentryRules: Joi.string()
+      .valid("ALLOWED_ON_REBUY_ONLY", "ALWAYS_ALLOWED", "NEVER_ALLOWED")
+      .default("ALLOWED_ON_REBUY_ONLY"),
 
-    estimatedHours: Joi.number()
-      .min(0.5)
-      .max(12)
-      .required(),
-
-    timerSeconds: Joi.number()
-      .valid(5, 10, 15, 20, 30)
-      .required(),
-
-    scheduledStartTime: Joi.date()
-      .iso()
-      .greater("now")
-      .optional(),
-
-    password: Joi.string()
-      .min(4)
-      .max(20)
-      .allow(null, ""),
-
-    tags: Joi.array()
-      .items(Joi.string().max(20))
-      .max(10)
-      .default([])
+    // Legacy fields for backward compatibility (optional)
+    buyIn: Joi.number().positive().optional(),
+    declaredCapacity: Joi.number().integer().min(2).max(90).optional(),
+    participationThreshold: Joi.number().valid(25, 50, 75, 100).optional(),
+    tier: Joi.number().integer().min(1).max(5).default(3),
+    hostUplift: Joi.number().min(0).max(2.5).default(0),
+    hostRewardPercent: Joi.number().min(0).max(25).default(0),
+    estimatedHours: Joi.number().min(0.5).max(12).default(2),
+    timerSeconds: Joi.number().optional(),
+    scheduledStartTime: Joi.date().iso().greater("now").optional(),
+    allowSpectators: Joi.boolean().default(false),
+    tags: Joi.array().items(Joi.string().max(20)).max(10).default([])
   }).options({ stripUnknown: true })
 };
 
@@ -115,6 +126,16 @@ const joinPrivateTable = {
   }).options({ stripUnknown: true })
 };
 
+
+/* ------------------------------------------------ */
+/* START PRIVATE TABLE */
+/* ------------------------------------------------ */
+
+const startPrivateTable = {
+  params: Joi.object({
+    tableId: tableId.required()
+  })
+};
 
 /* ------------------------------------------------ */
 /* LEAVE TABLE */
@@ -256,9 +277,9 @@ module.exports = {
   createPrivateTable,
   getPrivateTable,
   joinPrivateTable,
+  startPrivateTable,
   leavePrivateTable,
   getHostTables,
   getAvailableTables,
-  completeGame,
   cancelTable
 };

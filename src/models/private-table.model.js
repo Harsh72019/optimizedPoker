@@ -252,11 +252,78 @@ const privateTableSchema = new Schema(
 
     completedAt: Date,
 
-    /* ---------- TOURNAMENT CONFIG ---------- */
+    /* ---------- PRIVATE TABLE CONFIG ---------- */
 
-    blindStructure: {
-      startingChips: Number,
-      blindLevels: [blindLevelSchema]
+    privateConfig: {
+      stakes: {
+        type: {
+          type: String,
+          enum: ['FIXED_LIMIT', 'POT_LIMIT', 'NO_LIMIT', 'CUSTOM']
+        },
+        blinds: {
+          small: Number,
+          big: Number
+        }
+      },
+
+      turnTimer: {
+        type: Number,
+        min: 5,
+        max: 300
+      },
+
+      playerCapacity: {
+        min: {
+          type: Number,
+          min: 2,
+          max: 90
+        },
+        max: {
+          type: Number,
+          min: 2,
+          max: 90
+        }
+      },
+
+      tableDuration: {
+        type: String,
+        enum: ['TIMED', 'INFINITY']
+      },
+
+      buyInSettings: {
+        min: {
+          type: Number,
+          min: 0
+        },
+        max: {
+          type: Number,
+          min: 0
+        }
+      },
+
+      invitationControl: {
+        type: {
+          type: String,
+          enum: ['PASSWORD', 'INVITE']
+        },
+        password: String
+      },
+
+      rebuy: {
+        type: Boolean,
+        default: false
+      },
+
+      antesStraddles: {
+        type: Boolean,
+        default: false
+      },
+
+      buyInReentryRules: {
+        type: String,
+        enum: ['ALLOWED_ON_REBUY_ONLY', 'ALWAYS_ALLOWED', 'NEVER_ALLOWED'],
+        default: 'ALLOWED_ON_REBUY_ONLY'
+      }
     },
 
     /* ---------- SNG CONFIG ---------- */
