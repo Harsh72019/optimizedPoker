@@ -54,6 +54,16 @@ router.get(
 
 
 /* ------------------------------------------------ */
+/* GET PRIVATE TABLE BY ID */
+/* ------------------------------------------------ */
+
+router.get(
+  "/table/:privateTableId",
+  // validate(privateTableValidation.getPrivateTableById),
+  privateTableController.getPrivateTableById
+);
+
+/* ------------------------------------------------ */
 /* TABLE DETAILS */
 /* ------------------------------------------------ */
 
@@ -110,6 +120,8 @@ router.post(
   validate(privateTableValidation.cancelTable),
   privateTableController.cancelTable
 );
+
+
 
 
 module.exports = router;

@@ -108,6 +108,16 @@ const getPrivateTable = {
   })
 };
 
+/* ------------------------------------------------ */
+/* GET PRIVATE TABLE BY ID */
+/* ------------------------------------------------ */
+
+const getPrivateTableById = {
+  params: Joi.object({
+    privateTableId: Joi.string().required() // Accept any string format including doc_ prefix
+  })
+};
+
 
 /* ------------------------------------------------ */
 /* JOIN TABLE */
@@ -276,6 +286,7 @@ const cancelTable = {
 module.exports = {
   createPrivateTable,
   getPrivateTable,
+  getPrivateTableById,
   joinPrivateTable,
   startPrivateTable,
   leavePrivateTable,

@@ -407,9 +407,104 @@ const cancelTable = catchAsync(async (req, res) => {
   }
 });
 
+/* ------------------------------------------------ */
+/* GET PRIVATE TABLE BY ID */
+/* ------------------------------------------------ */
+
+const getPrivateTableById = catchAsync(async (req, res) => {
+  const { privateTableId } = req.params;
+
+  try {
+    console.log('🔍 [getPrivateTableById] PrivateTableId:', privateTableId);
+    
+    if (!privateTableId) {
+      return res.status(httpStatus.BAD_REQUEST).json({
+        success: false,
+        message: "Private table ID is required"
+      });
+    }
+    
+    // Get basic table data first
+    const table = await privateTableService.getPrivateTable(privateTableId);
+
+    console.log('🔍 [getPrivateTableById] Result:', table ? 'Found' : 'Not found');
+
+    if (!table) {
+      return res.status(httpStatus.NOT_FOUND).json({
+        success: false,
+        message: "Private table not found"
+      });
+    }
+
+    // Safely populate host information
+    if (table.hostId) {
+      try {
+        const hostResult = await mongoHelper.findById(
+          mongoHelper.COLLECTIONS.USERS,
+          table.hostId
+        );
+        
+        if (hostResult.success && hostResult.data) {
+          table.host = {
+            username: hostResult.data.username || 'Unknown',
+            email: hostResult.data.email || ''
+          };
+        }
+      } catch (hostError) {
+        console.error('🔍 [getPrivateTableById] Host population error:', hostError);
+        // Continue without host info
+      }
+    }
+
+    // Safely populate registered players
+    if (table.registeredPlayers && Array.isArray(table.registeredPlayers)) {
+      const populatedPlayers = [];
+      for (const player of table.registeredPlayers) {
+        try {
+          if (player && player.userId) {
+            const userResult = await mongoHelper.findById(
+              mongoHelper.COLLECTIONS.USERS,
+              player.userId
+            );
+            
+            if (userResult.success && userResult.data) {
+              populatedPlayers.push({
+                ...player,
+                user: {
+                  username: userResult.data.username || 'Unknown'
+                }
+              });
+            } else {
+              populatedPlayers.push(player);
+            }
+          } else {
+            populatedPlayers.push(player || {});
+          }
+        } catch (playerError) {
+          console.error('🔍 [getPrivateTableById] Player population error:', playerError);
+          populatedPlayers.push(player || {});
+        }
+      }
+      table.registeredPlayers = populatedPlayers;
+    }
+
+    res.json({
+      success: true,
+      data: table
+    });
+  } catch (error) {
+    console.error('🔍 [getPrivateTableById] Error:', error);
+    res.status(httpStatus.INTERNAL_SERVER_ERROR).json({
+      success: false,
+      message: error.message || 'Internal server error'
+    });
+  }
+});
+
 module.exports = {
   createPrivateTable,
   getPrivateTable,
+  getPrivateTableById,
   joinPrivateTable,
   startPrivateTable,
   leavePrivateTable,
