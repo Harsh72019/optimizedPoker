@@ -65,6 +65,7 @@ const createPrivateTable = catchAsync(async (req, res) => {
 
 const getPrivateTable = catchAsync(async (req, res) => {
   const { tableId } = req.params;
+  const currentUserId = req.user?._id?.toString();
 
   try {
     console.log('🔍 [getPrivateTable] TableId:', tableId);
@@ -80,6 +81,14 @@ const getPrivateTable = catchAsync(async (req, res) => {
         message: "Private table not found"
       });
     }
+
+    // Add ownership flag
+    table.isTableCreatedByYou = currentUserId && table.hostId?.toString() === currentUserId;
+    
+    // Add additional permission flags
+    table.canStart = table.isTableCreatedByYou && table.status === 'READY_TO_START';
+    table.canCancel = table.isTableCreatedByYou && !['COMPLETED', 'CANCELLED'].includes(table.status);
+    table.canJoin = !table.isTableCreatedByYou && table.status === 'WAITING_FOR_PLAYERS';
 
     // Manually populate host information
     if (table.hostId) {
@@ -278,15 +287,25 @@ const leavePrivateTable = catchAsync(async (req, res) => {
 
 const getHostTables = catchAsync(async (req, res) => {
   const hostId = req.user._id;
+  const currentUserId = req.user?._id?.toString();
   const { status, gameType } = req.query;
 
   try {
     // Use the same service as socket handler
     const tables = await privateTableService.getHostTables(hostId, status);
 
+    // Add ownership flags to each table
+    const tablesWithFlags = tables.map(table => ({
+      ...table,
+      isTableCreatedByYou: currentUserId && table.hostId?.toString() === currentUserId,
+      canStart: currentUserId && table.hostId?.toString() === currentUserId && table.status === 'READY_TO_START',
+      canCancel: currentUserId && table.hostId?.toString() === currentUserId && !['COMPLETED', 'CANCELLED'].includes(table.status),
+      canJoin: false // Host can't join their own table as a player
+    }));
+
     res.json({
       success: true,
-      data: tables
+      data: tablesWithFlags
     });
   } catch (error) {
     res.status(httpStatus.INTERNAL_SERVER_ERROR).json({
@@ -303,6 +322,7 @@ const getHostTables = catchAsync(async (req, res) => {
 
 const getAvailableTables = catchAsync(async (req, res) => {
   const { gameType, minBuyIn, maxBuyIn } = req.query;
+  const currentUserId = req.user?._id?.toString();
   console.log('🔍 [getAvailableTables] Query params:', { gameType, minBuyIn, maxBuyIn });
 
   try {
@@ -343,9 +363,17 @@ const getAvailableTables = catchAsync(async (req, res) => {
       tables = Array.isArray(tablesResult.data) ? tablesResult.data : [tablesResult.data];
     }
 
-    // Populate host information manually if needed
+    // Populate host information and add ownership flags
     const populatedTables = [];
     for (const table of tables || []) {
+      // Add ownership flag
+      table.isTableCreatedByYou = currentUserId && table.hostId?.toString() === currentUserId;
+      
+      // Add additional permission flags
+      table.canStart = table.isTableCreatedByYou && table.status === 'READY_TO_START';
+      table.canCancel = table.isTableCreatedByYou && !['COMPLETED', 'CANCELLED'].includes(table.status);
+      table.canJoin = !table.isTableCreatedByYou && table.status === 'WAITING_FOR_PLAYERS';
+      
       if (table.hostId) {
         const hostResult = await mongoHelper.findById(
           mongoHelper.COLLECTIONS.USERS,
@@ -413,6 +441,7 @@ const cancelTable = catchAsync(async (req, res) => {
 
 const getPrivateTableById = catchAsync(async (req, res) => {
   const { privateTableId } = req.params;
+  const currentUserId = req.user?._id?.toString();
 
   try {
     console.log('🔍 [getPrivateTableById] PrivateTableId:', privateTableId);
@@ -435,6 +464,14 @@ const getPrivateTableById = catchAsync(async (req, res) => {
         message: "Private table not found"
       });
     }
+
+    // Add ownership flag
+    table.isTableCreatedByYou = currentUserId && table.hostId?.toString() === currentUserId;
+    
+    // Add additional permission flags
+    table.canStart = table.isTableCreatedByYou && table.status === 'READY_TO_START';
+    table.canCancel = table.isTableCreatedByYou && !['COMPLETED', 'CANCELLED'].includes(table.status);
+    table.canJoin = !table.isTableCreatedByYou && table.status === 'WAITING_FOR_PLAYERS';
 
     // Safely populate host information
     if (table.hostId) {
