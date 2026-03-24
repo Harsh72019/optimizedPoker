@@ -180,9 +180,10 @@ class PrivateTableHandler {
         try {
             const { token, tableId } = data;
             const user = await verifyEventToken(token, this.socket);
+            console.log(user , "user")
             const currentUserId = user._id.toString();
-
             const privateTable = await privateTableService.getPrivateTableWithDetails(tableId);
+            console.log(privateTable.hostId)
             if (!privateTable) {
                 throw new Error('Private table not found');
             }
