@@ -285,7 +285,7 @@ class PrivateTableHandler {
             const { token, tableId, reason } = data;
             const user = await verifyEventToken(token, this.socket);
             const hostId = user._id.toString();
-
+            console.log("🚀 Cancel table called", tableId, hostId, reason)
             const result = await privateTableService.cancelPrivateTable(tableId, hostId, reason);
 
             // Notify all registered players

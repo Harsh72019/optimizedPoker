@@ -508,6 +508,42 @@ class PrivateTableService {
       throw new Error('Table cannot be cancelled in current status');
     }
     
+    // Process refunds for registered players (except setup fee)
+    const walletIntegrationService = require('./wallet-integration.service');
+    const registeredPlayerIds = privateTable.registeredPlayers?.map(p => p.userId) || [];
+    
+    let refundResults = [];
+    let totalRefundAmount = 0;
+    
+    if (registeredPlayerIds.length > 0) {
+      console.log(`💰 [CANCEL] Processing refunds for ${registeredPlayerIds.length} players`);
+      console.log(`💰 [CANCEL] Buy-in amount: ${privateTable.buyIn} per player`);
+      
+      try {
+        // Process buy-in refunds through blockchain
+        refundResults = await walletIntegrationService.refundBuyIns(
+          registeredPlayerIds,
+          privateTable.buyIn,
+          tableId
+        );
+        
+        // Calculate total refund amount
+        totalRefundAmount = refundResults.filter(r => r.success).length * privateTable.buyIn;
+        
+        console.log(`✅ [CANCEL] Refunded ${totalRefundAmount} USDT to ${refundResults.filter(r => r.success).length} players`);
+        
+        // Log any failed refunds
+        const failedRefunds = refundResults.filter(r => !r.success);
+        if (failedRefunds.length > 0) {
+          console.error(`❌ [CANCEL] Failed to refund ${failedRefunds.length} players:`, failedRefunds);
+        }
+        
+      } catch (error) {
+        console.error(`❌ [CANCEL] Refund processing failed:`, error);
+        // Continue with cancellation even if refunds fail - they can be processed manually
+      }
+    }
+    
     // Update status to cancelled
     await mongoHelper.updateById(
       mongoHelper.COLLECTIONS.PRIVATE_TABLES,
@@ -515,17 +551,23 @@ class PrivateTableService {
       {
         status: 'CANCELLED',
         cancelReason: reason,
-        completedAt: new Date()
+        completedAt: new Date(),
+        refundResults: refundResults,
+        totalRefundAmount: totalRefundAmount
       }
     );
     
-    // TODO: Process refunds for registered players
-    const refundAmount = (privateTable.registeredPlayers?.length || 0) * privateTable.buyIn;
+    console.log(`❌ [CANCEL] Private table ${tableId} cancelled by host ${hostId}`);
+    console.log(`💰 [CANCEL] Setup fee (${privateTable.setupFeeAmount}) is kept by platform`);
     
     return {
       cancelled: true,
-      refundAmount,
-      reason
+      refundAmount: totalRefundAmount,
+      setupFeeKept: privateTable.setupFeeAmount,
+      refundResults: refundResults,
+      reason,
+      playersRefunded: refundResults.filter(r => r.success).length,
+      playersFailed: refundResults.filter(r => !r.success).length
     };
   }
   
