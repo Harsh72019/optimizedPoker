@@ -74,12 +74,12 @@ class PlayerActionService {
                 playerId: normalizedPlayerId,
                 username: actingPlayer?.username || 'Player',
                 action,
-                amount,
+                amount: action === 'call' ? validation.callAmount || 0 : amount,
                 result: true,
                 timestamp: new Date().toISOString()
             };
 
-            emitSuccess(this.io.to(tableId), 'actionTaken', actionData, this.getActionMessage(action, actionData.username, amount));
+            emitSuccess(this.io.to(tableId), 'actionTaken', actionData, this.getActionMessage(action, actionData.username, actionData.amount));
             emitSuccess(this.io.to(tableId), 'playerActionEnded', { playerId, action }, 'Action ended');
 
             if (GameStateMachine.isBettingRoundComplete(gameState)) {
@@ -524,6 +524,10 @@ class PlayerActionService {
             case 'fold':
                 return `${username} folded.`;
             case 'call':
+                // If call amount is 0, it should be treated as a check
+                if (amount === 0) {
+                    return `${username} checked.`;
+                }
                 return `${username} called ${formatAmount(amount)} chips.`;
             case 'raise':
                 return `${username} raised to ${formatAmount(amount)} chips.`;
