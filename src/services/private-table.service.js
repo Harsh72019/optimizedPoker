@@ -481,8 +481,8 @@ class PrivateTableService {
       mongoHelper.COLLECTIONS.PRIVATE_TABLES,
       tableId,
       [
-        { path: 'hostId', collection: mongoHelper.COLLECTIONS.USERS, select: 'username email' },
-        { path: 'registeredPlayers.userId', collection: mongoHelper.COLLECTIONS.USERS, select: 'username' }
+        { path: 'hostId', collection: mongoHelper.COLLECTIONS.USERS, select: 'username email profilePic name' },
+        { path: 'registeredPlayers.userId', collection: mongoHelper.COLLECTIONS.USERS, select: 'username email profilePic name' }
       ]
     );
     return result.success ? result.data : null;
