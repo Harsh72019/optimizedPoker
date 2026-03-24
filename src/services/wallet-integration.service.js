@@ -343,31 +343,55 @@ class WalletIntegrationService {
           continue;
         }
         
-        // TODO: Implement blockchain transfer for buy-in refund
-        // This should transfer tokens from platform/table wallet back to player wallet
-        console.log(`💰 Buy-in refund should be processed via blockchain: ${buyInAmount} to player ${playerId}`);
+        // Process blockchain refund from platform to player's pool
+        console.log(`💰 [REFUND] Processing refund: ${buyInAmount} USDT to player ${playerId}`);
         
-        // Log transaction
-        await this.logTransaction({
-          userId: playerId,
-          type: 'BUY_IN_REFUND',
-          amount: buyInAmount,
-          gameId,
-          description: `Buy-in refund for cancelled game ${gameId}`,
-          walletAddress: user.walletAddress,
-          blockchainTxHash: null // Will be populated when blockchain integration is complete
-        });
+        const refundResult = await this.processRefundToPool(user.walletAddress, buyInAmount, gameId);
         
-        results.push({
-          userId: playerId,
-          refundAmount: buyInAmount,
-          success: true,
-          walletAddress: user.walletAddress,
-          transactionId: `refund_${gameId}_${playerId}_${Date.now()}`,
-          blockchainPending: true
-        });
-        
-        console.log(`💰 Buy-in refund logged: ${buyInAmount} to player ${playerId}`);
+        if (refundResult.success) {
+          // Log successful transaction
+          await this.logTransaction({
+            userId: playerId,
+            type: 'BUY_IN_REFUND',
+            amount: buyInAmount,
+            gameId,
+            description: `Buy-in refund for cancelled game ${gameId}`,
+            walletAddress: user.walletAddress,
+            blockchainTxHash: refundResult.txHash
+          });
+          
+          results.push({
+            userId: playerId,
+            refundAmount: buyInAmount,
+            success: true,
+            walletAddress: user.walletAddress,
+            transactionId: `refund_${gameId}_${playerId}_${Date.now()}`,
+            blockchainTxHash: refundResult.txHash,
+            blockchainPending: refundResult.pending || false
+          });
+          
+          console.log(`✅ [REFUND] Refund successful: ${buyInAmount} USDT to ${playerId}`);
+        } else {
+          // Log failed transaction
+          await this.logTransaction({
+            userId: playerId,
+            type: 'BUY_IN_REFUND_FAILED',
+            amount: buyInAmount,
+            gameId,
+            description: `Failed buy-in refund for cancelled game ${gameId}: ${refundResult.error}`,
+            walletAddress: user.walletAddress,
+            blockchainTxHash: null
+          });
+          
+          results.push({
+            userId: playerId,
+            refundAmount: buyInAmount,
+            success: false,
+            error: refundResult.error
+          });
+          
+          console.error(`❌ [REFUND] Refund failed for ${playerId}: ${refundResult.error}`);
+        }
         
       } catch (error) {
         console.error(`❌ Refund failed for ${playerId}:`, error);
@@ -381,6 +405,54 @@ class WalletIntegrationService {
     }
     
     return results;
+  }
+  
+  /**
+   * Process refund from platform wallet to player's pool
+   */
+  async processRefundToPool(playerWalletAddress, amount, gameId) {
+    try {
+      const config = require('../config/config');
+      
+      // Use master poker table contract as platform wallet (same as setup fee destination)
+      const platformWalletAddress = config.MASTER_POKER_TABLE_CONTRACT;
+      
+      console.log(`💸 [REFUND] Transferring ${amount} USDT from platform to player pool`);
+      console.log(`💸 [REFUND] From: ${platformWalletAddress}`);
+      console.log(`💸 [REFUND] To: ${playerWalletAddress}`);
+      
+      // Use existing blockchain service transfer function (reverse direction)
+      // Note: This assumes the platform wallet can transfer back to player pools
+      // You may need to implement a specific refund function in blockchain service
+      const transferResult = await blockchainService.transferFromPoolToTable(
+        platformWalletAddress, // From platform
+        playerWalletAddress,   // To player pool
+        amount
+      );
+      
+      if (transferResult.success) {
+        console.log(`✅ [REFUND] Transfer successful: ${transferResult.txHash}`);
+        return {
+          success: true,
+          txHash: transferResult.txHash,
+          amount: amount,
+          pending: transferResult.pending || false
+        };
+      } else {
+        console.error(`❌ [REFUND] Transfer failed: ${transferResult.error}`);
+        return {
+          success: false,
+          error: transferResult.error
+        };
+      }
+      
+    } catch (error) {
+      console.error(`❌ [REFUND] Transfer error:`, error);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
   }
   
   /**
