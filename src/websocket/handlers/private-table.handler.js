@@ -101,6 +101,24 @@ class PrivateTableHandler {
                 canStart: result.tableStatus === 'READY_TO_START'
             }, `${user.username} joined the table`);
 
+            // Send updated table info to host only
+            const updatedTableInfo = await privateTableService.getPrivateTableWithDetails(tableId);
+            if (updatedTableInfo) {
+                // Add host permission flags
+                updatedTableInfo.isTableCreatedByYou = true;
+                updatedTableInfo.canStart = updatedTableInfo.status === 'READY_TO_START';
+                updatedTableInfo.canCancel = !['COMPLETED', 'CANCELLED'].includes(updatedTableInfo.status);
+                updatedTableInfo.canJoin = false;
+                updatedTableInfo.isPlayerInTable = true;
+                
+                // Send to host only
+                this.io.to(`private_table_${tableId}`).emit('privateTableInfo', {
+                    success: true,
+                    data: updatedTableInfo,
+                    message: 'Table info updated'
+                });
+            }
+
             console.log(`👤 ${user.username} joined private table ${tableId}`);
 
         } catch (err) {
