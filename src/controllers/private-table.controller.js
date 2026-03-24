@@ -466,6 +466,7 @@ const getPrivateTableById = catchAsync(async (req, res) => {
     }
 
     // Add ownership flag
+    console.log(currentUserId, table.hostId?.toString());
     table.isTableCreatedByYou = currentUserId && table.hostId?.toString() === currentUserId;
     
     // Add additional permission flags

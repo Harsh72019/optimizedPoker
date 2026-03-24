@@ -59,6 +59,7 @@ router.get(
 
 router.get(
   "/table/:privateTableId",
+  protect,
   // validate(privateTableValidation.getPrivateTableById),
   privateTableController.getPrivateTableById
 );
