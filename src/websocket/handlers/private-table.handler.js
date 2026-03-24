@@ -180,16 +180,16 @@ class PrivateTableHandler {
         try {
             const { token, tableId } = data;
             const user = await verifyEventToken(token, this.socket);
-            console.log(user , "user")
+            // console.log(user , "user")
             const currentUserId = user._id.toString();
             const privateTable = await privateTableService.getPrivateTableWithDetails(tableId);
-            console.log(privateTable.hostId)
+            // console.log(privateTable.hostId)
             if (!privateTable) {
                 throw new Error('Private table not found');
             }
 
             // Add ownership and permission flags
-            privateTable.isTableCreatedByYou = currentUserId && privateTable.hostId?.toString() === currentUserId;
+            privateTable.isTableCreatedByYou = currentUserId && privateTable.hostId?._id?.toString() === currentUserId;
             privateTable.canStart = privateTable.isTableCreatedByYou && privateTable.status === 'READY_TO_START';
             privateTable.canCancel = privateTable.isTableCreatedByYou && !['COMPLETED', 'CANCELLED'].includes(privateTable.status);
             privateTable.canJoin = !privateTable.isTableCreatedByYou && privateTable.status === 'WAITING_FOR_PLAYERS';
