@@ -45,9 +45,10 @@ const createPrivateTable = catchAsync(async (req, res) => {
       data: {
         privateTable: result.privateTable,
         setupFee: result.setupFee.chargedAmount,
-        financialPreview: result.financialPreview
+        financialPreview: result.financialPreview,
+        hostAutoRegistered: result.hostAutoRegistered || false
       },
-      message: 'Private table created successfully'
+      message: 'Private table created successfully - you are automatically registered as a player'
     });
   } catch (error) {
     console.error('🚀 ~ createPrivateTable ~ error:', error);
@@ -88,7 +89,9 @@ const getPrivateTable = catchAsync(async (req, res) => {
     // Add additional permission flags
     table.canStart = table.isTableCreatedByYou && table.status === 'READY_TO_START';
     table.canCancel = table.isTableCreatedByYou && !['COMPLETED', 'CANCELLED'].includes(table.status);
+    // 🎮 HOST CAN'T JOIN AGAIN (already registered), NON-HOSTS CAN JOIN
     table.canJoin = !table.isTableCreatedByYou && table.status === 'WAITING_FOR_PLAYERS';
+    table.isPlayerInTable = table.registeredPlayers?.some(p => p.userId?.toString() === currentUserId);
 
     // Manually populate host information
     if (table.hostId) {
@@ -300,7 +303,9 @@ const getHostTables = catchAsync(async (req, res) => {
       isTableCreatedByYou: currentUserId && table.hostId?.toString() === currentUserId,
       canStart: currentUserId && table.hostId?.toString() === currentUserId && table.status === 'READY_TO_START',
       canCancel: currentUserId && table.hostId?.toString() === currentUserId && !['COMPLETED', 'CANCELLED'].includes(table.status),
-      canJoin: false // Host can't join their own table as a player
+      // 🎮 HOST IS ALREADY REGISTERED AS PLAYER, SO CAN'T JOIN AGAIN
+      canJoin: false,
+      isPlayerInTable: true // Host is always a player in their own table
     }));
 
     res.json({
@@ -372,7 +377,9 @@ const getAvailableTables = catchAsync(async (req, res) => {
       // Add additional permission flags
       table.canStart = table.isTableCreatedByYou && table.status === 'READY_TO_START';
       table.canCancel = table.isTableCreatedByYou && !['COMPLETED', 'CANCELLED'].includes(table.status);
+      // 🎮 HOST CAN'T JOIN AGAIN (already registered), NON-HOSTS CAN JOIN
       table.canJoin = !table.isTableCreatedByYou && table.status === 'WAITING_FOR_PLAYERS';
+      table.isPlayerInTable = table.registeredPlayers?.some(p => p.userId?.toString() === currentUserId);
       
       if (table.hostId) {
         const hostResult = await mongoHelper.findById(
@@ -472,7 +479,9 @@ const getPrivateTableById = catchAsync(async (req, res) => {
     // Add additional permission flags
     table.canStart = table.isTableCreatedByYou && table.status === 'READY_TO_START';
     table.canCancel = table.isTableCreatedByYou && !['COMPLETED', 'CANCELLED'].includes(table.status);
+    // 🎮 HOST CAN'T JOIN AGAIN (already registered), NON-HOSTS CAN JOIN
     table.canJoin = !table.isTableCreatedByYou && table.status === 'WAITING_FOR_PLAYERS';
+    table.isPlayerInTable = table.registeredPlayers?.some(p => p.userId?.toString() === currentUserId);
 
     // Safely populate host information
     if (table.hostId) {

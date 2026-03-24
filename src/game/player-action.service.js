@@ -430,10 +430,7 @@ class PlayerActionService {
             })
         }];
 
-        emitSuccess(this.io.to(gameState.tableId), 'showdownResults', { winners: results }, 'Showdown complete');
-        emitSuccess(this.io.to(gameState.tableId), 'winners', formattedWinners, 'Winners');
-        
-        // Reveal cards one by one
+        // Reveal cards first
         gameState.players.filter(p => p.status !== 'FOLDED').forEach(p => {
             emitSuccess(this.io.to(gameState.tableId), 'revealPlayerCards', {
                 playerId: p.id,
@@ -442,6 +439,12 @@ class PlayerActionService {
         });
         
         emitSuccess(this.io.to(gameState.tableId), 'revealingDone', {}, 'All cards revealed');
+        
+        // Wait 3 seconds before showing winners
+        setTimeout(() => {
+            emitSuccess(this.io.to(gameState.tableId), 'showdownResults', { winners: results }, 'Showdown complete');
+            emitSuccess(this.io.to(gameState.tableId), 'winners', formattedWinners, 'Winners');
+        }, 3000);
 
         console.log("🎰 Players at showdown:",
             gameState.players.map(p => ({
@@ -504,17 +507,28 @@ class PlayerActionService {
     }
 
     getActionMessage(action, username, amount) {
+        // Format amount to show proper decimal places
+        const formatAmount = (amt) => {
+            if (amt === 0) return '0';
+            if (amt < 1) {
+                // For amounts less than 1, show up to 2 decimal places, removing trailing zeros
+                return parseFloat(amt.toFixed(2)).toString();
+            }
+            // For amounts >= 1, show as integer if whole number, otherwise up to 2 decimals
+            return amt % 1 === 0 ? amt.toString() : parseFloat(amt.toFixed(2)).toString();
+        };
+
         switch (action) {
             case 'check':
                 return `${username} checked.`;
             case 'fold':
                 return `${username} folded.`;
             case 'call':
-                return `${username} called ${amount} chips.`;
+                return `${username} called ${formatAmount(amount)} chips.`;
             case 'raise':
-                return `${username} raised to ${amount} chips.`;
+                return `${username} raised to ${formatAmount(amount)} chips.`;
             case 'all-in':
-                return `${username} went all-in with ${amount} chips.`;
+                return `${username} went all-in with ${formatAmount(amount)} chips.`;
             default:
                 return `${username} performed ${action}.`;
         }

@@ -44,8 +44,9 @@ class PrivateTableHandler {
             emitSuccess(this.socket, 'privateTableCreated', {
                 privateTable: result.privateTable,
                 setupFee: result.setupFee.chargedAmount,
-                financialPreview: result.financialPreview
-            }, 'Private table created successfully');
+                financialPreview: result.financialPreview,
+                hostAutoRegistered: result.hostAutoRegistered || false
+            }, 'Private table created successfully - you are automatically registered as a player');
 
             console.log(`🎮 Private table created: ${result.privateTable._id} by ${user.username}`);
 
@@ -178,12 +179,20 @@ class PrivateTableHandler {
     async handleGetPrivateTableInfo(data) {
         try {
             const { token, tableId } = data;
-            await verifyEventToken(token, this.socket);
+            const user = await verifyEventToken(token, this.socket);
+            const currentUserId = user._id.toString();
 
             const privateTable = await privateTableService.getPrivateTableWithDetails(tableId);
             if (!privateTable) {
                 throw new Error('Private table not found');
             }
+
+            // Add ownership and permission flags
+            privateTable.isTableCreatedByYou = currentUserId && privateTable.hostId?.toString() === currentUserId;
+            privateTable.canStart = privateTable.isTableCreatedByYou && privateTable.status === 'READY_TO_START';
+            privateTable.canCancel = privateTable.isTableCreatedByYou && !['COMPLETED', 'CANCELLED'].includes(privateTable.status);
+            privateTable.canJoin = !privateTable.isTableCreatedByYou && privateTable.status === 'WAITING_FOR_PLAYERS';
+            privateTable.isPlayerInTable = privateTable.registeredPlayers?.some(p => p.userId?.toString() === currentUserId);
 
             emitSuccess(this.socket, 'privateTableInfo', privateTable, 'Private table info');
 
@@ -198,7 +207,24 @@ class PrivateTableHandler {
             const { token, tableConfig } = data;
             await verifyEventToken(token, this.socket);
 
-            const preview = await financialIntegrationService.getTableFinancialPreview(tableConfig);
+            let preview;
+            
+            if (tableConfig.gameType === 'SNG' || tableConfig.gameType === 'PRIVATE_SNG') {
+                // Use SNG-specific commission preview
+                const sngCommissionPreview = require('../../services/sng-commission-preview.service');
+                preview = await sngCommissionPreview.generateSNGCommissionPreview({
+                    declaredCapacity: tableConfig.declaredCapacity || tableConfig.playerCapacity?.max,
+                    buyIn: tableConfig.buyIn || tableConfig.buyInSettings?.min,
+                    duration: tableConfig.estimatedHours || 2,
+                    timerSeconds: tableConfig.timerSeconds || tableConfig.turnTimer || 30,
+                    tier: tableConfig.tier || 3,
+                    hostUplift: tableConfig.hostUplift || 0,
+                    bigBlind: tableConfig.stakes?.blinds?.big || (tableConfig.buyIn || 50) / 25 // Estimate BB as buyIn/25
+                });
+            } else {
+                // Use tournament preview for tournaments
+                preview = await financialIntegrationService.getTableFinancialPreview(tableConfig);
+            }
 
             emitSuccess(this.socket, 'privateTablePreview', preview, 'Financial preview generated');
 
@@ -213,10 +239,21 @@ class PrivateTableHandler {
             const { token, status } = data;
             const user = await verifyEventToken(token, this.socket);
             const hostId = user._id.toString();
+            const currentUserId = user._id.toString();
 
             const tables = await privateTableService.getHostTables(hostId, status);
 
-            emitSuccess(this.socket, 'hostTables', tables, 'Host tables retrieved');
+            // Add ownership flags to each table
+            const tablesWithFlags = tables.map(table => ({
+                ...table,
+                isTableCreatedByYou: currentUserId && table.hostId?.toString() === currentUserId,
+                canStart: currentUserId && table.hostId?.toString() === currentUserId && table.status === 'READY_TO_START',
+                canCancel: currentUserId && table.hostId?.toString() === currentUserId && !['COMPLETED', 'CANCELLED'].includes(table.status),
+                canJoin: false, // Host is already registered as player
+                isPlayerInTable: true // Host is always a player in their own table
+            }));
+
+            emitSuccess(this.socket, 'hostTables', tablesWithFlags, 'Host tables retrieved');
 
         } catch (err) {
             console.error('Get host tables error:', err);

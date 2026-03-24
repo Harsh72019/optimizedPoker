@@ -9,6 +9,7 @@ const tableRoute = require('./table.route');
 const matchmakingRoute = require('./matchmaking.routes');
 const financialRoute = require('./financial.routes');
 const privateTableRoute = require('./private-table.route');
+const sngCommissionRoute = require('./sng-commission.route');
 
 const router = express.Router();
 
@@ -21,5 +22,6 @@ router.use('/table', tableRoute);
 router.use('/matchmaking', matchmakingRoute);
 router.use('/financial', financialRoute);
 router.use('/private-table', privateTableRoute);
+router.use('/sng-commission', sngCommissionRoute);
 
 module.exports = router;

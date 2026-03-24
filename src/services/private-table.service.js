@@ -87,6 +87,7 @@ class PrivateTableService {
     );
     
     // Create private table record using mongoHelper (let it generate Doc_ ID)
+    // 🎮 HOST AUTO-REGISTRATION: Host is automatically registered as the first player
     const privateTableData = {
       name: mappedConfig.name,
       description: mappedConfig.description,
@@ -111,7 +112,14 @@ class PrivateTableService {
       allowSpectators: mappedConfig.allowSpectators,
       affiliateId: mappedConfig.affiliateId,
       createdBy: 'HOST',
-      registeredPlayers: [],
+      // 🎮 HOST IS AUTOMATICALLY REGISTERED AS FIRST PLAYER
+      registeredPlayers: [{
+        userId: hostId,
+        registeredAt: new Date(),
+        buyInPaid: false,
+        status: 'REGISTERED',
+        isHost: true
+      }],
       waitlist: [],
       tables: [],
       winners: [],
@@ -138,10 +146,28 @@ class PrivateTableService {
     
     const privateTable = result.data;
     
+    // Check if threshold is already met with just the host
+    const thresholdPercentage = (1 / privateTable.declaredCapacity) * 100;
+    const thresholdMet = thresholdPercentage >= privateTable.participationThreshold;
+    
+    if (thresholdMet) {
+      // Update status to READY_TO_START if threshold is met with just the host
+      await mongoHelper.updateById(
+        mongoHelper.COLLECTIONS.PRIVATE_TABLES,
+        privateTable._id,
+        { status: 'READY_TO_START' }
+      );
+      privateTable.status = 'READY_TO_START';
+      console.log(`🎮 [HOST AUTO-REG] Table ${privateTable._id} ready to start with host only (${thresholdPercentage.toFixed(2)}% >= ${privateTable.participationThreshold}%)`);
+    }
+    
+    console.log(`🎮 [HOST AUTO-REG] Host ${hostId} automatically registered as player in table ${privateTable._id}`);
+    
     return {
       privateTable,
       setupFee: setupFeeResult,
-      financialPreview: await this.generateFinancialPreview(privateTable)
+      financialPreview: await this.generateFinancialPreview(privateTable),
+      hostAutoRegistered: true
     };
   }
   
@@ -163,6 +189,19 @@ class PrivateTableService {
     );
     
     if (alreadyRegistered) {
+      // If it's the host, return current status instead of error
+      if (privateTable.hostId.toString() === userId.toString()) {
+        const currentCount = privateTable.registeredPlayers?.length || 0;
+        return {
+          registered: true,
+          waitlisted: false,
+          position: 1, // Host is always first
+          tableStatus: privateTable.status,
+          playersRegistered: currentCount,
+          spotsRemaining: privateTable.declaredCapacity - currentCount,
+          isHost: true
+        };
+      }
       throw new Error('Player already registered');
     }
     
@@ -536,17 +575,34 @@ class PrivateTableService {
    * Generate financial preview for private table
    */
   async generateFinancialPreview(privateTable) {
-    return await commissionPreviewService.generateTournamentPreview({
-      buyIn: privateTable.buyIn,
-      declaredCapacity: privateTable.declaredCapacity,
-      participationThreshold: privateTable.participationThreshold,
-      tierRake: privateTable.tierRake,
-      hostUplift: privateTable.hostUplift,
-      hostRewardPercent: privateTable.hostRewardPercent,
-      hours: privateTable.estimatedHours,
-      timerSeconds: privateTable.timerSeconds,
-      hasAffiliate: !!privateTable.affiliateId
-    });
+    if (privateTable.gameType === 'PRIVATE_SNG') {
+      // Use SNG-specific commission preview
+      const sngCommissionPreview = require('./sng-commission-preview.service');
+      const config = privateTable.privateConfig || {};
+      
+      return await sngCommissionPreview.generateSNGCommissionPreview({
+        declaredCapacity: privateTable.declaredCapacity,
+        buyIn: privateTable.buyIn,
+        duration: privateTable.estimatedHours || 2,
+        timerSeconds: privateTable.timerSeconds || 30,
+        tier: privateTable.tier || 3,
+        hostUplift: privateTable.hostUplift || 0,
+        bigBlind: config.stakes?.blinds?.big || privateTable.buyIn / 25 // Estimate BB
+      });
+    } else {
+      // Use tournament preview for tournaments
+      return await commissionPreviewService.generateTournamentPreview({
+        buyIn: privateTable.buyIn,
+        declaredCapacity: privateTable.declaredCapacity,
+        participationThreshold: privateTable.participationThreshold,
+        tierRake: privateTable.tierRake,
+        hostUplift: privateTable.hostUplift,
+        hostRewardPercent: privateTable.hostRewardPercent,
+        hours: privateTable.estimatedHours,
+        timerSeconds: privateTable.timerSeconds,
+        hasAffiliate: !!privateTable.affiliateId
+      });
+    }
   }
   
   /**
