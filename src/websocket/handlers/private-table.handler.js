@@ -80,8 +80,12 @@ class PrivateTableHandler {
             // Register player
             const result = await privateTableService.registerPlayer(tableId, userId);
 
-            // Join socket room for updates
+            // Join socket room for updates (always join, even if already registered)
             this.socket.join(`private_table_${tableId}`);
+
+            const message = result.alreadyRegistered 
+                ? 'Already registered - joined room for updates'
+                : result.registered ? 'Joined private table' : 'Added to waitlist';
 
             emitSuccess(this.socket, 'privateTableJoined', {
                 tableId,
@@ -90,16 +94,20 @@ class PrivateTableHandler {
                 position: result.position,
                 tableStatus: result.tableStatus,
                 playersRegistered: result.playersRegistered,
-                spotsRemaining: result.spotsRemaining
-            }, result.registered ? 'Joined private table' : 'Added to waitlist');
-
-            // Notify other players and host
-            emitSuccess(this.io.to(`private_table_${tableId}`), 'playerRegistered', {
-                username: user.username,
-                playersRegistered: result.playersRegistered,
                 spotsRemaining: result.spotsRemaining,
-                canStart: result.tableStatus === 'READY_TO_START'
-            }, `${user.username} joined the table`);
+                alreadyRegistered: result.alreadyRegistered || false
+            }, message);
+
+            // Only notify other players if this is a new registration
+            if (!result.alreadyRegistered) {
+                // Notify other players and host
+                emitSuccess(this.io.to(`private_table_${tableId}`), 'playerRegistered', {
+                    username: user.username,
+                    playersRegistered: result.playersRegistered,
+                    spotsRemaining: result.spotsRemaining,
+                    canStart: result.tableStatus === 'READY_TO_START'
+                }, `${user.username} joined the table`);
+            }
 
             // Send updated table info to host only
             const updatedTableInfo = await privateTableService.getPrivateTableWithDetails(tableId);

@@ -194,20 +194,20 @@ class PrivateTableService {
     );
     
     if (alreadyRegistered) {
-      // If it's the host, return current status instead of error
-      if (privateTable.hostId.toString() === userId.toString()) {
-        const currentCount = privateTable.registeredPlayers?.length || 0;
-        return {
-          registered: true,
-          waitlisted: false,
-          position: 1, // Host is always first
-          tableStatus: privateTable.status,
-          playersRegistered: currentCount,
-          spotsRemaining: privateTable.declaredCapacity - currentCount,
-          isHost: true
-        };
-      }
-      throw new Error('Player already registered');
+      // Player is already registered, just return current status (no error)
+      const currentCount = privateTable.registeredPlayers?.length || 0;
+      const isHost = privateTable.hostId.toString() === userId.toString();
+      
+      return {
+        registered: true,
+        waitlisted: false,
+        position: privateTable.registeredPlayers.findIndex(p => p.userId?.toString() === userId.toString()) + 1,
+        tableStatus: privateTable.status,
+        playersRegistered: currentCount,
+        spotsRemaining: privateTable.declaredCapacity - currentCount,
+        isHost,
+        alreadyRegistered: true // Flag to indicate they were already registered
+      };
     }
     
     // Check capacity
