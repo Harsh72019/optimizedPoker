@@ -183,6 +183,11 @@ class PrivateTableService {
     
     const privateTable = tableResult.data;
     
+    // Check if table is in a state that allows registration
+    if (!['CREATED', 'WAITING_FOR_PLAYERS', 'READY_TO_START'].includes(privateTable.status)) {
+      throw new Error(`Cannot join table in current status: ${privateTable.status}`);
+    }
+    
     // Check if already registered
     const alreadyRegistered = privateTable.registeredPlayers?.some(
       p => p.userId?.toString() === userId.toString()
@@ -247,9 +252,16 @@ class PrivateTableService {
     const newCount = registeredPlayers.length;
     const requiredPlayers = Math.ceil(privateTable.declaredCapacity * privateTable.participationThreshold / 100);
     const thresholdMet = newCount >= requiredPlayers;
-    const newStatus = thresholdMet ? 'READY_TO_START' : 'WAITING_FOR_PLAYERS';
+    // Determine new status based on current status and threshold
+    let newStatus = privateTable.status;
+    if (privateTable.status === 'CREATED' && newCount > 0) {
+      newStatus = 'WAITING_FOR_PLAYERS';
+    }
+    if (thresholdMet && ['CREATED', 'WAITING_FOR_PLAYERS'].includes(privateTable.status)) {
+      newStatus = 'READY_TO_START';
+    }
     
-    console.log(`📊 Threshold Check: ${newCount}/${privateTable.declaredCapacity}, Required: ${requiredPlayers}, Threshold met: ${thresholdMet} → Status: ${newStatus}`);
+    console.log(`📊 Threshold Check: ${newCount}/${privateTable.declaredCapacity}, Required: ${requiredPlayers}, Threshold met: ${thresholdMet} → Status: ${privateTable.status} → ${newStatus}`);
     
     const updateResult = await mongoHelper.updateById(
       mongoHelper.COLLECTIONS.PRIVATE_TABLES,
@@ -266,7 +278,6 @@ class PrivateTableService {
     }
     
     console.log(`✅ Player registered. Updated status to: ${newStatus}`);
-    console.log(`📝 Update result:`, JSON.stringify(updateResult.data, null, 2));
     
     return {
       registered: true,

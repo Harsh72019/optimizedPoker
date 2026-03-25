@@ -233,8 +233,8 @@ const privateTableSchema = new Schema(
 
     status: {
       type: String,
-      enum: ["CREATED", "WAITING_FOR_PLAYERS", "ACTIVE", "COMPLETED", "CANCELLED"],
-      default: "CREATED",
+      enum: ["CREATED", "WAITING_FOR_PLAYERS", "READY_TO_START", "ACTIVE", "COMPLETED", "CANCELLED"],
+      default: "WAITING_FOR_PLAYERS",
       index: true
     },
 
