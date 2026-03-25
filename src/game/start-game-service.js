@@ -215,7 +215,12 @@ class StartGameService {
 
         if (gameState) {
             // Check if this is a private table and use custom timer
-            if (matchmakingTable.data.isPrivate && matchmakingTable.data.privateTableId) {
+            const tableResult = await mongoHelper.findById(
+                mongoHelper.COLLECTIONS.TABLES,
+                tableId
+            );
+            
+            if (tableResult?.data?.isPrivate && tableResult?.data?.privateTableId) {
                 const privateTableGameConfig = require('../services/private-table-game-config.service');
                 const privateConfig = await privateTableGameConfig.getPrivateTableGameConfig(tableId);
                 
