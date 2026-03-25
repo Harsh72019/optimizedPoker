@@ -122,45 +122,70 @@ class TableManagerService {
     }
 
     async seatPlayer(tableId, player) {
-        const table = await this.getTable(tableId);
+        const lockKey = `lock:table:${tableId}`;
+        const lockValue = `${Date.now()}-${Math.random()}`;
+        const lockTimeout = 5000; // 5 seconds
+        
+        // Acquire lock with timeout
+        const lockAcquired = await redisClient.set(lockKey, lockValue, 'PX', lockTimeout, 'NX');
+        
+        if (!lockAcquired) {
+            // Wait a bit and retry
+            await new Promise(resolve => setTimeout(resolve, 100));
+            return this.seatPlayer(tableId, player);
+        }
+        
+        try {
+            const table = await this.getTable(tableId);
 
-        const existing = table.players.find(
-            p => p.userId === player.userId
-        );
+            const existing = table.players.find(
+                p => p.userId === player.userId
+            );
 
-        if (existing) {
-            existing.disconnected = false;
-            existing.socketId = player.socketId;
-            existing.chips = player.chips; // Update chips on reconnect
+            if (existing) {
+                existing.disconnected = false;
+                existing.socketId = player.socketId;
+                existing.chips = player.chips; // Update chips on reconnect
+
+                await this.saveTable(tableId, table);
+
+                return { tableState: table, isReconnect: true };
+            }
+
+            const usedSeats = table.players.map(p => p.seatPosition);
+            let seatPosition = 1;
+
+            while (usedSeats.includes(seatPosition)) {
+                seatPosition++;
+            }
+
+            table.players.push({
+                userId: player.userId,
+                username: player.username,
+                seatPosition,
+                chips: player.chips, // ✅ CRITICAL: Set chips field
+                disconnected: false,
+                socketId: player.socketId,
+            });
+
+            if (!table.dealerPosition) {
+                table.dealerPosition = seatPosition;
+            }
 
             await this.saveTable(tableId, table);
 
-            return { tableState: table, isReconnect: true };
+            return { tableState: table, isReconnect: false };
+        } finally {
+            // Release lock
+            const script = `
+                if redis.call("get", KEYS[1]) == ARGV[1] then
+                    return redis.call("del", KEYS[1])
+                else
+                    return 0
+                end
+            `;
+            await redisClient.eval(script, 1, lockKey, lockValue);
         }
-
-        const usedSeats = table.players.map(p => p.seatPosition);
-        let seatPosition = 1;
-
-        while (usedSeats.includes(seatPosition)) {
-            seatPosition++;
-        }
-
-        table.players.push({
-            userId: player.userId,
-            username: player.username,
-            seatPosition,
-            chips: player.chips, // ✅ CRITICAL: Set chips field
-            disconnected: false,
-            socketId: player.socketId,
-        });
-
-        if (!table.dealerPosition) {
-            table.dealerPosition = seatPosition;
-        }
-
-        await this.saveTable(tableId, table);
-
-        return { tableState: table, isReconnect: false };
     }
 
     async markDisconnected(tableId, userId) {
