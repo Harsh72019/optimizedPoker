@@ -522,67 +522,84 @@ class PrivateTableService {
    * Get private table with populated details
    */
   async getPrivateTableWithDetails(tableId) {
-    // First get the private table
-    const result = await mongoHelper.findById(mongoHelper.COLLECTIONS.PRIVATE_TABLES, tableId);
-    
-    if (!result.success || !result.data) {
-      return null;
-    }
-    
-    const privateTable = result.data;
-    
-    // Manually populate hostId
-    if (privateTable.hostId) {
-      const hostResult = await mongoHelper.findById(
-        mongoHelper.COLLECTIONS.USERS, 
-        privateTable.hostId.toString()
-      );
-      if (hostResult.success && hostResult.data) {
-        privateTable.hostId = {
-          _id: hostResult.data._id,
-          username: hostResult.data.username,
-          email: hostResult.data.email,
-          profilePic: hostResult.data.profilePic,
-          name: hostResult.data.name
-        };
-      }
-    }
-    
-    // Manually populate registeredPlayers.userId
-    if (privateTable.registeredPlayers && privateTable.registeredPlayers.length > 0) {
-      const populatedPlayers = [];
-      
-      for (const player of privateTable.registeredPlayers) {
-        if (player.userId) {
-          const userResult = await mongoHelper.findById(
-            mongoHelper.COLLECTIONS.USERS,
-            player.userId.toString()
-          );
-          
-          if (userResult.success && userResult.data) {
-            populatedPlayers.push({
-              ...player,
-              user: {
-                _id: userResult.data._id,
-                username: userResult.data.username,
-                email: userResult.data.email,
-                profilePic: userResult.data.profilePic,
-                name: userResult.data.name
+    // Use aggregation pipeline to populate in a single query
+    const pipeline = [
+      {
+        $match: { _id: tableId }
+      },
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'hostId',
+          foreignField: '_id',
+          as: 'hostDetails',
+          pipeline: [
+            {
+              $project: {
+                username: 1,
+                email: 1,
+                profilePic: 1,
+                name: 1
               }
-            });
-          } else {
-            // Keep original player data if user not found
-            populatedPlayers.push(player);
+            }
+          ]
+        }
+      },
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'registeredPlayers.userId',
+          foreignField: '_id',
+          as: 'playerDetails'
+        }
+      },
+      {
+        $addFields: {
+          hostId: { $arrayElemAt: ['$hostDetails', 0] },
+          registeredPlayers: {
+            $map: {
+              input: '$registeredPlayers',
+              as: 'player',
+              in: {
+                $mergeObjects: [
+                  '$$player',
+                  {
+                    user: {
+                      $arrayElemAt: [
+                        {
+                          $filter: {
+                            input: '$playerDetails',
+                            cond: { $eq: ['$$this._id', '$$player.userId'] }
+                          }
+                        },
+                        0
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
           }
-        } else {
-          populatedPlayers.push(player);
+        }
+      },
+      {
+        $project: {
+          hostDetails: 0,
+          playerDetails: 0
         }
       }
-      
-      privateTable.registeredPlayers = populatedPlayers;
+    ];
+    
+    const result = await mongoHelper.aggregate(
+      mongoHelper.COLLECTIONS.PRIVATE_TABLES,
+      pipeline
+    );
+    
+    if (result.success && result.data && result.data.length > 0) {
+      return result.data[0];
     }
     
-    return privateTable;
+    return null;
   }
   
   /**
