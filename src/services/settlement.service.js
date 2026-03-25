@@ -148,7 +148,7 @@ class SettlementService {
       hostShare
     };
     
-    const rakeLedgerResult = await mongoHelper.create(mongoHelper.COLLECTIONS.RAKE_LEDGER, rakeLedgerData);
+    const rakeLedgerResult = await mongoHelper.create(mongoHelper.COLLECTIONS.RAKE_LEDGER, rakeLedgerData , mongoHelper.MODELS.RAKE_LEDGER);
     
     if (rakeLedgerResult.success) {
       console.log(`💰 Rake ledger created for game ${gameId}`);

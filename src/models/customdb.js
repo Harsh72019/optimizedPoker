@@ -536,6 +536,7 @@ const MODELS = {
   TOURNAMENT: 'tournament',
   TOURNAMENT_PLAYER: 'tournament_player',
   TOURNAMENT_TABLES: 'tournament_table',
+  RAKE_LEDGER: 'rakeledger',
   RECRUIT_EARNING: 'recruit_earning',
 };
 
