@@ -479,6 +479,7 @@ async function aggregate(collection, pipeline) {
       data: response.data.data,
     };
   } catch (error) {
+    console.log(error, "error in aggregate");
     return {
       success: false,
       error: error.response?.data?.message || error.message,
