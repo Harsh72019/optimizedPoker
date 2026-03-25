@@ -448,7 +448,6 @@ class PrivateTableService {
         );
         
         // Sync to MongoDB
-        const mongoHelper = require('../models/customdb');
         const findResult = await mongoHelper.findById(mongoHelper.COLLECTIONS.TABLES, underlyingTable._id);
         
         if (findResult.success && findResult.data) {

@@ -167,21 +167,15 @@ class PrivateTableHandler {
                     }, 'Joined as spectator');
                 }
                 
-                for (const player of privateTable.registeredPlayers) {
-                    const playerId = player.userId?.toString() || player.userId;
-                    // Emit table join event to each player
-                    const playerSockets = await this.io.in(`private_table_${tableId}`).fetchSockets();
-                    const playerSocket = playerSockets.find(s => s.user?._id?.toString() === playerId);
-                    
-                    if (playerSocket) {
-                        emitSuccess(playerSocket, 'redirectToTable', {
-                            tableId: underlyingTableId,
-                            buyIn: privateTable.buyIn,
-                            gameType: 'PRIVATE_SNG',
-                            privateTableId: tableId
-                        }, 'Redirecting to game table');
-                    }
-                }
+                // 🎯 EMIT TO ENTIRE ROOM: All registered players should be connected to this room
+                emitSuccess(this.io.to(`private_table_${tableId}`), 'redirectToTable', {
+                    tableId: underlyingTableId,
+                    buyIn: privateTable.buyIn,
+                    gameType: 'PRIVATE_SNG',
+                    privateTableId: tableId
+                }, 'Redirecting to game table');
+                
+                console.log(`🎮 [REDIRECT] Sent redirectToTable to all players in room private_table_${tableId}`);
             }
 
             emitSuccess(this.socket, 'privateTableStartSuccess', result, 'Private table started successfully');
