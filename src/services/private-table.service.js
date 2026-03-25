@@ -532,17 +532,7 @@ class PrivateTableService {
           from: 'users',
           localField: 'hostId',
           foreignField: '_id',
-          as: 'hostDetails',
-          pipeline: [
-            {
-              $project: {
-                username: 1,
-                email: 1,
-                profilePic: 1,
-                name: 1
-              }
-            }
-          ]
+          as: 'hostDetails'
         }
       },
       {
@@ -555,16 +545,26 @@ class PrivateTableService {
       },
       {
         $addFields: {
-          hostId: { $arrayElemAt: ['$hostDetails', 0] },
+          hostId: {
+            $let: {
+              vars: { host: { $arrayElemAt: ['$hostDetails', 0] } },
+              in: {
+                _id: '$$host._id',
+                username: '$$host.username',
+                email: '$$host.email',
+                profilePic: '$$host.profilePic',
+                name: '$$host.name'
+              }
+            }
+          },
           registeredPlayers: {
             $map: {
               input: '$registeredPlayers',
               as: 'player',
               in: {
-                $mergeObjects: [
-                  '$$player',
-                  {
-                    user: {
+                $let: {
+                  vars: {
+                    userDetail: {
                       $arrayElemAt: [
                         {
                           $filter: {
@@ -575,8 +575,22 @@ class PrivateTableService {
                         0
                       ]
                     }
+                  },
+                  in: {
+                    userId: '$$player.userId',
+                    registeredAt: '$$player.registeredAt',
+                    buyInPaid: '$$player.buyInPaid',
+                    status: '$$player.status',
+                    isHost: '$$player.isHost',
+                    user: {
+                      _id: '$$userDetail._id',
+                      username: '$$userDetail.username',
+                      email: '$$userDetail.email',
+                      profilePic: '$$userDetail.profilePic',
+                      name: '$$userDetail.name'
+                    }
                   }
-                ]
+                }
               }
             }
           }
