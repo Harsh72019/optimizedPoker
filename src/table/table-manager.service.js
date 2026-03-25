@@ -11,45 +11,62 @@ class TableManagerService {
         const data = await redisClient.get(this.getTableKey(tableId));
 
         if (!data) {
-            // Fetch SubTier to calculate maxBuyIn for bot
+            // Fetch table info to check if it's a private table
             const mongoHelper = require('../models/customdb');
             const tableDoc = await mongoHelper.findById(mongoHelper.COLLECTIONS.TABLES, tableId);
             
-            let botChips = 10000; // Default fallback
+            // ✅ CRITICAL: Don't add bots to private tables
+            const isPrivateTable = tableDoc.success && tableDoc.data && 
+                                 (tableDoc.data.isPrivate || tableDoc.data.privateTableId);
             
-            if (tableDoc.success && tableDoc.data && tableDoc.data.subTierId) {
-                const subTierDoc = await mongoHelper.findById(mongoHelper.COLLECTIONS.SUB_TIERS, tableDoc.data.subTierId);
-                if (subTierDoc.success && subTierDoc.data) {
-                    const bb = subTierDoc.data.tableConfig.bb;
-                    botChips = parseFloat((bb * 100).toFixed(2)); // maxBuyIn = bb * 100
+            let table;
+            
+            if (isPrivateTable) {
+                // Private table - no bot, empty players array
+                console.log(`🔒 [TABLE MANAGER] Private table detected: ${tableId} - no bot added`);
+                table = {
+                    players: [],
+                    dealerPosition: null,
+                    status: 'IDLE',
+                    tableBlockchainId: tableDoc?.data?.tableBlockchainId
+                };
+            } else {
+                // Regular table - add bot as before
+                let botChips = 10000; // Default fallback
+                
+                if (tableDoc.success && tableDoc.data && tableDoc.data.subTierId) {
+                    const subTierDoc = await mongoHelper.findById(mongoHelper.COLLECTIONS.SUB_TIERS, tableDoc.data.subTierId);
+                    if (subTierDoc.success && subTierDoc.data) {
+                        const bb = subTierDoc.data.tableConfig.bb;
+                        botChips = parseFloat((bb * 100).toFixed(2)); // maxBuyIn = bb * 100
+                    }
                 }
+
+                const botNames = ['MightyThor', 'SuperSimp', 'AlphaWrecker', 'DeltaForce'];
+                const botUserId = `bot_${tableId}`;
+                const bot = {
+                    userId: botUserId,
+                    username: botNames[Math.floor(Math.random() * botNames.length)],
+                    seatPosition: 1,
+                    chips: botChips,
+                    isBot: true,
+                    disconnected: false,
+                };
+
+                table = {
+                    players: [bot],
+                    dealerPosition: 1,
+                    status: 'IDLE',
+                    tableBlockchainId: tableDoc?.data?.tableBlockchainId
+                };
+                
+                // Sync bot to MongoDB for regular tables only
+                this.syncBotToMongo(tableId, botUserId).catch(err =>
+                    console.error('Failed to sync bot to MongoDB:', err.message)
+                );
             }
 
-            const botNames = ['MightyThor' , 'SuperSimp' , 'AlphaWrecker' ,'DeltaForce']
-            const botUserId = `bot_${tableId}`;
-            const bot = {
-                userId: botUserId,
-                username: botNames[Math.floor(Math.random() * botNames.length)],
-                seatPosition: 1,
-                chips: botChips,
-                isBot: true,
-                disconnected: false,
-            };
-
-            const table = {
-                players: [bot],
-                dealerPosition: 1,
-                status: 'IDLE',
-                tableBlockchainId : tableDoc?.data?.tableBlockchainId
-            };
-
             await this.saveTable(tableId, table);
-            
-            // Sync bot to MongoDB
-            this.syncBotToMongo(tableId, botUserId).catch(err =>
-                console.error('Failed to sync bot to MongoDB:', err.message)
-            );
-
             return table;
         }
 
@@ -62,6 +79,14 @@ class TableManagerService {
         
         if (findResult.success && findResult.data) {
             const table = findResult.data;
+            
+            // ✅ CRITICAL: Don't sync bots to private tables
+            const isPrivateTable = table.isPrivate || table.privateTableId;
+            if (isPrivateTable) {
+                console.log(`🔒 [TABLE MANAGER] Skipping bot sync for private table: ${tableId}`);
+                return;
+            }
+            
             const botExists = (table.currentPlayers || []).some(p => p.user?.toString() === botUserId);
             
             if (!botExists) {

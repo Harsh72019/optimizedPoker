@@ -121,7 +121,15 @@ class PrivateTableStartGameService {
             await gameStateManager.createGame(tableId, gameState);
             await tableManager.setStatus(tableId, 'IN_PROGRESS');
 
-            // Emit game start events with private table info
+            // ✅ CRITICAL: Emit standard gameStarted event for client compatibility
+            emitSuccess(
+                this.io.to(tableId),
+                'gameStarted',
+                this.formatGameStartData(tableState, gameState),
+                'Game started successfully'
+            );
+
+            // Emit private table specific event with additional config
             emitSuccess(
                 this.io.to(tableId),
                 'privateGameStarted',
