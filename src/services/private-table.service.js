@@ -292,7 +292,7 @@ class PrivateTableService {
   /**
    * Start private table game
    */
-  async startPrivateTable(tableId, hostId) {
+  async startPrivateTable(tableId, hostId, orchestrator = null) {
     // Add small delay to ensure DB is updated
     await new Promise(resolve => setTimeout(resolve, 100));
     
@@ -332,9 +332,9 @@ class PrivateTableService {
     let gameResult;
     
     if (privateTable.gameType === 'PRIVATE_SNG') {
-      gameResult = await this.startPrivateSNG(privateTable);
+      gameResult = await this.startPrivateSNG(privateTable , orchestrator);
     } else {
-      gameResult = await this.startPrivateTournament(privateTable);
+      gameResult = await this.startPrivateTournament(privateTable , orchestrator);
     }
     
     // Update private table status
@@ -357,7 +357,7 @@ class PrivateTableService {
   /**
    * Start Private SNG (creates underlying table using existing system)
    */
-  async startPrivateSNG(privateTable) {
+  async startPrivateSNG(privateTable, orchestrator) {
     const tableManager = require('../table/table-manager.service');
     
     // Use private config if available, otherwise fall back to legacy fields
@@ -437,7 +437,7 @@ class PrivateTableService {
         const user = userResult.data;
         
         // Seat player in underlying table using table manager
-        const { tableState } = await tableManager.seatPlayer(
+        await tableManager.seatPlayer(
           underlyingTable._id,
           {
             userId: playerId,
@@ -474,6 +474,20 @@ class PrivateTableService {
       } catch (error) {
         console.error(`❌ [AUTO-SEAT] Failed to seat player ${playerId}:`, error.message);
       }
+    }
+    
+    // 🎮 SIMPLE: Use private table game orchestrator to start the game
+    console.log(`🎲 [PRIVATE ORCHESTRATOR] Starting game for underlying table ${underlyingTable._id}`);
+    
+    if (orchestrator) {
+      try {
+        await orchestrator.startGame(underlyingTable._id);
+        console.log(`✅ [PRIVATE ORCHESTRATOR] Game started successfully`);
+      } catch (orchestratorError) {
+        console.error(`❌ [PRIVATE ORCHESTRATOR] Failed to start game:`, orchestratorError.message);
+      }
+    } else {
+      console.error(`❌ [PRIVATE ORCHESTRATOR] Private table orchestrator not available`);
     }
     
     return {

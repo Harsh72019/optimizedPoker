@@ -155,7 +155,7 @@ class PrivateTableHandler {
             const hostId = user._id.toString();
 
             // Start the private table
-            const result = await privateTableService.startPrivateTable(tableId, hostId);
+            const result = await privateTableService.startPrivateTable(tableId, hostId, this.orchestrator);
 
             // Notify all registered players
             emitSuccess(this.io.to(`private_table_${tableId}`), 'privateTableStarted', {
