@@ -530,24 +530,24 @@ class PrivateTableService {
         { path: 'registeredPlayers.userId', collection: mongoHelper.COLLECTIONS.USERS, select: 'username email profilePic name' }
       ]
     );
-    
-    if (result.success && result.data) {
-      // Ensure registeredPlayers have full user details
-      const privateTable = result.data;
-      if (privateTable.registeredPlayers) {
-        privateTable.registeredPlayers = privateTable.registeredPlayers.map(player => ({
-          ...player,
-          // Ensure user details are properly structured
-          user: player.userId ? {
-            _id: player.userId._id || player.userId,
-            username: player.userId.username || 'Unknown',
-            email: player.userId.email || '',
-            profilePic: player.userId.profilePic || '',
-            name: player.userId.name || player.userId.username || 'Unknown'
-          } : null
-        }));
-      }
-    }
+    console.log(result.data.registeredPlayers);
+    // if (result.success && result.data) {
+    //   // Ensure registeredPlayers have full user details
+    //   const privateTable = result.data;
+    //   if (privateTable.registeredPlayers) {
+    //     privateTable.registeredPlayers = privateTable.registeredPlayers.map(player => ({
+    //       ...player,
+    //       // Ensure user details are properly structured
+    //       user: player.userId ? {
+    //         _id: player.userId._id || player.userId,
+    //         username: player.userId.username || 'Unknown',
+    //         email: player.userId.email || '',
+    //         profilePic: player.userId.profilePic || '',
+    //         name: player.userId.name || player.userId.username || 'Unknown'
+    //       } : null
+    //     }));
+    //   }
+    // }
     
     return result.success ? result.data : null;
   }
