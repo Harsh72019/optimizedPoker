@@ -109,22 +109,35 @@ class PrivateTableHandler {
                 }, `${user.username} joined the table`);
             }
 
-            // Send updated table info to host only
+            // Send updated table info with personalized permissions to each user in room
             const updatedTableInfo = await privateTableService.getPrivateTableWithDetails(tableId);
             if (updatedTableInfo) {
-                // Add host permission flags
-                updatedTableInfo.isTableCreatedByYou = true;
-                updatedTableInfo.canStart = updatedTableInfo.status === 'READY_TO_START';
-                updatedTableInfo.canCancel = !['COMPLETED', 'CANCELLED'].includes(updatedTableInfo.status);
-                updatedTableInfo.canJoin = false;
-                updatedTableInfo.isPlayerInTable = true;
+                const socketsInRoom = await this.io.in(`private_table_${tableId}`).fetchSockets();
                 
-                // Send to host only
-                this.io.to(`private_table_${tableId}`).emit('privateTableInfo', {
-                    success: true,
-                    data: updatedTableInfo,
-                    message: 'Table info updated'
-                });
+                for (const socket of socketsInRoom) {
+                    if (socket.user && socket.user._id) {
+                        const socketUserId = socket.user._id.toString();
+                        const hostIdToCompare = typeof updatedTableInfo.hostId === 'object' && updatedTableInfo.hostId._id 
+                            ? updatedTableInfo.hostId._id.toString() 
+                            : updatedTableInfo.hostId?.toString();
+                        
+                        // Create personalized table info for this user
+                        const personalizedTableInfo = {
+                            ...updatedTableInfo,
+                            isTableCreatedByYou: socketUserId === hostIdToCompare,
+                            canStart: socketUserId === hostIdToCompare && updatedTableInfo.status === 'READY_TO_START',
+                            canCancel: socketUserId === hostIdToCompare && !['COMPLETED', 'CANCELLED'].includes(updatedTableInfo.status),
+                            canJoin: socketUserId !== hostIdToCompare && updatedTableInfo.status === 'WAITING_FOR_PLAYERS',
+                            isPlayerInTable: updatedTableInfo.registeredPlayers?.some(p => p.userId?.toString() === socketUserId)
+                        };
+                        
+                        socket.emit('privateTableInfo', {
+                            success: true,
+                            data: personalizedTableInfo,
+                            message: 'Table info updated'
+                        });
+                    }
+                }
             }
 
             console.log(`👤 ${user.username} joined private table ${tableId}`);
