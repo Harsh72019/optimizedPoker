@@ -522,34 +522,67 @@ class PrivateTableService {
    * Get private table with populated details
    */
   async getPrivateTableWithDetails(tableId) {
-    const result = await mongoHelper.findByIdWithPopulate(
-      mongoHelper.COLLECTIONS.PRIVATE_TABLES,
-      tableId,
-      [
-        { path: 'hostId', collection: mongoHelper.COLLECTIONS.USERS, select: 'username email profilePic name' },
-        { path: 'registeredPlayers.userId', collection: mongoHelper.COLLECTIONS.USERS, select: 'username email profilePic name' }
-      ]
-    );
-    console.log(result.data.registeredPlayers);
-    // if (result.success && result.data) {
-    //   // Ensure registeredPlayers have full user details
-    //   const privateTable = result.data;
-    //   if (privateTable.registeredPlayers) {
-    //     privateTable.registeredPlayers = privateTable.registeredPlayers.map(player => ({
-    //       ...player,
-    //       // Ensure user details are properly structured
-    //       user: player.userId ? {
-    //         _id: player.userId._id || player.userId,
-    //         username: player.userId.username || 'Unknown',
-    //         email: player.userId.email || '',
-    //         profilePic: player.userId.profilePic || '',
-    //         name: player.userId.name || player.userId.username || 'Unknown'
-    //       } : null
-    //     }));
-    //   }
-    // }
+    // First get the private table
+    const result = await mongoHelper.findById(mongoHelper.COLLECTIONS.PRIVATE_TABLES, tableId);
     
-    return result.success ? result.data : null;
+    if (!result.success || !result.data) {
+      return null;
+    }
+    
+    const privateTable = result.data;
+    
+    // Manually populate hostId
+    if (privateTable.hostId) {
+      const hostResult = await mongoHelper.findById(
+        mongoHelper.COLLECTIONS.USERS, 
+        privateTable.hostId.toString()
+      );
+      if (hostResult.success && hostResult.data) {
+        privateTable.hostId = {
+          _id: hostResult.data._id,
+          username: hostResult.data.username,
+          email: hostResult.data.email,
+          profilePic: hostResult.data.profilePic,
+          name: hostResult.data.name
+        };
+      }
+    }
+    
+    // Manually populate registeredPlayers.userId
+    if (privateTable.registeredPlayers && privateTable.registeredPlayers.length > 0) {
+      const populatedPlayers = [];
+      
+      for (const player of privateTable.registeredPlayers) {
+        if (player.userId) {
+          const userResult = await mongoHelper.findById(
+            mongoHelper.COLLECTIONS.USERS,
+            player.userId.toString()
+          );
+          
+          if (userResult.success && userResult.data) {
+            populatedPlayers.push({
+              ...player,
+              user: {
+                _id: userResult.data._id,
+                username: userResult.data.username,
+                email: userResult.data.email,
+                profilePic: userResult.data.profilePic,
+                name: userResult.data.name
+              }
+            });
+          } else {
+            // Keep original player data if user not found
+            populatedPlayers.push(player);
+          }
+        } else {
+          populatedPlayers.push(player);
+        }
+      }
+      
+      privateTable.registeredPlayers = populatedPlayers;
+    }
+    
+    return privateTable;
   }
   
   /**
