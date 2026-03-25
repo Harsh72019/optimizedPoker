@@ -21,7 +21,8 @@ class GameOrchestrator {
         const PlayerActionService = require('./player-action.service');
         this.actionService = new PlayerActionService(io, timerManager, this);
         
-        // 🆕 Set action service for private table orchestrator
+        // 🆕 Set action service for both timer managers
+        this.timerManager.setActionService(this.actionService);
         this.privateTableOrchestrator.setActionService(this.actionService);
 
         this.waitingTimers = new Map();   // tableId -> timeout
@@ -40,7 +41,12 @@ class GameOrchestrator {
     }
     async onPlayerSeated(tableId, seatedCount) {
         try {
-            if (seatedCount < 2) return;
+            console.log(`🎮 [ORCHESTRATOR] onPlayerSeated called for table ${tableId} with ${seatedCount} players`);
+            
+            if (seatedCount < 2) {
+                console.log(`🎮 [ORCHESTRATOR] Not enough players (${seatedCount} < 2) - skipping`);
+                return;
+            }
 
             const gameState = await gameStateManager.getGame(tableId);
 
@@ -49,7 +55,10 @@ class GameOrchestrator {
                 return;
             }
 
-            if (this.waitingTimers.has(tableId)) return;
+            if (this.waitingTimers.has(tableId)) {
+                console.log(`⏳ Waiting timer already active for table ${tableId} - skipping`);
+                return;
+            }
 
             console.log(`⏳ Starting 30s waiting for table ${tableId}`);
 

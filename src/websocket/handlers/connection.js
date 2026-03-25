@@ -381,7 +381,16 @@ class ConnectionHandler {
             if (!isReconnect) {
                 emitSuccess(this.io.to(underlyingTableId), 'playerJoined', formattedData, `${user.username} joined private table`);
                 const seatedCount = tableState.players.length;
-                await this.orchestrator.onPlayerSeated(underlyingTableId, seatedCount);
+                console.log(`🎮 [PRIVATE JOIN DEBUG] About to call onPlayerSeated for table ${underlyingTableId} with ${seatedCount} players`);
+                console.log(`🎮 [PRIVATE JOIN DEBUG] Orchestrator exists: ${!!this.orchestrator}`);
+                
+                try {
+                    await this.orchestrator.onPlayerSeated(underlyingTableId, seatedCount);
+                    console.log(`✅ [PRIVATE JOIN DEBUG] onPlayerSeated completed successfully`);
+                } catch (error) {
+                    console.error(`❌ [PRIVATE JOIN DEBUG] onPlayerSeated failed:`, error.message);
+                }
+                
                 console.log(`🎮 [PRIVATE] ${userId} seated at private table ${privateTableId} -> underlying table ${underlyingTableId}`);
             }
             
