@@ -345,9 +345,25 @@ const privateTableSchema = new Schema(
       }
     },
 
-    /* ---------- MULTI TABLE ---------- */
+    /* ---------- BLOCKCHAIN INTEGRATION ---------- */
 
-    tables: [tableSchema],
+    blockchainAddress: {
+      type: String
+    },
+
+    tableBlockchainId: {
+      type: String
+    },
+
+    underlyingTableId: {
+      type: String,
+      ref: 'Table'
+    },
+
+    tournamentId: {
+      type: Schema.Types.ObjectId,
+      ref: 'Tournament'
+    },
 
     /* ---------- RESULTS ---------- */
 
