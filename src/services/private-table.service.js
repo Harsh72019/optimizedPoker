@@ -245,11 +245,11 @@ class PrivateTableService {
     
     // Check if threshold met
     const newCount = registeredPlayers.length;
-    const thresholdPercentage = (newCount / privateTable.declaredCapacity) * 100;
-    const thresholdMet = thresholdPercentage >= privateTable.participationThreshold;
+    const requiredPlayers = Math.ceil(privateTable.declaredCapacity * privateTable.participationThreshold / 100);
+    const thresholdMet = newCount >= requiredPlayers;
     const newStatus = thresholdMet ? 'READY_TO_START' : 'WAITING_FOR_PLAYERS';
     
-    console.log(`📊 Threshold Check: ${newCount}/${privateTable.declaredCapacity} = ${thresholdPercentage.toFixed(2)}% >= ${privateTable.participationThreshold}% ? ${thresholdMet} → Status: ${newStatus}`);
+    console.log(`📊 Threshold Check: ${newCount}/${privateTable.declaredCapacity}, Required: ${requiredPlayers}, Threshold met: ${thresholdMet} → Status: ${newStatus}`);
     
     const updateResult = await mongoHelper.updateById(
       mongoHelper.COLLECTIONS.PRIVATE_TABLES,
@@ -300,9 +300,21 @@ class PrivateTableService {
       throw new Error('Only the host can start the table');
     }
     
-    if (privateTable.status !== 'READY_TO_START') {
-      const currentPercentage = ((privateTable.registeredPlayers?.length || 0) / privateTable.declaredCapacity) * 100;
-      throw new Error(`Table is not ready to start. Need ${privateTable.participationThreshold}% (${Math.ceil(privateTable.declaredCapacity * privateTable.participationThreshold / 100)} players), currently at ${currentPercentage.toFixed(0)}% (${privateTable.registeredPlayers?.length || 0} players)`);
+    const currentPlayerCount = privateTable.registeredPlayers?.length || 0;
+    const currentPercentage = (currentPlayerCount / privateTable.declaredCapacity) * 100;
+    const requiredPlayers = Math.ceil(privateTable.declaredCapacity * privateTable.participationThreshold / 100);
+    
+    console.log(`📊 Detailed Check: ${currentPlayerCount}/${privateTable.declaredCapacity} = ${currentPercentage.toFixed(1)}% >= ${privateTable.participationThreshold}%`);
+    console.log(`📊 Required players: ${requiredPlayers}, Current players: ${currentPlayerCount}`);
+    
+    // Check if we have enough players (use >= for threshold check)
+    if (currentPlayerCount < requiredPlayers) {
+      throw new Error(`Table is not ready to start. Need ${privateTable.participationThreshold}% (${requiredPlayers} players), currently at ${currentPercentage.toFixed(0)}% (${currentPlayerCount} players)`);
+    }
+    
+    // Also check status, but allow starting if we have enough players regardless of status
+    if (privateTable.status !== 'READY_TO_START' && privateTable.status !== 'WAITING_FOR_PLAYERS') {
+      throw new Error(`Cannot start table in current status: ${privateTable.status}`);
     }
     
     // Start the game based on type
