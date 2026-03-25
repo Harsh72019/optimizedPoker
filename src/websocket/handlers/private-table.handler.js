@@ -209,7 +209,11 @@ class PrivateTableHandler {
             }
 
             // Add ownership and permission flags
-            privateTable.isTableCreatedByYou = currentUserId && (privateTable.hostId?._id?.toString() || privateTable.hostId?.toString()) === currentUserId;
+            const hostIdToCompare = typeof privateTable.hostId === 'object' && privateTable.hostId._id 
+                ? privateTable.hostId._id.toString() 
+                : privateTable.hostId?.toString();
+            
+            privateTable.isTableCreatedByYou = currentUserId && hostIdToCompare === currentUserId;
             privateTable.canStart = privateTable.isTableCreatedByYou && privateTable.status === 'READY_TO_START';
             privateTable.canCancel = privateTable.isTableCreatedByYou && !['COMPLETED', 'CANCELLED'].includes(privateTable.status);
             privateTable.canJoin = !privateTable.isTableCreatedByYou && privateTable.status === 'WAITING_FOR_PLAYERS';
@@ -265,14 +269,20 @@ class PrivateTableHandler {
             const tables = await privateTableService.getHostTables(hostId, status);
 
             // Add ownership flags to each table
-            const tablesWithFlags = tables.map(table => ({
-                ...table,
-                isTableCreatedByYou: currentUserId && (table.hostId?._id?.toString() || table.hostId?.toString()) === currentUserId,
-                canStart: currentUserId && (table.hostId?._id?.toString() || table.hostId?.toString()) === currentUserId && table.status === 'READY_TO_START',
-                canCancel: currentUserId && (table.hostId?._id?.toString() || table.hostId?.toString()) === currentUserId && !['COMPLETED', 'CANCELLED'].includes(table.status),
-                canJoin: false, // Host is already registered as player
-                isPlayerInTable: true // Host is always a player in their own table
-            }));
+            const tablesWithFlags = tables.map(table => {
+                const hostIdToCompare = typeof table.hostId === 'object' && table.hostId._id 
+                    ? table.hostId._id.toString() 
+                    : table.hostId?.toString();
+                
+                return {
+                    ...table,
+                    isTableCreatedByYou: currentUserId && hostIdToCompare === currentUserId,
+                    canStart: currentUserId && hostIdToCompare === currentUserId && table.status === 'READY_TO_START',
+                    canCancel: currentUserId && hostIdToCompare === currentUserId && !['COMPLETED', 'CANCELLED'].includes(table.status),
+                    canJoin: false, // Host is already registered as player
+                    isPlayerInTable: true // Host is always a player in their own table
+                };
+            });
 
             emitSuccess(this.socket, 'hostTables', tablesWithFlags, 'Host tables retrieved');
 
@@ -335,7 +345,11 @@ class PrivateTableHandler {
             this.socket.join(`spectator_${underlyingTableId}`);
 
             // Check if user is host or admin
-            const isHost = (privateTable.hostId?._id?.toString() || privateTable.hostId?.toString()) === userId;
+            const hostIdToCompare = typeof privateTable.hostId === 'object' && privateTable.hostId._id 
+                ? privateTable.hostId._id.toString() 
+                : privateTable.hostId?.toString();
+            
+            const isHost = hostIdToCompare === userId;
             const role = isHost ? 'HOST_SPECTATOR' : 'SPECTATOR';
 
             emitSuccess(this.socket, 'spectatingTable', {
