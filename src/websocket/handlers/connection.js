@@ -301,17 +301,15 @@ class ConnectionHandler {
      */
     async handlePrivateTableJoin(privateTableId, userId, user, buyIn) {
         try {
-            const mongoHelper = require('../../models/customdb');
-            const privateTableResult = await mongoHelper.findById(
-                mongoHelper.COLLECTIONS.PRIVATE_TABLES, 
-                privateTableId
-            );
+            // Get the private table with populated user details
+            const privateTableService = require('../../services/private-table.service');
+            const privateTableWithDetails = await privateTableService.getPrivateTableWithDetails(privateTableId);
             
-            if (!privateTableResult.success || !privateTableResult.data) {
+            if (!privateTableWithDetails) {
                 throw new Error('Private table not found');
             }
             
-            const privateTable = privateTableResult.data;
+            const privateTable = privateTableWithDetails;
             
             if (privateTable.status !== 'ACTIVE') {
                 throw new Error('Private table is not active');
@@ -371,7 +369,8 @@ class ConnectionHandler {
                     features: {
                         rebuy: config.rebuy,
                         antesStraddles: config.antesStraddles
-                    }
+                    },
+                    registeredPlayers: privateTable.registeredPlayers || []
                 }
             }, 'Joined private table game successfully');
             
