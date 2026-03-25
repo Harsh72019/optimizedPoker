@@ -420,75 +420,12 @@ class PrivateTableService {
       { underlyingTableId: underlyingTable._id }
     );
     
-    // ✅ CRITICAL: Automatically seat all registered players in the underlying table
-    console.log(`🎮 [AUTO-SEAT] Seating ${privateTable.registeredPlayers.length} registered players`);
+    // ✅ NO AUTO-SEATING: Let real players join via redirect flow
+    console.log(`🎮 [REDIRECT FLOW] Created underlying table ${underlyingTable._id} - waiting for real players to join`);
+    console.log(`🎮 [REDIRECT FLOW] ${privateTable.registeredPlayers.length} registered players will be redirected to join`);
     
-    for (const registeredPlayer of privateTable.registeredPlayers) {
-      const playerId = registeredPlayer.userId?.toString() || registeredPlayer.userId;
-      
-      try {
-        // Get user info
-        const userResult = await mongoHelper.findById(mongoHelper.COLLECTIONS.USERS, playerId);
-        if (!userResult.success || !userResult.data) {
-          console.error(`❌ [AUTO-SEAT] User not found: ${playerId}`);
-          continue;
-        }
-        
-        const user = userResult.data;
-        
-        // Seat player in underlying table using table manager
-        await tableManager.seatPlayer(
-          underlyingTable._id,
-          {
-            userId: playerId,
-            username: user.username,
-            chips: buyIn,
-            socketId: `private_${playerId}` // Temporary socket ID for private table players
-          }
-        );
-        
-        // Sync to MongoDB
-        const findResult = await mongoHelper.findById(mongoHelper.COLLECTIONS.TABLES, underlyingTable._id);
-        
-        if (findResult.success && findResult.data) {
-          const table = findResult.data;
-          let updatedPlayers = table.currentPlayers || [];
-          
-          const exists = updatedPlayers.some(p => p.user?.toString() === playerId);
-          if (!exists) {
-            updatedPlayers.push({ user: playerId });
-            
-            await mongoHelper.updateById(
-              mongoHelper.COLLECTIONS.TABLES,
-              underlyingTable._id,
-              { 
-                currentPlayers: updatedPlayers,
-                lastActivityAt: new Date()
-              }
-            );
-          }
-        }
-        
-        console.log(`✅ [AUTO-SEAT] Seated ${user.username} (${playerId}) in underlying table`);
-        
-      } catch (error) {
-        console.error(`❌ [AUTO-SEAT] Failed to seat player ${playerId}:`, error.message);
-      }
-    }
-    
-    // 🎮 SIMPLE: Use private table game orchestrator to start the game
-    console.log(`🎲 [PRIVATE ORCHESTRATOR] Starting game for underlying table ${underlyingTable._id}`);
-    
-    if (orchestrator) {
-      try {
-        await orchestrator.startGame(underlyingTable._id);
-        console.log(`✅ [PRIVATE ORCHESTRATOR] Game started successfully`);
-      } catch (orchestratorError) {
-        console.error(`❌ [PRIVATE ORCHESTRATOR] Failed to start game:`, orchestratorError.message);
-      }
-    } else {
-      console.error(`❌ [PRIVATE ORCHESTRATOR] Private table orchestrator not available`);
-    }
+    // The game will start when real players join via the redirect flow
+    // No need to start the game here - let the orchestrator handle it when players are seated
     
     return {
       underlyingTable,
