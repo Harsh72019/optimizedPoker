@@ -358,39 +358,27 @@ class PrivateTableService {
    * Start Private SNG (creates underlying table using existing system)
    */
   async startPrivateSNG(privateTable) {
-    const blockchainService = require('./blockchain.service');
     const tableManager = require('../table/table-manager.service');
     
     // Use private config if available, otherwise fall back to legacy fields
     const config = privateTable.privateConfig || {};
     const buyIn = config.buyInSettings?.min || privateTable.buyIn;
     
-    // Create blockchain table first for private SNG
-    console.log(`🔗 Creating blockchain table for private SNG: ${privateTable._id}`);
-    const createResult = await blockchainService.createTableOnBlockchain(
-      privateTable.hostId, // Use hostId as userAddress for now
-      privateTable.effectiveRake,
-      buyIn
-    );
-    
-    if (!createResult.success) {
-      throw new Error(`Failed to create blockchain table: ${createResult.error}`);
-    }
-    
-    console.log(`✅ Blockchain table created: ID=${createResult.tableId}, Address=${createResult.tableAddress}`);
-    
-    // Update private table with blockchain info
-    await mongoHelper.updateById(
-      mongoHelper.COLLECTIONS.PRIVATE_TABLES,
-      privateTable._id,
-      {
-        tableBlockchainId: createResult.tableId,
-        blockchainAddress: createResult.tableAddress
-      }
-    );
-    
     // Find a suitable SubTier for the buy-in amount
-    const subTier = await this.findSubTierForBuyIn(buyIn);
+    let subTier;
+    try {
+      subTier = await this.findSubTierForBuyIn(buyIn);
+    } catch (error) {
+      console.error(`❌ Error finding SubTier for buyIn ${buyIn}:`, error.message);
+      // Create a default subTier if none found
+      subTier = {
+        _id: 'default_subtier',
+        tableConfig: {
+          bb: Math.max(buyIn / 50, 1), // Default big blind
+          sb: Math.max(buyIn / 100, 0.5) // Default small blind
+        }
+      };
+    }
     
     if (!subTier) {
       throw new Error('No suitable table configuration found for this buy-in');
@@ -409,9 +397,6 @@ class PrivateTableService {
       status: 'in-use',
       isPrivate: true,
       privateTableId: privateTable._id,
-      // Add blockchain integration
-      tableBlockchainId: createResult.tableId,
-      blockchainAddress: createResult.tableAddress,
       // Store private table configuration for game engine
       privateConfig: config
     };
@@ -496,11 +481,7 @@ class PrivateTableService {
       underlyingTable,
       playersToAdd: privateTable.registeredPlayers.length,
       subTier,
-      privateConfig: config,
-      blockchainInfo: {
-        tableId: createResult.tableId,
-        tableAddress: createResult.tableAddress
-      }
+      privateConfig: config
     };
   }
   
@@ -508,35 +489,9 @@ class PrivateTableService {
    * Start Private Tournament
    */
   async startPrivateTournament(privateTable) {
-    const blockchainService = require('./blockchain.service');
-    
     // Use private config if available, otherwise fall back to legacy fields
     const config = privateTable.privateConfig || {};
     const buyIn = config.buyInSettings?.min || privateTable.buyIn;
-    
-    // Create blockchain table first for private tournament
-    console.log(`🔗 Creating blockchain table for private tournament: ${privateTable._id}`);
-    const createResult = await blockchainService.createTableOnBlockchain(
-      privateTable.hostId, // Use hostId as userAddress for now
-      privateTable.effectiveRake,
-      buyIn
-    );
-    
-    if (!createResult.success) {
-      throw new Error(`Failed to create blockchain table: ${createResult.error}`);
-    }
-    
-    console.log(`✅ Blockchain table created: ID=${createResult.tableId}, Address=${createResult.tableAddress}`);
-    
-    // Update private table with blockchain info
-    await mongoHelper.updateById(
-      mongoHelper.COLLECTIONS.PRIVATE_TABLES,
-      privateTable._id,
-      {
-        tableBlockchainId: createResult.tableId,
-        blockchainAddress: createResult.tableAddress
-      }
-    );
     
     // Create tournament record using mongoHelper
     const tournamentData = {
@@ -562,9 +517,6 @@ class PrivateTableService {
       setupFeeAmount: privateTable.setupFeeAmount,
       affiliateId: privateTable.affiliateId,
       registeredPlayers: privateTable.registeredPlayers.map(p => p.userId),
-      // Add blockchain integration
-      tableBlockchainId: createResult.tableId,
-      blockchainAddress: createResult.tableAddress,
       // Private tournament specific configurations
       privateConfig: config
     };
@@ -604,11 +556,7 @@ class PrivateTableService {
     
     return {
       tournament,
-      playersRegistered: privateTable.registeredPlayers.length,
-      blockchainInfo: {
-        tableId: createResult.tableId,
-        tableAddress: createResult.tableAddress
-      }
+      playersRegistered: privateTable.registeredPlayers.length
     };
   }
   
@@ -740,24 +688,36 @@ class PrivateTableService {
    * Find suitable SubTier for buy-in amount
    */
   async findSubTierForBuyIn(buyIn) {
-    // Find SubTier where buyIn falls within the range (bb * 20 to bb * 100)
-    const subTiersResult = await mongoHelper.getAll(mongoHelper.COLLECTIONS.SUB_TIERS, {});
-    
-    if (!subTiersResult.success) {
-      throw new Error('Failed to fetch SubTiers');
-    }
-    
-    for (const subTier of subTiersResult.data) {
-      const bb = subTier.tableConfig.bb;
-      const minBuyIn = bb * 20;
-      const maxBuyIn = bb * 100;
+    try {
+      // Find SubTier where buyIn falls within the range (bb * 20 to bb * 100)
+      const subTiersResult = await mongoHelper.getAll(mongoHelper.COLLECTIONS.SUB_TIERS, {});
       
-      if (buyIn >= minBuyIn && buyIn <= maxBuyIn) {
-        return subTier;
+      if (!subTiersResult.success || !subTiersResult.data || subTiersResult.data.length === 0) {
+        console.warn(`⚠️ No SubTiers found in database, creating default for buyIn: ${buyIn}`);
+        return null;
       }
+      
+      for (const subTier of subTiersResult.data) {
+        if (!subTier.tableConfig || !subTier.tableConfig.bb) {
+          continue; // Skip invalid subTiers
+        }
+        
+        const bb = subTier.tableConfig.bb;
+        const minBuyIn = bb * 20;
+        const maxBuyIn = bb * 100;
+        
+        if (buyIn >= minBuyIn && buyIn <= maxBuyIn) {
+          console.log(`✅ Found matching SubTier: ${subTier._id} (BB: ${bb}, Range: ${minBuyIn}-${maxBuyIn})`);
+          return subTier;
+        }
+      }
+      
+      console.warn(`⚠️ No matching SubTier found for buyIn: ${buyIn}`);
+      return null;
+    } catch (error) {
+      console.error(`❌ Error in findSubTierForBuyIn:`, error.message);
+      return null;
     }
-    
-    return null;
   }
   
   /**
