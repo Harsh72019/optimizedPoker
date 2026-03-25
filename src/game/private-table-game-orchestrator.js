@@ -17,7 +17,7 @@ class PrivateTableGameOrchestrator {
     
     // Initialize both start game services
     this.regularStartService = new StartGameService(io, this.regularTimerManager);
-    this.privateStartService = new PrivateTableStartGameService(io, this.privateTimerManager);
+    this.privateStartService = new PrivateTableStartGameService(io, this.regularTimerManager);
   }
 
   setActionService(actionService) {

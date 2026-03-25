@@ -58,10 +58,15 @@ class TurnTimerManager {
       const actionService = new PlayerActionService(this.io, this, this.orchestrator);
       const playerTurnData = actionService.formatPlayerTurnData(gameState, playerId, tableState);
       // Emit playerTurn to specific player
+      console.log(`📡 [TIMER DEBUG] Emitting currentPlayerTurn to table ${tableId}`);
       emitSuccess(this.io.to(tableId), 'currentPlayerTurn', { playerId }, 'Current turn');
+      
       if (tablePlayer?.socketId) {
+        console.log(`📡 [TIMER DEBUG] Emitting playerTurn to socket ${tablePlayer.socketId}`);
         console.log(`🎯 Player turn data:`, JSON.stringify(playerTurnData, null, 2));
         emitSuccess(this.io.to(tablePlayer.socketId), 'playerTurn', playerTurnData, `${playerTurnData.username}, it's your turn to act.`);
+      } else {
+        console.error(`❌ [TIMER DEBUG] No socketId found for player ${playerId}`);
       }
 
       /* ------------------------------------ */
@@ -113,12 +118,14 @@ class TurnTimerManager {
       this.timers.set(tableId, timeoutId);
 
       // Notify clients
+      console.log(`📡 [TIMER DEBUG] Emitting turnTimerStarted to table ${tableId} for ${seconds}s`);
       emitSuccess(
         this.io.to(tableId),
         'turnTimerStarted',
         { playerId, seconds },
         'Turn timer started'
       );
+      console.log(`✅ [TIMER DEBUG] Timer started successfully for player ${playerId} (${seconds}s)`);
     } catch (err) {
       console.error(`❌ startTimer error for ${playerId}:`, err.message);
     }
