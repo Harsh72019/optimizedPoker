@@ -522,98 +522,72 @@ class PrivateTableService {
    * Get private table with populated details
    */
   async getPrivateTableWithDetails(tableId) {
-    // Use aggregation pipeline to populate in a single query
-    const pipeline = [
-      {
-        $match: { _id: tableId }
-      },
-      {
-        $lookup: {
-          from: 'users',
-          localField: 'hostId',
-          foreignField: '_id',
-          as: 'hostDetails'
-        }
-      },
-      {
-        $lookup: {
-          from: 'users',
-          localField: 'registeredPlayers.userId',
-          foreignField: '_id',
-          as: 'playerDetails'
-        }
-      },
-      {
-        $addFields: {
-          hostId: {
-            $let: {
-              vars: { host: { $arrayElemAt: ['$hostDetails', 0] } },
-              in: {
-                _id: '$$host._id',
-                username: '$$host.username',
-                email: '$$host.email',
-                profilePic: '$$host.profilePic',
-                name: '$$host.name'
-              }
-            }
-          },
-          registeredPlayers: {
-            $map: {
-              input: '$registeredPlayers',
-              as: 'player',
-              in: {
-                $let: {
-                  vars: {
-                    userDetail: {
-                      $arrayElemAt: [
-                        {
-                          $filter: {
-                            input: '$playerDetails',
-                            cond: { $eq: ['$$this._id', '$$player.userId'] }
-                          }
-                        },
-                        0
-                      ]
-                    }
-                  },
-                  in: {
-                    userId: '$$player.userId',
-                    registeredAt: '$$player.registeredAt',
-                    buyInPaid: '$$player.buyInPaid',
-                    status: '$$player.status',
-                    isHost: '$$player.isHost',
-                    user: {
-                      _id: '$$userDetail._id',
-                      username: '$$userDetail.username',
-                      email: '$$userDetail.email',
-                      profilePic: '$$userDetail.profilePic',
-                      name: '$$userDetail.name'
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      },
-      {
-        $project: {
-          hostDetails: 0,
-          playerDetails: 0
-        }
-      }
-    ];
+    // First get the private table
+    const result = await mongoHelper.findById(mongoHelper.COLLECTIONS.PRIVATE_TABLES, tableId);
     
-    const result = await mongoHelper.aggregate(
-      mongoHelper.COLLECTIONS.PRIVATE_TABLES,
-      pipeline
-    );
-    
-    if (result.success && result.data && result.data.length > 0) {
-      return result.data[0];
+    if (!result.success || !result.data) {
+      return null;
     }
     
-    return null;
+    const privateTable = result.data;
+    
+    // Collect all user IDs that need to be fetched
+    const userIds = new Set();
+    
+    // Add host ID
+    if (privateTable.hostId) {
+      userIds.add(privateTable.hostId.toString());
+    }
+    
+    // Add all registered player user IDs
+    if (privateTable.registeredPlayers) {
+      privateTable.registeredPlayers.forEach(player => {
+        if (player.userId) {
+          userIds.add(player.userId.toString());
+        }
+      });
+    }
+    
+    // Fetch all users in one query using $in operator
+    const usersResult = await mongoHelper.find(
+      mongoHelper.COLLECTIONS.USERS,
+      { _id: { $in: Array.from(userIds) } }
+    );
+    
+    // Create a map for quick user lookup
+    const usersMap = new Map();
+    if (usersResult.success && usersResult.data) {
+      usersResult.data.forEach(user => {
+        usersMap.set(user._id.toString(), {
+          _id: user._id,
+          username: user.username,
+          email: user.email,
+          profilePic: user.profilePic,
+          name: user.name
+        });
+      });
+    }
+    
+    // Populate host details
+    if (privateTable.hostId) {
+      const hostUser = usersMap.get(privateTable.hostId.toString());
+      if (hostUser) {
+        privateTable.hostId = hostUser;
+      }
+    }
+    
+    // Populate registered players
+    if (privateTable.registeredPlayers) {
+      privateTable.registeredPlayers = privateTable.registeredPlayers.map(player => {
+        const user = usersMap.get(player.userId?.toString());
+        return {
+          ...player,
+          user: user || null
+        };
+      });
+    }
+    
+    return privateTable;
   }
   
   /**
