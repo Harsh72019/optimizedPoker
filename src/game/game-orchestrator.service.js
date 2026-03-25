@@ -16,6 +16,13 @@ class GameOrchestrator {
         
         // 🆕 Initialize private table orchestrator
         this.privateTableOrchestrator = new PrivateTableGameOrchestrator(io);
+        
+        // 🆕 Initialize action service for both regular and private tables
+        const PlayerActionService = require('./player-action.service');
+        this.actionService = new PlayerActionService(io, timerManager, this);
+        
+        // 🆕 Set action service for private table orchestrator
+        this.privateTableOrchestrator.setActionService(this.actionService);
 
         this.waitingTimers = new Map();   // tableId -> timeout
         this.restartTimers = new Map();   // tableId -> timeout
