@@ -39,22 +39,41 @@ class StartGameService {
             if (!matchmakingTable)
                 throw new Error('Matchmaking table not found');
             console.log(matchmakingTable);
-            // 2️⃣ Load SubTier
-            let subTier = await mongoHelper.findById(
-                mongoHelper.COLLECTIONS.SUB_TIERS,
-                matchmakingTable?.data?.subTierId
-            );
+            
+            let bigBlindAmount, smallBlindAmount;
+            
+            // Check if this is a private table
+            if (matchmakingTable.data.isPrivate && matchmakingTable.data.privateTableId) {
+                console.log(`🔒 [PRIVATE TABLE] Using private table configuration`);
+                
+                // Get private table configuration
+                const privateTableGameConfig = require('../services/private-table-game-config.service');
+                const privateConfig = await privateTableGameConfig.getPrivateTableGameConfig(tableId);
+                
+                if (!privateConfig) {
+                    throw new Error('Private table configuration not found');
+                }
+                
+                bigBlindAmount = privateConfig.gameConfig.blinds.big;
+                smallBlindAmount = privateConfig.gameConfig.blinds.small;
+                
+                console.log(`🎴 [PRIVATE BLINDS] SB: ${smallBlindAmount}, BB: ${bigBlindAmount}, Type: ${privateConfig.gameConfig.blinds.type}`);
+            } else {
+                // Regular table - use SubTier configuration
+                let subTier = await mongoHelper.findById(
+                    mongoHelper.COLLECTIONS.SUB_TIERS,
+                    matchmakingTable?.data?.subTierId
+                );
 
-            if (!subTier)
-                throw new Error('SubTier not found');
-            subTier = subTier.data
-            // 3️⃣ Extract blinds
-            const bigBlindAmount = subTier.tableConfig.bb;
-            const smallBlindAmount = bigBlindAmount / 2;
-
-            console.log(
-                `🎴 [BLINDS POSTED] SB: ${smallBlindAmount}, BB: ${bigBlindAmount}`
-            );
+                if (!subTier)
+                    throw new Error('SubTier not found');
+                subTier = subTier.data
+                
+                bigBlindAmount = subTier.tableConfig.bb;
+                smallBlindAmount = bigBlindAmount / 2;
+                
+                console.log(`🎴 [BLINDS POSTED] SB: ${smallBlindAmount}, BB: ${bigBlindAmount}`);
+            }
             const tableState = await tableManager.getTable(tableId);
 
             console.log(`🔍 [DEBUG] Redis tableState:`, JSON.stringify(tableState, null, 2));
@@ -124,6 +143,15 @@ class StartGameService {
 
             await gameStateManager.createGame(tableId, gameState);
             await tableManager.setStatus(tableId, 'IN_PROGRESS');
+            
+            // Debug: Verify gameState was created
+            const verifyGameState = await gameStateManager.getGame(tableId);
+            if (verifyGameState) {
+                console.log(`✅ [GAME STATE] Successfully created and verified for table ${tableId}`);
+                console.log(`🎯 [GAME STATE] Current player: ${verifyGameState.currentPlayerId}`);
+            } else {
+                console.error(`❌ [GAME STATE] Failed to create or retrieve gameState for table ${tableId}`);
+            }
 
             emitSuccess(
                 this.io.to(tableId),
@@ -186,7 +214,21 @@ class StartGameService {
         }
 
         if (gameState) {
-            await this.timerManager.startTimer(tableId, gameState.currentPlayerId);
+            // Check if this is a private table and use custom timer
+            if (matchmakingTable.data.isPrivate && matchmakingTable.data.privateTableId) {
+                const privateTableGameConfig = require('../services/private-table-game-config.service');
+                const privateConfig = await privateTableGameConfig.getPrivateTableGameConfig(tableId);
+                
+                if (privateConfig && privateConfig.gameConfig.timer) {
+                    const customTimer = privateConfig.gameConfig.timer.turnTimer || 30;
+                    console.log(`⏱️ [PRIVATE TIMER] Using custom timer: ${customTimer}s`);
+                    await this.timerManager.startTimer(tableId, gameState.currentPlayerId, customTimer);
+                } else {
+                    await this.timerManager.startTimer(tableId, gameState.currentPlayerId);
+                }
+            } else {
+                await this.timerManager.startTimer(tableId, gameState.currentPlayerId);
+            }
         }
     }
 

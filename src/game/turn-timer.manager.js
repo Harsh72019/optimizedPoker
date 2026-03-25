@@ -23,13 +23,22 @@ class TurnTimerManager {
     this.clearTimer(tableId);
 
     try {
+      console.log(`🔍 [TIMER DEBUG] Attempting to get gameState for table ${tableId}`);
       const gameState = await gameStateManager.getGame(tableId);
 
-      if (!gameState) return;
+      if (!gameState) {
+        console.error(`❌ [TIMER DEBUG] No gameState found for table ${tableId}`);
+        return;
+      }
+      
+      console.log(`✅ [TIMER DEBUG] GameState found for table ${tableId}, current player: ${gameState.currentPlayerId}`);
 
       const player = gameState.players.find(p => p.id === playerId);
 
-      if (!player) return;
+      if (!player) {
+        console.error(`❌ [TIMER DEBUG] Player ${playerId} not found in gameState`);
+        return;
+      }
 
       if (player.disconnected) {
         console.log(`🔄 Player ${playerId} is disconnected - auto folding`);

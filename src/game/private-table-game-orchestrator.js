@@ -21,8 +21,8 @@ class PrivateTableGameOrchestrator {
   }
 
   setActionService(actionService) {
+    // Only set action service for regular timer manager since we're using it for all tables
     this.regularTimerManager.setActionService(actionService);
-    this.privateTimerManager.setActionService(actionService);
   }
 
   /**
@@ -36,8 +36,9 @@ class PrivateTableGameOrchestrator {
       const isPrivateTable = await this.isPrivateTable(tableId);
       
       if (isPrivateTable) {
-        console.log(`🔒 [ORCHESTRATOR] Detected private table, using private game service`);
-        return await this.privateStartService.start(tableId);
+        console.log(`🔒 [ORCHESTRATOR] Detected private table, using regular SNG flow`);
+        // Use regular SNG flow for private tables to ensure proper game mechanics
+        return await this.regularStartService.start(tableId);
       } else {
         console.log(`🎲 [ORCHESTRATOR] Regular table, using standard game service`);
         return await this.regularStartService.start(tableId);
@@ -57,8 +58,9 @@ class PrivateTableGameOrchestrator {
       const isPrivateTable = await this.isPrivateTable(tableId);
       
       if (isPrivateTable) {
-        console.log(`⏱️ [ORCHESTRATOR] Using private table timer for ${tableId}`);
-        return await this.privateTimerManager.startTimer(tableId, playerId, seconds);
+        console.log(`⏱️ [ORCHESTRATOR] Using regular timer for private table ${tableId}`);
+        // Use regular timer for private tables to ensure proper action handling
+        return await this.regularTimerManager.startTimer(tableId, playerId, seconds);
       } else {
         console.log(`⏱️ [ORCHESTRATOR] Using regular timer for ${tableId}`);
         return await this.regularTimerManager.startTimer(tableId, playerId, seconds);
@@ -75,13 +77,8 @@ class PrivateTableGameOrchestrator {
    */
   async clearTimer(tableId) {
     try {
-      const isPrivateTable = await this.isPrivateTable(tableId);
-      
-      if (isPrivateTable) {
-        this.privateTimerManager.clearTimer(tableId);
-      } else {
-        this.regularTimerManager.clearTimer(tableId);
-      }
+      // Always use regular timer manager for consistency
+      this.regularTimerManager.clearTimer(tableId);
       
     } catch (error) {
       console.error(`❌ [ORCHESTRATOR] Error clearing timer for table ${tableId}:`, error.message);
