@@ -31,9 +31,7 @@ class FinancialIntegrationService {
       });
       
       // Store financial setup reference in table
-      // This would integrate with your existing table model
       console.log(`💰 Financial setup completed for table ${tableId}:`, {
-        setupFee: financialSetup.setupFee.chargedAmount,
         tierRake: financialSetup.tierRake,
         effectiveRake: financialSetup.effectiveRake
       });
