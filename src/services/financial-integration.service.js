@@ -82,13 +82,13 @@ class FinancialIntegrationService {
       });
 
       console.log(`💰 Settlement completed for game ${gameId}:`, {
-        platformRevenue: settlement.settlement.platformRevenue,
-        prizePool: settlement.settlement.remainingPrize,
-        hostReward: settlement.settlement.hostReward
+        platformRevenue: settlement.settlement ? settlement.settlement.platformRevenue : 'N/A',
+        prizePool: settlement.settlement ? settlement.settlement.remainingPrize : 'N/A',
+        hostReward: settlement.settlement ? settlement.settlement.hostReward : 'N/A'
       });
 
       // Process winner payouts with rounding
-      if (winners && winners.length > 0) {
+      if (winners && winners.length > 0 && settlement.settlement) {
         await this.processWinnerPayouts(gameId, winners, settlement.settlement.remainingPrize);
       }
 
