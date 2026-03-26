@@ -114,6 +114,9 @@ class PrivateTableHandler {
             if (updatedTableInfo) {
                 const socketsInRoom = await this.io.in(`private_table_${tableId}`).fetchSockets();
                 
+                // Get active players for the updated table info
+                const activePlayers = await this.getActivePlayersInTable(tableId, updatedTableInfo.registeredPlayers);
+                
                 for (const socket of socketsInRoom) {
                     if (socket.user && socket.user._id) {
                         const socketUserId = socket.user._id.toString();
@@ -125,10 +128,14 @@ class PrivateTableHandler {
                         const personalizedTableInfo = {
                             ...updatedTableInfo,
                             isTableCreatedByYou: socketUserId === hostIdToCompare,
-                            canStart: socketUserId === hostIdToCompare && updatedTableInfo.status === 'READY_TO_START',
+                            canStart: socketUserId === hostIdToCompare && updatedTableInfo.status === 'READY_TO_START' && activePlayers.length >= 2,
                             canCancel: socketUserId === hostIdToCompare && !['COMPLETED', 'CANCELLED'].includes(updatedTableInfo.status),
                             canJoin: socketUserId !== hostIdToCompare && updatedTableInfo.status === 'WAITING_FOR_PLAYERS',
-                            isPlayerInTable: updatedTableInfo.registeredPlayers?.some(p => p.userId?.toString() === socketUserId)
+                            isPlayerInTable: updatedTableInfo.registeredPlayers?.some(p => p.userId?.toString() === socketUserId),
+                            playersRegistered: updatedTableInfo.registeredPlayers?.length || 0,
+                            playersActive: activePlayers.length,
+                            activePlayers: activePlayers,
+                            spotsRemaining: updatedTableInfo.declaredCapacity - (updatedTableInfo.registeredPlayers?.length || 0)
                         };
                         
                         socket.emit('privateTableInfo', {
@@ -221,22 +228,61 @@ class PrivateTableHandler {
                 throw new Error('Private table not found');
             }
 
+            // Get active/connected players by checking socket connections
+            const activePlayers = await this.getActivePlayersInTable(tableId, privateTable.registeredPlayers);
+
             // Add ownership and permission flags
             const hostIdToCompare = typeof privateTable.hostId === 'object' && privateTable.hostId._id 
                 ? privateTable.hostId._id.toString() 
                 : privateTable.hostId?.toString();
             
             privateTable.isTableCreatedByYou = currentUserId && hostIdToCompare === currentUserId;
-            privateTable.canStart = privateTable.isTableCreatedByYou && privateTable.status === 'READY_TO_START';
+            privateTable.canStart = privateTable.isTableCreatedByYou && privateTable.status === 'READY_TO_START' && activePlayers.length >= 2;
             privateTable.canCancel = privateTable.isTableCreatedByYou && !['COMPLETED', 'CANCELLED'].includes(privateTable.status);
             privateTable.canJoin = !privateTable.isTableCreatedByYou && privateTable.status === 'WAITING_FOR_PLAYERS';
             privateTable.isPlayerInTable = privateTable.registeredPlayers?.some(p => p.userId?.toString() === currentUserId);
+            
+            // Add player counts
+            privateTable.playersRegistered = privateTable.registeredPlayers?.length || 0;
+            privateTable.playersActive = activePlayers.length;
+            privateTable.activePlayers = activePlayers;
+            privateTable.spotsRemaining = privateTable.declaredCapacity - privateTable.playersRegistered;
 
             emitSuccess(this.socket, 'privateTableInfo', privateTable, 'Private table info');
 
         } catch (err) {
             console.error('Get private table info error:', err);
             emitError(this.socket, 'getPrivateTableInfoError', err.message);
+        }
+    }
+    
+    /**
+     * Get active/connected players in the private table
+     */
+    async getActivePlayersInTable(tableId, registeredPlayers) {
+        try {
+            // Get all sockets in the private table room
+            const socketsInRoom = await this.io.in(`private_table_${tableId}`).fetchSockets();
+            const connectedUserIds = socketsInRoom.map(socket => socket.user?._id?.toString()).filter(Boolean);
+            
+            // Filter registered players to only include those who are connected
+            const activePlayers = (registeredPlayers || []).filter(player => {
+                const playerId = player.userId?.toString() || player.userId;
+                return connectedUserIds.includes(playerId);
+            }).map(player => ({
+                userId: player.userId,
+                username: player.user?.username || 'Player',
+                registeredAt: player.registeredAt,
+                isHost: player.isHost || false,
+                status: 'CONNECTED'
+            }));
+            
+            console.log(`🔍 [ACTIVE_PLAYERS] Table ${tableId}: ${activePlayers.length}/${registeredPlayers?.length || 0} players active`);
+            
+            return activePlayers;
+        } catch (error) {
+            console.error('Error getting active players:', error);
+            return [];
         }
     }
 
