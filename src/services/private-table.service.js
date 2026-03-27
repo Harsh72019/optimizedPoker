@@ -516,8 +516,8 @@ class PrivateTableService {
   async getPrivateTable(tableId) {
     console.log(tableId);
     const result = await mongoHelper.find(mongoHelper.COLLECTIONS.PRIVATE_TABLES, { _id: tableId });
-    console.log(result);
-    return result.success ? result.data : null;
+    // console.log(result);
+    return result.success ? result.data[0] : null;
   }
   
   /**
