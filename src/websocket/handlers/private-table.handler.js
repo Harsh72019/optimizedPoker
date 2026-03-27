@@ -69,7 +69,7 @@ class PrivateTableHandler {
                 throw new Error('Private table not found');
             }
 
-            if (!['WAITING_FOR_PLAYERS', 'READY_TO_START' , 'ACTIVE'].includes(privateTable.status)) {
+            if (!['WAITING_FOR_PLAYERS', 'READY_TO_START'].includes(privateTable.status)) {
                 throw new Error('Table is not accepting players');
             }
 
