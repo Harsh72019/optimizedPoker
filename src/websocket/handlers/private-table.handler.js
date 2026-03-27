@@ -456,7 +456,7 @@ class PrivateTableHandler {
 
             // Check if player is registered
             const playerIndex = privateTable.registeredPlayers.findIndex(
-                p => p.userId?.toString() === playerUserId.toString()
+                p => p.userId && p.userId.toString() === playerUserId.toString()
             );
 
             if (playerIndex === -1) {
