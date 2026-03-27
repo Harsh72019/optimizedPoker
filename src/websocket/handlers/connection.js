@@ -76,6 +76,7 @@ class ConnectionHandler {
     async handleDisconnect() {
         try {
             const tableId = this.socket.tableId;
+            const privateTableId = this.socket.privateTableId;
             if (!tableId) return;
 
             const userId = this.socket.user?._id?.toString();
@@ -112,6 +113,48 @@ class ConnectionHandler {
             } else {
                 console.log(`⚠ Player ${userId} disconnected - will fold on] their turn`);
                 await require('../../state/game-state').updateGame(tableId, gameState);
+            }
+
+            // 🔌 Handle private table disconnect - send updated privateTableInfo
+            if (privateTableId) {
+                try {
+                    const privateTableService = require('../../services/private-table.service');
+                    const updatedPrivateTable = await privateTableService.getPrivateTableWithDetails(privateTableId);
+                    
+                    if (updatedPrivateTable) {
+                        // Get all sockets in the private table room
+                        const socketsInRoom = await this.io.in(`private_table_${privateTableId}`).fetchSockets();
+                        
+                        for (const socket of socketsInRoom) {
+                            if (socket.user && socket.user._id) {
+                                const socketUserId = socket.user._id.toString();
+                                const hostIdToCompare = typeof updatedPrivateTable.hostId === 'object' && updatedPrivateTable.hostId._id 
+                                    ? updatedPrivateTable.hostId._id.toString() 
+                                    : updatedPrivateTable.hostId?.toString();
+                                
+                                // Create personalized table info for this user
+                                const personalizedTableInfo = {
+                                    ...updatedPrivateTable,
+                                    isTableCreatedByYou: socketUserId === hostIdToCompare,
+                                    canStart: socketUserId === hostIdToCompare && updatedPrivateTable.status === 'READY_TO_START',
+                                    canCancel: socketUserId === hostIdToCompare && !['COMPLETED', 'CANCELLED'].includes(updatedPrivateTable.status),
+                                    canJoin: socketUserId !== hostIdToCompare && updatedPrivateTable.status === 'WAITING_FOR_PLAYERS',
+                                    isPlayerInTable: updatedPrivateTable.registeredPlayers?.some(p => p.userId?.toString() === socketUserId)
+                                };
+                                
+                                socket.emit('privateTableInfo', {
+                                    success: true,
+                                    data: personalizedTableInfo,
+                                    message: 'Player disconnected - table info updated'
+                                });
+                            }
+                        }
+                        
+                        console.log(`🔌 [PRIVATE DISCONNECT] Updated privateTableInfo for all players in room private_table_${privateTableId}`);
+                    }
+                } catch (error) {
+                    console.error('Failed to update private table info on disconnect:', error.message);
+                }
             }
 
             console.log(`⚠ ${userId} disconnected`);

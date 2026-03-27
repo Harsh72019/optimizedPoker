@@ -23,6 +23,7 @@ class PrivateTableHandler {
         this.socket.on('getPrivateTablePreview', this.handleGetPrivateTablePreview.bind(this));
         this.socket.on('getHostTables', this.handleGetHostTables.bind(this));
         this.socket.on('cancelPrivateTable', this.handleCancelPrivateTable.bind(this));
+        this.socket.on('removePlayerFromPrivateTable', this.handleRemovePlayerFromPrivateTable.bind(this));
     }
 
     async handleCreatePrivateTable(data) {
@@ -424,6 +425,144 @@ class PrivateTableHandler {
         } catch (err) {
             console.error('Spectate private table error:', err);
             emitError(this.socket, 'spectatePrivateTableError', err.message);
+        }
+    }
+
+    async handleRemovePlayerFromPrivateTable(data) {
+        try {
+            const { token, tableId, playerUserId } = data;
+            const user = await verifyEventToken(token, this.socket);
+            const hostId = user._id.toString();
+
+            // Get private table
+            const privateTable = await privateTableService.getPrivateTable(tableId);
+            if (!privateTable) {
+                throw new Error('Private table not found');
+            }
+
+            // Verify host permissions
+            const hostIdToCompare = typeof privateTable.hostId === 'object' && privateTable.hostId._id 
+                ? privateTable.hostId._id.toString() 
+                : privateTable.hostId?.toString();
+            
+            if (hostIdToCompare !== hostId) {
+                throw new Error('Only the host can remove players');
+            }
+
+            // Check if table allows player removal
+            if (!['WAITING_FOR_PLAYERS', 'READY_TO_START'].includes(privateTable.status)) {
+                throw new Error('Cannot remove players from table in current status');
+            }
+
+            // Check if player is registered
+            const playerIndex = privateTable.registeredPlayers.findIndex(
+                p => p.userId?.toString() === playerUserId.toString()
+            );
+
+            if (playerIndex === -1) {
+                throw new Error('Player is not registered for this table');
+            }
+
+            // Cannot remove the host
+            if (playerUserId.toString() === hostId.toString()) {
+                throw new Error('Host cannot remove themselves');
+            }
+
+            // Remove player from registered players
+            const removedPlayer = privateTable.registeredPlayers[playerIndex];
+            privateTable.registeredPlayers.splice(playerIndex, 1);
+
+            // Update table status if needed
+            const newCount = privateTable.registeredPlayers.length;
+            const requiredPlayers = Math.ceil(privateTable.declaredCapacity * privateTable.participationThreshold / 100);
+            const thresholdMet = newCount >= requiredPlayers;
+            
+            let newStatus = privateTable.status;
+            if (!thresholdMet && privateTable.status === 'READY_TO_START') {
+                newStatus = 'WAITING_FOR_PLAYERS';
+            }
+
+            // Update database
+            const mongoHelper = require('../../models/customdb');
+            const updateResult = await mongoHelper.updateById(
+                mongoHelper.COLLECTIONS.PRIVATE_TABLES,
+                tableId,
+                { 
+                    registeredPlayers: privateTable.registeredPlayers,
+                    status: newStatus
+                }
+            );
+
+            if (!updateResult.success) {
+                throw new Error('Failed to remove player: ' + updateResult.error);
+            }
+
+            // Get player details for notification
+            const playerResult = await mongoHelper.findById(mongoHelper.COLLECTIONS.USERS, playerUserId);
+            const playerUsername = playerResult.success && playerResult.data ? playerResult.data.username : 'Unknown';
+
+            // Remove player from socket room and disconnect them
+            const socketsInRoom = await this.io.in(`private_table_${tableId}`).fetchSockets();
+            const playerSocket = socketsInRoom.find(s => s.user && s.user._id.toString() === playerUserId.toString());
+            
+            if (playerSocket) {
+                // Notify the removed player
+                emitError(playerSocket, 'removedFromPrivateTable', {
+                    tableId,
+                    reason: 'Removed by host',
+                    hostUsername: user.username
+                }, 'You have been removed from the private table');
+                
+                // Remove from socket room
+                playerSocket.leave(`private_table_${tableId}`);
+            }
+
+            // Send updated table info to remaining players
+            const updatedTableInfo = await privateTableService.getPrivateTableWithDetails(tableId);
+            if (updatedTableInfo) {
+                const remainingSockets = await this.io.in(`private_table_${tableId}`).fetchSockets();
+                
+                for (const socket of remainingSockets) {
+                    if (socket.user && socket.user._id) {
+                        const socketUserId = socket.user._id.toString();
+                        const hostIdToCompare = typeof updatedTableInfo.hostId === 'object' && updatedTableInfo.hostId._id 
+                            ? updatedTableInfo.hostId._id.toString() 
+                            : updatedTableInfo.hostId?.toString();
+                        
+                        // Create personalized table info for this user
+                        const personalizedTableInfo = {
+                            ...updatedTableInfo,
+                            isTableCreatedByYou: socketUserId === hostIdToCompare,
+                            canStart: socketUserId === hostIdToCompare && updatedTableInfo.status === 'READY_TO_START',
+                            canCancel: socketUserId === hostIdToCompare && !['COMPLETED', 'CANCELLED'].includes(updatedTableInfo.status),
+                            canJoin: socketUserId !== hostIdToCompare && updatedTableInfo.status === 'WAITING_FOR_PLAYERS',
+                            isPlayerInTable: updatedTableInfo.registeredPlayers?.some(p => p.userId?.toString() === socketUserId)
+                        };
+                        
+                        socket.emit('privateTableInfo', {
+                            success: true,
+                            data: personalizedTableInfo,
+                            message: `${playerUsername} was removed from the table`
+                        });
+                    }
+                }
+            }
+
+            // Notify host of successful removal
+            emitSuccess(this.socket, 'playerRemovedSuccess', {
+                tableId,
+                removedPlayerId: playerUserId,
+                removedPlayerUsername: playerUsername,
+                newPlayerCount: newCount,
+                newStatus,
+                canStart: newStatus === 'READY_TO_START'
+            }, `${playerUsername} removed successfully`);
+
+            console.log(`🚫 Host ${user.username} removed player ${playerUsername} from private table ${tableId}`);
+
+        } catch (err) {
+            console.error('Remove player from private table error:', err);
+            emitError(this.socket, 'removePlayerError', err.message);
         }
     }
 }
