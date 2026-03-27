@@ -514,10 +514,26 @@ class PrivateTableService {
    * Get private table with details
    */
   async getPrivateTable(tableId) {
-    console.log(tableId);
+    console.log('🔍 [SERVICE] getPrivateTable called with:', tableId);
+    
+    // Try findById first since we have a specific ID
+    const resultById = await mongoHelper.findById(mongoHelper.COLLECTIONS.PRIVATE_TABLES, tableId);
+    console.log('🔍 [SERVICE] findById result:', resultById);
+    
+    if (resultById.success && resultById.data) {
+      console.log('🔍 [SERVICE] findById found table, registeredPlayers:', resultById.data.registeredPlayers);
+      return resultById.data;
+    }
+    
+    // Fallback to find method
     const result = await mongoHelper.find(mongoHelper.COLLECTIONS.PRIVATE_TABLES, { _id: tableId });
-    // console.log(result);
-    return result.success ? result.data[0] : null;
+    console.log('🔍 [SERVICE] find result:', result);
+    
+    const privateTable = result.success ? result.data[0] : null;
+    console.log('🔍 [SERVICE] find returning privateTable:', privateTable);
+    console.log('🔍 [SERVICE] find privateTable registeredPlayers:', privateTable?.registeredPlayers);
+    
+    return privateTable;
   }
   
   /**
