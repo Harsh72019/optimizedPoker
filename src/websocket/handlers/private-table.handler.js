@@ -434,18 +434,17 @@ class PrivateTableHandler {
             const user = await verifyEventToken(token, this.socket);
             const hostId = user._id.toString();
 
-            // Get private table
+            // Get private table (non-populated for permission check)
             const privateTable = await privateTableService.getPrivateTable(tableId);
             if (!privateTable) {
                 throw new Error('Private table not found');
             }
-
-            // Verify host permissions
-            const hostIdToCompare = typeof privateTable.hostId === 'object' && privateTable.hostId._id 
-                ? privateTable.hostId._id.toString() 
-                : privateTable.hostId?.toString();
+            console.log(privateTable , "privateTAble in remove player" )
+            // Verify host permissions (hostId should be a string in non-populated version)
+            const hostIdToCompare = privateTable.hostId.toString();
             
             if (hostIdToCompare !== hostId) {
+                console.log(`Host verification failed: hostIdToCompare=${hostIdToCompare}, hostId=${hostId}`);
                 throw new Error('Only the host can remove players');
             }
 
