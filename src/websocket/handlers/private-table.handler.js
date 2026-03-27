@@ -533,6 +533,9 @@ class PrivateTableHandler {
             if (updatedTableInfo) {
                 const remainingSockets = await this.io.in(`private_table_${tableId}`).fetchSockets();
                 
+                // Get active players for the updated table info
+                const activePlayers = await this.getActivePlayersInTable(tableId, updatedTableInfo.registeredPlayers);
+                
                 for (const socket of remainingSockets) {
                     if (socket.user && socket.user._id) {
                         const socketUserId = socket.user._id.toString();
@@ -544,10 +547,14 @@ class PrivateTableHandler {
                         const personalizedTableInfo = {
                             ...updatedTableInfo,
                             isTableCreatedByYou: socketUserId === hostIdToCompare,
-                            canStart: socketUserId === hostIdToCompare && updatedTableInfo.status === 'READY_TO_START',
+                            canStart: socketUserId === hostIdToCompare && updatedTableInfo.status === 'READY_TO_START' && activePlayers.length >= 2,
                             canCancel: socketUserId === hostIdToCompare && !['COMPLETED', 'CANCELLED'].includes(updatedTableInfo.status),
                             canJoin: socketUserId !== hostIdToCompare && updatedTableInfo.status === 'WAITING_FOR_PLAYERS',
-                            isPlayerInTable: updatedTableInfo.registeredPlayers?.some(p => p.userId?.toString() === socketUserId)
+                            isPlayerInTable: updatedTableInfo.registeredPlayers?.some(p => p.userId?.toString() === socketUserId),
+                            playersRegistered: updatedTableInfo.registeredPlayers?.length || 0,
+                            playersActive: activePlayers.length,
+                            activePlayers: activePlayers,
+                            spotsRemaining: updatedTableInfo.declaredCapacity - (updatedTableInfo.registeredPlayers?.length || 0)
                         };
                         
                         socket.emit('privateTableInfo', {
