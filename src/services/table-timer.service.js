@@ -45,17 +45,24 @@ class TableTimerService {
 
       this.activeTimers.get(tableId).interval = timerInterval;
 
-      if (this.io) {
-        emitSuccess(
-          this.io.to(tableId),
-          'tableTimerStarted',
-          {
-            timeLimit,
-            endTime,
-            message: `Table will end in ${timeLimit} minutes`
-          },
-          `Table timer started: ${timeLimit} minutes`
-        );
+      // Only emit if IO is available and has the join method
+      if (this.io && typeof this.io.to === 'function') {
+        try {
+          emitSuccess(
+            this.io.to(tableId),
+            'tableTimerStarted',
+            {
+              timeLimit,
+              endTime,
+              message: `Table will end in ${timeLimit} minutes`
+            },
+            `Table timer started: ${timeLimit} minutes`
+          );
+        } catch (emitError) {
+          console.warn(`⚠️ [TIMER] Could not emit timer start event: ${emitError.message}`);
+        }
+      } else {
+        console.log(`⚠️ [TIMER] IO not available, timer started silently for table ${tableId}`);
       }
     } catch (error) {
       console.error(`❌ [TIMER] Error starting timer for table ${tableId}:`, error);
@@ -118,30 +125,38 @@ class TableTimerService {
 
         await gameStateManager.updateGame(tableId, gameState);
 
-        if (this.io) {
-          emitSuccess(
-            this.io.to(tableId),
-            'timeExpired',
-            {
-              message: 'Time limit reached! Game will end after this hand.',
-              finalRound: true
-            },
-            'Time limit reached - final round!'
-          );
+        if (this.io && typeof this.io.to === 'function') {
+          try {
+            emitSuccess(
+              this.io.to(tableId),
+              'timeExpired',
+              {
+                message: 'Time limit reached! Game will end after this hand.',
+                finalRound: true
+              },
+              'Time limit reached - final round!'
+            );
+          } catch (emitError) {
+            console.warn(`⚠️ [TIMER] Could not emit time expired event: ${emitError.message}`);
+          }
         }
       } else {
         console.log(`🏁 [GAME ENDED] Table ${tableId} ended due to time limit`);
 
-        if (this.io) {
-          emitSuccess(
-            this.io.to(tableId),
-            'gameEndedByTime',
-            {
-              reason: 'TIME_LIMIT',
-              message: 'Game ended due to time limit'
-            },
-            'Game ended by time limit'
-          );
+        if (this.io && typeof this.io.to === 'function') {
+          try {
+            emitSuccess(
+              this.io.to(tableId),
+              'gameEndedByTime',
+              {
+                reason: 'TIME_LIMIT',
+                message: 'Game ended due to time limit'
+              },
+              'Game ended by time limit'
+            );
+          } catch (emitError) {
+            console.warn(`⚠️ [TIMER] Could not emit game ended event: ${emitError.message}`);
+          }
         }
       }
 
@@ -165,16 +180,20 @@ class TableTimerService {
 
         console.log(`🏁 [FINAL ROUND] Table ${tableId} marked as final round`);
 
-        if (this.io) {
-          emitSuccess(
-            this.io.to(tableId),
-            'finalRound',
-            {
-              message: 'This is the final round! Game will end after this hand.',
-              timeRemaining: 'Less than 1 minute'
-            },
-            'Final round - game ending soon!'
-          );
+        if (this.io && typeof this.io.to === 'function') {
+          try {
+            emitSuccess(
+              this.io.to(tableId),
+              'finalRound',
+              {
+                message: 'This is the final round! Game will end after this hand.',
+                timeRemaining: 'Less than 1 minute'
+              },
+              'Final round - game ending soon!'
+            );
+          } catch (emitError) {
+            console.warn(`⚠️ [TIMER] Could not emit final round event: ${emitError.message}`);
+          }
         }
       }
     } catch (error) {
@@ -189,17 +208,21 @@ class TableTimerService {
     try {
       console.log(`⚠️ [TIME WARNING] Table ${tableId}: ${message}`);
 
-      if (this.io) {
-        emitSuccess(
-          this.io.to(tableId),
-          'timeWarning',
-          {
-            minutesRemaining: minutes,
-            message,
-            urgent: minutes <= 2
-          },
-          message
-        );
+      if (this.io && typeof this.io.to === 'function') {
+        try {
+          emitSuccess(
+            this.io.to(tableId),
+            'timeWarning',
+            {
+              minutesRemaining: minutes,
+              message,
+              urgent: minutes <= 2
+            },
+            message
+          );
+        } catch (emitError) {
+          console.warn(`⚠️ [TIMER] Could not emit time warning: ${emitError.message}`);
+        }
       }
     } catch (error) {
       console.error(`❌ [TIMER] Error sending warning for table ${tableId}:`, error);

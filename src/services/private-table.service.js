@@ -470,6 +470,12 @@ class PrivateTableService {
     // 🕐 START TABLE TIMER if it's a timed table
     if (config.tableDuration === 'TIMED' && config.timeLimit) {
       const tableTimerService = require('../services/table-timer.service');
+      
+      // Ensure timer service has IO access
+      if (orchestrator && orchestrator.io) {
+        tableTimerService.setIO(orchestrator.io);
+      }
+      
       await tableTimerService.startTableTimer(underlyingTable._id, config.timeLimit);
       console.log(`⏰ [TIMER] Started ${config.timeLimit} minute timer for table ${underlyingTable._id}`);
     }
