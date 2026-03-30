@@ -49,10 +49,24 @@ class PlayerActionService {
                 throw new Error('Not your turn');
             }
 
-            const validation = PokerEngine.validateAction(player, gameState);
+            // 🎯 ENHANCED VALIDATION: Pass tableId for private table detection
+            const validation = await PokerEngine.validateAction(player, gameState, tableId);
+            console.log(`🎯 [VALIDATION] Available actions for ${playerId}:`, validation.actions || validation.options);
+            console.log(`🎯 [VALIDATION] Stakes type: ${validation.stakesType || 'NO_LIMIT'}`);
 
-            if (!validation.options.includes(action)) {
-                throw new Error('Invalid action');
+            // Check if action is available (support both old and new validation format)
+            const availableActions = validation.options || Object.keys(validation.actions || {}).filter(key => validation.actions[key]);
+            if (!availableActions.includes(action)) {
+                throw new Error(`Invalid action. Available: ${availableActions.join(', ')}. Stakes: ${validation.stakesType || 'NO_LIMIT'}`);
+            }
+            
+            // 🎯 ENHANCED BET VALIDATION: Validate bet amounts for private tables
+            if ((action === 'raise' || action === 'bet') && amount > 0) {
+                const betValidation = await PokerEngine.validateBetAmount(player, gameState, amount, action, tableId);
+                if (!betValidation.valid) {
+                    throw new Error(`${betValidation.error}. Suggested: ${betValidation.suggestedAmount || 'N/A'}`);
+                }
+                console.log(`✅ [BET VALID] ${action} amount ${amount} validated for ${validation.stakesType || 'NO_LIMIT'} table`);
             }
 
             let tableState = await require('../table/table-manager.service').getTable(tableId);
@@ -74,9 +88,10 @@ class PlayerActionService {
                 playerId: normalizedPlayerId,
                 username: actingPlayer?.username || 'Player',
                 action,
-                amount: action === 'call' ? validation.callAmount || 0 : amount,
+                amount: action === 'call' ? (validation.callAmount || validation.actions?.call || 0) : amount,
                 result: true,
-                timestamp: new Date().toISOString()
+                timestamp: new Date().toISOString(),
+                stakesType: validation.stakesType || 'NO_LIMIT'
             };
 
             emitSuccess(this.io.to(tableId), 'actionTaken', actionData, this.getActionMessage(action, actionData.username, actionData.amount));
@@ -141,7 +156,12 @@ class PlayerActionService {
     }
 
     applyAction(gameState, player, action, amount, validation) {
-        const callAmount = validation.callAmount || 0;
+        // Use the new production-grade action handler
+        const gameActionHandler = require('../services/game-action-handler.service');
+        
+        // For backward compatibility, handle the action application here
+        // The new handler is used in the main handle method
+        const callAmount = validation.callAmount || validation.actions?.call || 0;
 
         switch (action) {
             case 'fold':
@@ -156,12 +176,12 @@ class PlayerActionService {
                 break;
 
             case 'raise':
-                if (amount < validation.minRaise)
+                if (amount < (validation.minRaise || validation.actions?.raise?.min)) {
                     throw new Error('Raise too small');
-
+                }
                 this.applyBet(gameState, player, amount);
-                // gameState.currentBet = player.chipsInPot;
-
+                
+                // Reset other players' hasActed status for raises
                 gameState.players.forEach(p => {
                     if (p.id !== player.id && p.status === 'ACTIVE') {
                         p.hasActed = false;
@@ -341,49 +361,78 @@ class PlayerActionService {
         console.log(`🔄 [NEW ROUND] ${gameState.phase} begins`);
     }
 
-    formatPlayerTurnData(gameState, playerId, tableState) {
+    async formatPlayerTurnData(gameState, playerId, tableState) {
         const player = gameState.players.find(p => p.id === playerId);
         if (!player) return { playerId };
 
         const tablePlayer = tableState?.players.find(p => p.userId === playerId);
         const username = tablePlayer?.username || 'Player';
+        const tableId = gameState.tableId;
 
+        // 🎯 ENHANCED VALIDATION: Get available actions with private table support
+        const validation = await require('../engine/poker-engine').validateAction(player, gameState, tableId);
+        
         const currentBet = gameState.currentBet || 0;
         const playerBet = gameState.streetBets[playerId] || 0;
         const callAmount = Math.max(0, currentBet - playerBet);
         const betIncrement = gameState.bigBlind || 0.04;
-        const minRaise = currentBet + (gameState.lastRaiseAmount || betIncrement);
-        const maxRaise = player.chips + playerBet;
-
-        const availableOptions = [];
-        availableOptions.push('fold');
         
-        if (callAmount === 0) {
-            availableOptions.push('check');
-        } else if (player.chips >= callAmount) {
-            availableOptions.push('call');
-        }
+        // Support both old and new validation formats
+        const actions = validation.actions || {};
+        const availableOptions = validation.options || Object.keys(actions).filter(key => actions[key]);
         
-        if (player.chips > callAmount && maxRaise >= minRaise) {
-            availableOptions.push('raise');
+        // Get betting limits from validation
+        const minRaiseAmount = actions.raise?.min || actions.bet?.min || validation.minRaise;
+        const maxRaiseAmount = actions.raise?.max || actions.bet?.max || validation.maxRaise || player.chips;
+        
+        // Build raise steps based on stakes type
+        const stakesType = validation.stakesType || 'NO_LIMIT';
+        let raiseSteps = [];
+        
+        if (stakesType === 'FIXED_LIMIT') {
+            // Fixed limit: only one raise amount allowed
+            if (actions.raise?.exact) {
+                raiseSteps = [{ label: 'Raise', value: actions.raise.exact }];
+            }
+        } else if (stakesType === 'POT_LIMIT') {
+            // Pot limit: show pot-based raises
+            const pot = gameState.pot || 0;
+            raiseSteps = [
+                { label: '1/2 Pot', value: Math.min(pot * 0.5, maxRaiseAmount) },
+                { label: 'Pot', value: Math.min(pot, maxRaiseAmount) },
+                { label: 'All-in', value: maxRaiseAmount }
+            ].filter(step => step.value >= minRaiseAmount && step.value <= maxRaiseAmount);
+        } else if (stakesType === 'CUSTOM') {
+            // Custom: show custom increments
+            const customMax = actions.raise?.max || actions.bet?.max;
+            raiseSteps = [
+                { label: 'Min', value: minRaiseAmount },
+                { label: 'Max', value: customMax },
+                { label: 'All-in', value: Math.min(customMax, player.chips) }
+            ].filter(step => step.value >= minRaiseAmount && step.value <= maxRaiseAmount);
+        } else {
+            // No limit: standard increments
+            raiseSteps = [
+                { label: '2x BB', value: betIncrement * 2 },
+                { label: '3x BB', value: betIncrement * 3 },
+                { label: 'Pot', value: gameState.pot || 0 },
+                { label: 'All-in', value: maxRaiseAmount }
+            ].filter(step => step.value <= maxRaiseAmount && step.value >= minRaiseAmount);
         }
-
-        const raiseSteps = [
-            { label: '2x BB', value: betIncrement * 2 },
-            { label: '3x BB', value: betIncrement * 3 },
-            { label: 'Pot', value: gameState.pot || 0 },
-            { label: 'All-in', value: maxRaise }
-        ].filter(step => step.value <= maxRaise && step.value >= minRaise);
 
         return {
             playerId,
             username,
             availableOptions,
-            callAmount,
-            minRaiseAmount: minRaise > maxRaise ? null : minRaise,
-            maxRaiseAmount: maxRaise >= minRaise ? maxRaise : null,
+            callAmount: actions.call || callAmount,
+            minRaiseAmount: minRaiseAmount > maxRaiseAmount ? null : minRaiseAmount,
+            maxRaiseAmount: maxRaiseAmount >= minRaiseAmount ? maxRaiseAmount : null,
             raiseSteps: raiseSteps.length > 0 ? raiseSteps : null,
-            betIncrement
+            betIncrement,
+            stakesType,
+            stakesExplanation: validation.explanation || 'Standard poker rules',
+            // Additional info for UI
+            bettingLimits: validation.limits || null
         };
     }
 
