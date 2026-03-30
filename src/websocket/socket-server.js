@@ -18,7 +18,7 @@ class SocketServer {
                 methods: ['GET', 'POST'],
             },
         });
-        this.timerManager = new TurnTimerManager(this.io);
+        this.timerManager = new TurnTimerManager(this.io, null); // orchestrator will be set after creation
         this.orchestrator = new GameOrchestrator(this.io, this.timerManager);
         this.privateOrchestrator = new PrivateTableGameOrchestrator(this.io);
         this.timerManager.orchestrator = this.orchestrator;

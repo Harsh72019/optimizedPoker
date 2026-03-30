@@ -48,15 +48,15 @@ class TurnTimerManager {
 
       const PokerEngine = require('../engine/poker-engine');
       const validation = PokerEngine.validateAction(player, gameState);
-      console.log(`🎯 Player ${playerId} turn | Actions: ${validation.options.join(', ')}`);
+      console.log(`🎯 Standard table | Actions:  ${validation.options ? validation.options.join(', ') : 'none'}`);
 
       const tableState = await tableManager.getTable(tableId);
-
       const tablePlayer = tableState.players.find(p => p.userId === playerId);
 
       const PlayerActionService = require('./player-action.service');
       const actionService = new PlayerActionService(this.io, this, this.orchestrator);
-      const playerTurnData = actionService.formatPlayerTurnData(gameState, playerId, tableState);
+      const playerTurnData = await actionService.formatPlayerTurnData(gameState, playerId, tableState);
+      
       // Emit playerTurn to specific player
       console.log(`📡 [TIMER DEBUG] Emitting currentPlayerTurn to table ${tableId}`);
       emitSuccess(this.io.to(tableId), 'currentPlayerTurn', { playerId }, 'Current turn');
@@ -127,6 +127,7 @@ class TurnTimerManager {
       );
       console.log(`✅ [TIMER DEBUG] Timer started successfully for player ${playerId} (${seconds}s)`);
     } catch (err) {
+      console.log(`❌ [TIMER ERROR] Failed to start timer for ${playerId}:`, err);
       console.error(`❌ startTimer error for ${playerId}:`, err.message);
     }
   }
@@ -165,7 +166,7 @@ class TurnTimerManager {
     }
 
     const PokerEngine = require('../engine/poker-engine');
-    const validation = PokerEngine.validateAction(player, gameState);
+    const validation = await PokerEngine.validateAction(player, gameState, tableId);
 
     let autoAction = 'fold';
 
