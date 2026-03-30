@@ -99,10 +99,29 @@ class PlayerActionService {
 
             if (GameStateMachine.isBettingRoundComplete(gameState)) {
                 console.log(`🔄 [BETTING COMPLETE] Moving to next phase from ${gameState.phase}`);
+                
+                // Debug: Log betting round completion details
+                const activePlayers = gameState.players.filter(p => p.status === 'ACTIVE');
+                console.log(`🔍 [DEBUG] Active players: ${activePlayers.length}`);
+                activePlayers.forEach(p => {
+                    const playerBet = gameState.streetBets[p.id] || 0;
+                    console.log(`🔍 [DEBUG] Player ${p.id}: hasActed=${p.hasActed}, bet=${playerBet}, currentBet=${gameState.currentBet}, status=${p.status}`);
+                });
+                
                 emitSuccess(this.io.to(tableId), 'betsReset', { pot: gameState.pot }, 'Bets collected');
                 this.moveToNextPhase(gameState);
             } else {
                 console.log(`➡️ [NEXT PLAYER] Moving turn from ${playerId}`);
+                
+                // Debug: Log why betting round is not complete
+                const activePlayers = gameState.players.filter(p => p.status === 'ACTIVE');
+                console.log(`🔍 [DEBUG] Betting round NOT complete. Active players: ${activePlayers.length}`);
+                activePlayers.forEach(p => {
+                    const playerBet = gameState.streetBets[p.id] || 0;
+                    const hasActedAndMatched = p.hasActed && (playerBet === gameState.currentBet || p.status === 'ALL_IN');
+                    console.log(`🔍 [DEBUG] Player ${p.id}: hasActed=${p.hasActed}, bet=${playerBet}, currentBet=${gameState.currentBet}, status=${p.status}, complete=${hasActedAndMatched}`);
+                });
+                
                 this.moveToNextPlayer(gameState);
             }
 
@@ -121,6 +140,7 @@ class PlayerActionService {
             }
 
             if (gameState.phase !== 'COMPLETED') {
+                console.log(`⏱️ [TIMER] Starting timer for next player: ${gameState.currentPlayerId}`);
                 this.timerManager.startTimer(tableId, gameState.currentPlayerId);
             } else {
                 console.log(`🏁 [HAND COMPLETE] Starting cleanup`);
@@ -231,6 +251,11 @@ class PlayerActionService {
             )
             .sort((a, b) => a.seatPosition - b.seatPosition);
 
+        console.log(`🔍 [MOVE NEXT] Active players with chips: ${active.length}`);
+        active.forEach(p => {
+            console.log(`🔍 [MOVE NEXT] Player ${p.id}: status=${p.status}, chips=${p.chips}, seat=${p.seatPosition}`);
+        });
+
         // Edge case: No active players left
         if (active.length === 0) {
             console.log('⚠️ [NO ACTIVE PLAYERS] Moving to showdown');
@@ -247,9 +272,13 @@ class PlayerActionService {
 
         const currentIndex =
             active.findIndex(p => p.id === gameState.currentPlayerId);
+        
+        console.log(`🔍 [MOVE NEXT] Current player ${gameState.currentPlayerId} is at index ${currentIndex}`);
 
         const next =
             active[(currentIndex + 1) % active.length];
+        
+        console.log(`🔍 [MOVE NEXT] Next player: ${next.id}`);
 
         gameState.currentPlayerId = next.id;
     }
