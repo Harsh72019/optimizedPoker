@@ -279,6 +279,10 @@ class PlayerActionService {
             const winAmount = gameState.pot;
             winner.chips += winAmount;
             gameState.pot = 0;
+            
+            // 🕐 CHECK FOR TIME EXPIRY: End game if time limit reached
+            this.checkTimeExpiryAndEnd(gameState);
+            
             gameState.phase = 'COMPLETED';
             emitSuccess(this.io.to(gameState.tableId), 'gameOver', { winner: { playerId: winner.id, amount: winAmount } }, 'Game over');
             const formattedWinners = [{
@@ -502,6 +506,19 @@ class PlayerActionService {
                 cards: p.cards
             }))
         );
+        
+        // 🕐 CHECK FOR TIME EXPIRY: End game if time limit reached
+        const tableTimerService = require('../services/table-timer.service');
+        const shouldEndByTime = await tableTimerService.shouldEndAfterHand(gameState.tableId);
+        
+        if (shouldEndByTime) {
+            console.log(`⏰ [TIME LIMIT] Game ending due to time limit after showdown`);
+            emitSuccess(this.io.to(gameState.tableId), 'gameEndedByTime', {
+                reason: 'TIME_LIMIT',
+                message: 'Game ended due to time limit'
+            }, 'Game ended by time limit');
+        }
+        
         gameState.phase = 'COMPLETED';
         gameState.pot = 0;
     }
@@ -584,6 +601,29 @@ class PlayerActionService {
                 return `${username} went all-in with ${formatAmount(amount)} chips.`;
             default:
                 return `${username} performed ${action}.`;
+        }
+    }
+    
+    /**
+     * Check if game should end due to time expiry
+     */
+    async checkTimeExpiryAndEnd(gameState) {
+        try {
+            const tableTimerService = require('../services/table-timer.service');
+            const shouldEndByTime = await tableTimerService.shouldEndAfterHand(gameState.tableId);
+            
+            if (shouldEndByTime) {
+                console.log(`⏰ [TIME LIMIT] Game ending due to time limit`);
+                emitSuccess(this.io.to(gameState.tableId), 'gameEndedByTime', {
+                    reason: 'TIME_LIMIT',
+                    message: 'Game ended due to time limit'
+                }, 'Game ended by time limit');
+                
+                // Clear the timer
+                tableTimerService.clearTableTimer(gameState.tableId);
+            }
+        } catch (error) {
+            console.error('Error checking time expiry:', error);
         }
     }
 }

@@ -24,6 +24,10 @@ class GameOrchestrator {
         // 🆕 Set action service for both timer managers
         this.timerManager.setActionService(this.actionService);
         this.privateTableOrchestrator.setActionService(this.actionService);
+        
+        // 🕐 Initialize table timer service
+        const tableTimerService = require('../services/table-timer.service');
+        tableTimerService.setIO(io);
 
         this.waitingTimers = new Map();   // tableId -> timeout
         this.restartTimers = new Map();   // tableId -> timeout

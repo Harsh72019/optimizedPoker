@@ -18,6 +18,7 @@ class PrivateTableService {
       turnTimer, // in seconds
       playerCapacity, // { min: number, max: number }
       tableDuration, // 'TIMED' or 'INFINITY'
+      timeLimit, // Time limit in MINUTES (for TIMED tables)
       buyInSettings, // { min: number, max: number }
       invitationControl, // { type: 'PASSWORD' | 'INVITE', password?: string }
       rebuy = false,
@@ -33,25 +34,33 @@ class PrivateTableService {
       tier = 3,
       hostUplift = 0,
       hostRewardPercent = 0,
-      estimatedHours = 2,
+      estimatedHours = 2, // Fallback for legacy
       timerSeconds
     } = tableConfig;
     
     // Validate all configurations
     this.validatePrivateTableConfig(tableConfig);
     
+    // Determine the mapped game type first
+    const mappedGameType = gameType === 'SNG' ? 'PRIVATE_SNG' : 'PRIVATE_TOURNAMENT';
+    
+    // Calculate estimated hours from timeLimit (in minutes)
+    const calculatedEstimatedHours = tableDuration === 'TIMED' && timeLimit 
+      ? timeLimit / 60 
+      : (tableDuration === 'INFINITY' ? 12 : estimatedHours);
+    
     // Map new config to legacy format for existing system compatibility
     const mappedConfig = {
       name,
       description,
-      gameType: gameType === 'SNG' ? 'PRIVATE_SNG' : 'PRIVATE_TOURNAMENT',
+      gameType: mappedGameType,
       buyIn: buyIn || buyInSettings.min,
       declaredCapacity: declaredCapacity || playerCapacity.max,
       participationThreshold: participationThreshold || Math.ceil((playerCapacity.min / playerCapacity.max) * 100),
       tier,
       hostUplift,
       hostRewardPercent,
-      estimatedHours: this.calculateEstimatedHours(tableDuration, estimatedHours),
+      estimatedHours: calculatedEstimatedHours,
       timerSeconds: timerSeconds || turnTimer,
       scheduledStartTime,
       password: this.extractPassword(invitationControl),
@@ -63,14 +72,15 @@ class PrivateTableService {
         turnTimer,
         playerCapacity,
         tableDuration,
+        timeLimit: timeLimit || null, // Store actual time limit in minutes
         buyInSettings,
         invitationControl: this.normalizeInvitationControl(invitationControl),
         rebuy,
         antesStraddles,
         buyInReentryRules,
-        // Additional derived configurations
-        gameFeatures: this.buildGameFeatures(rebuy, antesStraddles, buyInReentryRules, mappedConfig.gameType),
-        timingConfig: this.buildTimingConfig(tableDuration, estimatedHours, turnTimer)
+        // Additional derived configurations - use mappedGameType instead of mappedConfig.gameType
+        gameFeatures: this.buildGameFeatures(rebuy, antesStraddles, buyInReentryRules, mappedGameType),
+        timingConfig: this.buildTimingConfig(tableDuration, timeLimit, turnTimer)
       }
     };
     
@@ -171,6 +181,7 @@ class PrivateTableService {
     console.log(`⚙️ [CONFIG] Table created with full configuration:`, {
       stakes: mappedConfig.privateConfig.stakes,
       duration: mappedConfig.privateConfig.tableDuration,
+      timeLimit: mappedConfig.privateConfig.timeLimit,
       features: mappedConfig.privateConfig.gameFeatures,
       timing: mappedConfig.privateConfig.timingConfig
     });
@@ -180,7 +191,7 @@ class PrivateTableService {
       setupFee: setupFeeResult,
       financialPreview: await this.generateFinancialPreview(privateTable),
       hostAutoRegistered: true
-  };
+    };
   }
   
   /**
@@ -431,7 +442,10 @@ class PrivateTableService {
       straddlesEnabled: config.gameFeatures?.straddlesEnabled || false,
       // Duration settings
       tableDuration: config.tableDuration || 'INFINITY',
-      estimatedHours: config.timingConfig?.estimatedHours || privateTable.estimatedHours
+      timeLimit: config.timeLimit || null, // Time limit in minutes
+      estimatedHours: config.timingConfig?.estimatedHours || privateTable.estimatedHours,
+      // Track game start time for timer
+      gameStartedAt: new Date()
     };
     
     const tableResult = await mongoHelper.create(
@@ -453,10 +467,18 @@ class PrivateTableService {
       { underlyingTableId: underlyingTable._id }
     );
     
+    // 🕐 START TABLE TIMER if it's a timed table
+    if (config.tableDuration === 'TIMED' && config.timeLimit) {
+      const tableTimerService = require('../services/table-timer.service');
+      await tableTimerService.startTableTimer(underlyingTable._id, config.timeLimit);
+      console.log(`⏰ [TIMER] Started ${config.timeLimit} minute timer for table ${underlyingTable._id}`);
+    }
+    
     // ✅ NO AUTO-SEATING: Let real players join via redirect flow
     console.log(`🎮 [REDIRECT FLOW] Created underlying table ${underlyingTable._id} with complete config:`);
     console.log(`⚙️ [CONFIG] Stakes: ${gameConfig.stakes.type}, Blinds: ${gameConfig.blinds.small}/${gameConfig.blinds.big}`);
     console.log(`⚙️ [CONFIG] Duration: ${gameConfig.duration.type}, Timer: ${gameConfig.timer.turnTimer}s`);
+    console.log(`⚙️ [CONFIG] Time Limit: ${config.timeLimit || 'None'} minutes`);
     console.log(`⚙️ [CONFIG] Features: Rebuy=${gameConfig.buyIn.allowRebuy}, Antes=${gameConfig.features.antesEnabled}`);
     console.log(`🎮 [REDIRECT FLOW] ${privateTable.registeredPlayers.length} registered players will be redirected to join`);
     
@@ -909,8 +931,12 @@ class PrivateTableService {
       throw new Error('Custom stakes require blinds configuration');
     }
     
-    if (tableConfig.tableDuration === 'TIMED' && !tableConfig.estimatedHours) {
-      throw new Error('Timed tables require estimated duration');
+    if (tableConfig.tableDuration === 'TIMED' && !tableConfig.timeLimit) {
+      throw new Error('Timed tables require timeLimit in minutes');
+    }
+    
+    if (tableConfig.timeLimit && tableConfig.timeLimit < 5) {
+      throw new Error('Time limit must be at least 5 minutes');
     }
     
     if (tableConfig.invitationControl?.type === 'PASSWORD' && !tableConfig.invitationControl?.password) {
@@ -1020,19 +1046,21 @@ class PrivateTableService {
   /**
    * Build timing configuration
    */
-  buildTimingConfig(tableDuration, estimatedHours, turnTimer) {
+  buildTimingConfig(tableDuration, timeLimit, turnTimer) {
     const config = {
       duration: tableDuration || 'INFINITY',
-      estimatedHours: this.calculateEstimatedHours(tableDuration, estimatedHours),
+      timeLimit: timeLimit || null, // Time limit in minutes
+      estimatedHours: timeLimit ? timeLimit / 60 : 12, // Convert minutes to hours
       turnTimer: turnTimer || 30,
       timeBank: this.calculateTimeBank(turnTimer || 30),
       warningTime: Math.max(5, Math.floor((turnTimer || 30) * 0.25))
     };
     
     // Add duration-specific settings
-    if (tableDuration === 'TIMED') {
-      config.maxDuration = config.estimatedHours * 60; // Convert to minutes
-      config.warningBeforeEnd = 15; // 15 minutes warning
+    if (tableDuration === 'TIMED' && timeLimit) {
+      config.maxDuration = timeLimit; // Store in minutes
+      config.warningBeforeEnd = 5; // 5 minutes warning before time limit
+      config.finalRoundWarning = 2; // 2 minutes warning for final round
     }
     
     return config;
