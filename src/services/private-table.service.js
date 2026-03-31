@@ -18,7 +18,6 @@ class PrivateTableService {
       turnTimer, // in seconds
       playerCapacity, // { min: number, max: number }
       tableDuration, // 'TIMED' or 'INFINITY'
-      timeLimit, // Time limit in MINUTES (for TIMED tables)
       buyInSettings, // { min: number, max: number }
       invitationControl, // { type: 'PASSWORD' | 'INVITE', password?: string }
       rebuy = false,
@@ -34,53 +33,38 @@ class PrivateTableService {
       tier = 3,
       hostUplift = 0,
       hostRewardPercent = 0,
-      estimatedHours = 2, // Fallback for legacy
+      estimatedHours = 2,
       timerSeconds
     } = tableConfig;
-    
-    // Validate all configurations
-    this.validatePrivateTableConfig(tableConfig);
-    
-    // Determine the mapped game type first
-    const mappedGameType = gameType === 'SNG' ? 'PRIVATE_SNG' : 'PRIVATE_TOURNAMENT';
-    
-    // Calculate estimated hours from timeLimit (in minutes)
-    const calculatedEstimatedHours = tableDuration === 'TIMED' && timeLimit 
-      ? timeLimit / 60 
-      : (tableDuration === 'INFINITY' ? 12 : estimatedHours);
     
     // Map new config to legacy format for existing system compatibility
     const mappedConfig = {
       name,
       description,
-      gameType: mappedGameType,
+      gameType: gameType === 'SNG' ? 'PRIVATE_SNG' : 'PRIVATE_TOURNAMENT',
       buyIn: buyIn || buyInSettings.min,
       declaredCapacity: declaredCapacity || playerCapacity.max,
       participationThreshold: participationThreshold || Math.ceil((playerCapacity.min / playerCapacity.max) * 100),
       tier,
       hostUplift,
       hostRewardPercent,
-      estimatedHours: calculatedEstimatedHours,
+      estimatedHours: tableDuration === 'INFINITY' ? 12 : estimatedHours,
       timerSeconds: timerSeconds || turnTimer,
       scheduledStartTime,
-      password: this.extractPassword(invitationControl),
+      password: invitationControl.type === 'PASSWORD' ? invitationControl.password : null,
       allowSpectators,
       affiliateId,
-      // New private table specific fields with full configuration
+      // New private table specific fields
       privateConfig: {
-        stakes: this.normalizeStakesConfig(stakes),
+        stakes,
         turnTimer,
         playerCapacity,
         tableDuration,
-        timeLimit: timeLimit || null, // Store actual time limit in minutes
         buyInSettings,
-        invitationControl: this.normalizeInvitationControl(invitationControl),
+        invitationControl,
         rebuy,
         antesStraddles,
-        buyInReentryRules,
-        // Additional derived configurations - use mappedGameType instead of mappedConfig.gameType
-        gameFeatures: this.buildGameFeatures(rebuy, antesStraddles, buyInReentryRules, mappedGameType),
-        timingConfig: this.buildTimingConfig(tableDuration, timeLimit, turnTimer)
+        buyInReentryRules
       }
     };
     
@@ -141,7 +125,7 @@ class PrivateTableService {
       winners: [],
       settlementCompleted: false,
       isPrivate: true,
-      // Store complete private table configuration
+      // Store new private table configuration
       privateConfig: mappedConfig.privateConfig,
       stats: {
         totalHandsPlayed: 0,
@@ -178,13 +162,6 @@ class PrivateTableService {
     }
     
     console.log(`🎮 [HOST AUTO-REG] Host ${hostId} automatically registered as player in table ${privateTable._id}`);
-    console.log(`⚙️ [CONFIG] Table created with full configuration:`, {
-      stakes: mappedConfig.privateConfig.stakes,
-      duration: mappedConfig.privateConfig.tableDuration,
-      timeLimit: mappedConfig.privateConfig.timeLimit,
-      features: mappedConfig.privateConfig.gameFeatures,
-      timing: mappedConfig.privateConfig.timingConfig
-    });
     
     return {
       privateTable,
@@ -397,8 +374,8 @@ class PrivateTableService {
       subTier = {
         _id: 'default_subtier',
         tableConfig: {
-          bb: config.stakes?.blinds?.big || Math.max(buyIn / 50, 1),
-          sb: config.stakes?.blinds?.small || Math.max(buyIn / 100, 0.5)
+          bb: Math.max(buyIn / 50, 1), // Default big blind
+          sb: Math.max(buyIn / 100, 0.5) // Default small blind
         }
       };
     }
@@ -407,10 +384,7 @@ class PrivateTableService {
       throw new Error('No suitable table configuration found for this buy-in');
     }
     
-    // Build complete game configuration from private table settings
-    const gameConfig = this.buildCompleteGameConfig(config, privateTable);
-    
-    // Create underlying table using existing system with complete private config
+    // Create underlying table using existing system with private config
     const tableData = {
       maxPlayers: privateTable.registeredPlayers.length,
       subTierId: subTier._id,
@@ -423,29 +397,8 @@ class PrivateTableService {
       status: 'in-use',
       isPrivate: true,
       privateTableId: privateTable._id,
-      // Store complete private table configuration for game engine
-      privateConfig: config,
-      // Store derived game configuration
-      gameConfig: gameConfig,
-      // Stakes configuration
-      stakesType: config.stakes?.type || 'NO_LIMIT',
-      blinds: {
-        small: config.stakes?.blinds?.small || subTier.tableConfig.sb,
-        big: config.stakes?.blinds?.big || subTier.tableConfig.bb
-      },
-      // Timer configuration
-      turnTimer: config.turnTimer || privateTable.timerSeconds || 30,
-      timeBank: gameConfig.timer.timeBank,
-      // Game features
-      rebuyAllowed: config.gameFeatures?.rebuyAllowed || false,
-      antesEnabled: config.gameFeatures?.antesEnabled || false,
-      straddlesEnabled: config.gameFeatures?.straddlesEnabled || false,
-      // Duration settings
-      tableDuration: config.tableDuration || 'INFINITY',
-      timeLimit: config.timeLimit || null, // Time limit in minutes
-      estimatedHours: config.timingConfig?.estimatedHours || privateTable.estimatedHours,
-      // Track game start time for timer
-      gameStartedAt: new Date()
+      // Store private table configuration for game engine
+      privateConfig: config
     };
     
     const tableResult = await mongoHelper.create(
@@ -467,25 +420,8 @@ class PrivateTableService {
       { underlyingTableId: underlyingTable._id }
     );
     
-    // 🕐 START TABLE TIMER if it's a timed table
-    if (config.tableDuration === 'TIMED' && config.timeLimit) {
-      const tableTimerService = require('../services/table-timer.service');
-      
-      // Ensure timer service has IO access
-      if (orchestrator && orchestrator.io) {
-        tableTimerService.setIO(orchestrator.io);
-      }
-      
-      await tableTimerService.startTableTimer(underlyingTable._id, config.timeLimit);
-      console.log(`⏰ [TIMER] Started ${config.timeLimit} minute timer for table ${underlyingTable._id}`);
-    }
-    
     // ✅ NO AUTO-SEATING: Let real players join via redirect flow
-    console.log(`🎮 [REDIRECT FLOW] Created underlying table ${underlyingTable._id} with complete config:`);
-    console.log(`⚙️ [CONFIG] Stakes: ${gameConfig.stakes.type}, Blinds: ${gameConfig.blinds.small}/${gameConfig.blinds.big}`);
-    console.log(`⚙️ [CONFIG] Duration: ${gameConfig.duration.type}, Timer: ${gameConfig.timer.turnTimer}s`);
-    console.log(`⚙️ [CONFIG] Time Limit: ${config.timeLimit || 'None'} minutes`);
-    console.log(`⚙️ [CONFIG] Features: Rebuy=${gameConfig.buyIn.allowRebuy}, Antes=${gameConfig.features.antesEnabled}`);
+    console.log(`🎮 [REDIRECT FLOW] Created underlying table ${underlyingTable._id} - waiting for real players to join`);
     console.log(`🎮 [REDIRECT FLOW] ${privateTable.registeredPlayers.length} registered players will be redirected to join`);
     
     // The game will start when real players join via the redirect flow
@@ -495,8 +431,7 @@ class PrivateTableService {
       underlyingTable,
       playersToAdd: privateTable.registeredPlayers.length,
       subTier,
-      privateConfig: config,
-      gameConfig: gameConfig
+      privateConfig: config
     };
   }
   
@@ -508,10 +443,7 @@ class PrivateTableService {
     const config = privateTable.privateConfig || {};
     const buyIn = config.buyInSettings?.min || privateTable.buyIn;
     
-    // Build complete game configuration
-    const gameConfig = this.buildCompleteGameConfig(config, privateTable);
-    
-    // Create tournament record using mongoHelper with complete configuration
+    // Create tournament record using mongoHelper
     const tournamentData = {
       name: privateTable.name,
       description: privateTable.description,
@@ -525,42 +457,33 @@ class PrivateTableService {
       tier: privateTable.tier,
       hostRewardPercent: privateTable.hostRewardPercent,
       participationThreshold: privateTable.participationThreshold,
-      estimatedHours: gameConfig.duration.estimatedHours,
-      timerSeconds: gameConfig.timer.turnTimer,
-      startingChips: this.calculateStartingChips(buyIn),
-      levelDuration: this.calculateLevelDuration(gameConfig.duration.type, gameConfig.duration.estimatedHours),
+      estimatedHours: privateTable.estimatedHours,
+      timerSeconds: config.turnTimer || privateTable.timerSeconds,
+      startingChips: 10000,
+      levelDuration: 15,
       timeZone: 'UTC',
       tierRake: privateTable.tierRake,
       effectiveRake: privateTable.effectiveRake,
       setupFeeAmount: privateTable.setupFeeAmount,
       affiliateId: privateTable.affiliateId,
       registeredPlayers: privateTable.registeredPlayers.map(p => p.userId),
-      
-      // Complete private tournament configuration
-      privateConfig: config,
-      gameConfig: gameConfig,
-      
-      // Stakes configuration
-      stakesType: gameConfig.stakes.type,
-      blindStructure: this.buildBlindStructure(gameConfig),
-      
-      // Game features
-      rebuyAllowed: gameConfig.buyIn.allowRebuy,
-      rebuyPeriod: gameConfig.buyIn.rebuyPeriod,
-      maxRebuys: gameConfig.buyIn.maxRebuys,
-      antesEnabled: gameConfig.features.antesEnabled,
-      straddlesEnabled: gameConfig.features.straddlesEnabled,
-      buyInReentryRules: gameConfig.buyIn.reentryRules,
-      
-      // Duration and timing
-      tableDuration: gameConfig.duration.type,
-      maxDuration: gameConfig.duration.maxDuration,
-      warningBeforeEnd: gameConfig.duration.warningBeforeEnd,
-      
-      // Access control
-      invitationControl: gameConfig.access,
-      allowSpectators: gameConfig.access.allowSpectators
+      // Private tournament specific configurations
+      privateConfig: config
     };
+    
+    // Apply private table specific configurations
+    if (config.stakes) {
+      tournamentData.stakes = config.stakes;
+    }
+    if (config.rebuy !== undefined) {
+      tournamentData.rebuyAllowed = config.rebuy;
+    }
+    if (config.antesStraddles !== undefined) {
+      tournamentData.antesStraddles = config.antesStraddles;
+    }
+    if (config.buyInReentryRules) {
+      tournamentData.buyInReentryRules = config.buyInReentryRules;
+    }
     
     const tournamentResult = await mongoHelper.create(
       mongoHelper.COLLECTIONS.TOURNAMENTS,
@@ -581,15 +504,9 @@ class PrivateTableService {
       { tournamentId: tournament._id }
     );
     
-    console.log(`🏆 [TOURNAMENT] Created private tournament ${tournament._id} with complete config:`);
-    console.log(`⚙️ [CONFIG] Stakes: ${gameConfig.stakes.type}, Starting chips: ${tournamentData.startingChips}`);
-    console.log(`⚙️ [CONFIG] Duration: ${gameConfig.duration.type}, Level duration: ${tournamentData.levelDuration}min`);
-    console.log(`⚙️ [CONFIG] Features: Rebuy=${gameConfig.buyIn.allowRebuy}, Antes=${gameConfig.features.antesEnabled}`);
-    
     return {
       tournament,
-      playersRegistered: privateTable.registeredPlayers.length,
-      gameConfig: gameConfig
+      playersRegistered: privateTable.registeredPlayers.length
     };
   }
   
@@ -597,16 +514,26 @@ class PrivateTableService {
    * Get private table with details
    */
   async getPrivateTable(tableId) {
+    console.log('🔍 [SERVICE] getPrivateTable called with:', tableId);
+    
     // Try findById first since we have a specific ID
     const resultById = await mongoHelper.findById(mongoHelper.COLLECTIONS.PRIVATE_TABLES, tableId);
+    console.log('🔍 [SERVICE] findById result:', resultById);
     
     if (resultById.success && resultById.data) {
+      console.log('🔍 [SERVICE] findById found table, registeredPlayers:', resultById.data.registeredPlayers);
       return resultById.data;
     }
     
     // Fallback to find method
     const result = await mongoHelper.find(mongoHelper.COLLECTIONS.PRIVATE_TABLES, { _id: tableId });
-    return result.success ? result.data[0] : null;
+    console.log('🔍 [SERVICE] find result:', result);
+    
+    const privateTable = result.success ? result.data[0] : null;
+    console.log('🔍 [SERVICE] find returning privateTable:', privateTable);
+    console.log('🔍 [SERVICE] find privateTable registeredPlayers:', privateTable?.registeredPlayers);
+    
+    return privateTable;
   }
   
   /**
@@ -909,338 +836,6 @@ class PrivateTableService {
         { position: 5, percentage: 10 }
       ];
     }
-  }
-  
-  /**
-   * Validate complete private table configuration
-   */
-  validatePrivateTableConfig(tableConfig) {
-    const PrivateTableValidator = require('../utils/private-table-validator');
-    const validation = PrivateTableValidator.validate(tableConfig);
-    
-    if (!validation.valid) {
-      throw new Error('Invalid table configuration: ' + validation.errors.join(', '));
-    }
-    
-    // Additional business logic validations
-    if (tableConfig.stakes?.type === 'CUSTOM' && !tableConfig.stakes?.blinds) {
-      throw new Error('Custom stakes require blinds configuration');
-    }
-    
-    if (tableConfig.tableDuration === 'TIMED' && !tableConfig.timeLimit) {
-      throw new Error('Timed tables require timeLimit in minutes');
-    }
-    
-    if (tableConfig.timeLimit && tableConfig.timeLimit < 5) {
-      throw new Error('Time limit must be at least 5 minutes');
-    }
-    
-    if (tableConfig.invitationControl?.type === 'PASSWORD' && !tableConfig.invitationControl?.password) {
-      throw new Error('Password-protected tables require a password');
-    }
-    
-    // Antes validation: Only allowed in tournaments
-    if (tableConfig.antesStraddles && tableConfig.gameType === 'SNG') {
-      console.warn('⚠️ Antes are not typically used in SNGs, only straddles will be enabled');
-    }
-    
-    return true;
-  }
-  
-  /**
-   * Calculate estimated hours based on table duration
-   */
-  calculateEstimatedHours(tableDuration, estimatedHours) {
-    if (tableDuration === 'INFINITY') {
-      return 12; // Default max for infinity tables
-    }
-    return estimatedHours || 2; // Default for timed tables
-  }
-  
-  /**
-   * Extract password from invitation control
-   */
-  extractPassword(invitationControl) {
-    if (!invitationControl) return null;
-    return invitationControl.type === 'PASSWORD' ? invitationControl.password : null;
-  }
-  
-  /**
-   * Normalize stakes configuration
-   */
-  normalizeStakesConfig(stakes) {
-    if (!stakes) {
-      return {
-        type: 'NO_LIMIT',
-        blinds: { small: 5, big: 10 }
-      };
-    }
-    
-    const normalized = {
-      type: stakes.type || 'NO_LIMIT',
-      blinds: stakes.blinds || { small: 5, big: 10 }
-    };
-    
-    // Add type-specific configurations
-    switch (normalized.type) {
-      case 'FIXED_LIMIT':
-        normalized.betSize = normalized.blinds.big;
-        normalized.maxRaises = 4;
-        break;
-      case 'POT_LIMIT':
-        normalized.maxBet = 'pot_size';
-        break;
-      case 'CUSTOM':
-        normalized.customRules = {
-          minBet: normalized.blinds.big,
-          maxBet: normalized.blinds.big * 10,
-          maxRaises: 6
-        };
-        break;
-    }
-    
-    return normalized;
-  }
-  
-  /**
-   * Normalize invitation control
-   */
-  normalizeInvitationControl(invitationControl) {
-    if (!invitationControl) {
-      return { type: 'PASSWORD', password: null };
-    }
-    
-    return {
-      type: invitationControl.type || 'PASSWORD',
-      password: invitationControl.password || null,
-      inviteList: invitationControl.type === 'INVITE' ? (invitationControl.inviteList || []) : []
-    };
-  }
-  
-  /**
-   * Build game features configuration
-   */
-  buildGameFeatures(rebuy, antesStraddles, buyInReentryRules, gameType) {
-    // Antes are typically only used in tournaments, not SNGs
-    const antesAllowed = gameType === 'TOURNAMENT' || gameType === 'PRIVATE_TOURNAMENT';
-    
-    return {
-      rebuyAllowed: rebuy || false,
-      antesEnabled: antesAllowed && (antesStraddles || false), // Only enable antes for tournaments
-      straddlesEnabled: antesStraddles || false, // Straddles can be in both SNGs and tournaments
-      reentryRules: buyInReentryRules || 'ALLOWED_ON_REBUY_ONLY',
-      autoMuck: true,
-      showdown: true,
-      // Calculate ante amount if enabled (only for tournaments)
-      anteAmount: (antesAllowed && antesStraddles) ? 'auto' : 0, // Will be calculated as 10% of big blind
-      // Rebuy specific settings
-      rebuyPeriod: rebuy ? 60 : 0, // 60 minutes rebuy period if enabled
-      maxRebuys: rebuy ? 3 : 0 // Max 3 rebuys if enabled
-    };
-  }
-  
-  /**
-   * Build timing configuration
-   */
-  buildTimingConfig(tableDuration, timeLimit, turnTimer) {
-    const config = {
-      duration: tableDuration || 'INFINITY',
-      timeLimit: timeLimit || null, // Time limit in minutes
-      estimatedHours: timeLimit ? timeLimit / 60 : 12, // Convert minutes to hours
-      turnTimer: turnTimer || 30,
-      timeBank: this.calculateTimeBank(turnTimer || 30),
-      warningTime: Math.max(5, Math.floor((turnTimer || 30) * 0.25))
-    };
-    
-    // Add duration-specific settings
-    if (tableDuration === 'TIMED' && timeLimit) {
-      config.maxDuration = timeLimit; // Store in minutes
-      config.warningBeforeEnd = 5; // 5 minutes warning before time limit
-      config.finalRoundWarning = 2; // 2 minutes warning for final round
-    }
-    
-    return config;
-  }
-  
-  /**
-   * Calculate time bank based on turn timer
-   */
-  calculateTimeBank(turnTimer) {
-    if (turnTimer <= 15) return 60; // 1 minute
-    if (turnTimer <= 30) return 120; // 2 minutes
-    if (turnTimer <= 60) return 180; // 3 minutes
-    return 300; // 5 minutes for longer timers
-  }
-  
-  /**
-   * Build complete game configuration from private table settings
-   */
-  buildCompleteGameConfig(privateConfig, privateTable) {
-    const config = privateConfig || {};
-    
-    return {
-      // Blinds and stakes configuration
-      blinds: {
-        small: config.stakes?.blinds?.small || 5,
-        big: config.stakes?.blinds?.big || 10
-      },
-      
-      stakes: {
-        type: config.stakes?.type || 'NO_LIMIT',
-        betting: this.getBettingType(config.stakes?.type),
-        ...this.getStakesSpecificConfig(config.stakes)
-      },
-      
-      // Timer configuration
-      timer: {
-        turnTimer: config.turnTimer || privateTable.timerSeconds || 30,
-        timeBank: this.calculateTimeBank(config.turnTimer || privateTable.timerSeconds || 30),
-        warningTime: Math.max(5, Math.floor((config.turnTimer || 30) * 0.25))
-      },
-      
-      // Player limits
-      players: {
-        min: config.playerCapacity?.min || 2,
-        max: config.playerCapacity?.max || privateTable.declaredCapacity || 9
-      },
-      
-      // Buy-in rules
-      buyIn: {
-        min: config.buyInSettings?.min || privateTable.buyIn || 100,
-        max: config.buyInSettings?.max || privateTable.buyIn || 1000,
-        allowRebuy: config.gameFeatures?.rebuyAllowed || false,
-        reentryRules: config.buyInReentryRules || 'ALLOWED_ON_REBUY_ONLY',
-        rebuyPeriod: config.gameFeatures?.rebuyPeriod || 60,
-        maxRebuys: config.gameFeatures?.maxRebuys || 3
-      },
-      
-      // Game features
-      features: {
-        antesEnabled: config.gameFeatures?.antesEnabled || false,
-        straddlesEnabled: config.gameFeatures?.straddlesEnabled || false,
-        autoMuck: true,
-        showdown: true,
-        anteAmount: config.gameFeatures?.antesEnabled ? 'auto' : 0
-      },
-      
-      // Table duration
-      duration: {
-        type: config.tableDuration || 'INFINITY',
-        estimatedHours: config.timingConfig?.estimatedHours || privateTable.estimatedHours || 2,
-        maxDuration: config.tableDuration === 'TIMED' ? (config.timingConfig?.estimatedHours || 2) * 60 : null,
-        warningBeforeEnd: config.tableDuration === 'TIMED' ? 15 : null
-      },
-      
-      // Invitation and access control
-      access: {
-        type: config.invitationControl?.type || 'PASSWORD',
-        password: config.invitationControl?.password || null,
-        inviteList: config.invitationControl?.inviteList || [],
-        allowSpectators: privateTable.allowSpectators || false
-      }
-    };
-  }
-  
-  /**
-   * Get betting type based on stakes type
-   */
-  getBettingType(stakesType) {
-    switch (stakesType) {
-      case 'FIXED_LIMIT': return 'fixed';
-      case 'POT_LIMIT': return 'pot_limit';
-      case 'NO_LIMIT': return 'unlimited';
-      case 'CUSTOM': return 'custom';
-      default: return 'unlimited';
-    }
-  }
-  
-  /**
-   * Get stakes-specific configuration
-   */
-  getStakesSpecificConfig(stakes) {
-    if (!stakes) return {};
-    
-    switch (stakes.type) {
-      case 'FIXED_LIMIT':
-        return {
-          betSize: stakes.blinds?.big || 10,
-          maxRaises: stakes.maxRaises || 4
-        };
-        
-      case 'POT_LIMIT':
-        return {
-          maxBet: 'pot_size'
-        };
-        
-      case 'CUSTOM':
-        return {
-          customRules: stakes.customRules || {
-            minBet: stakes.blinds?.big || 10,
-            maxBet: (stakes.blinds?.big || 10) * 10,
-            maxRaises: 6
-          }
-        };
-        
-      default:
-        return {};
-    }
-  }
-  
-  /**
-   * Calculate starting chips for tournament based on buy-in
-   */
-  calculateStartingChips(buyIn) {
-    // Standard tournament starting chips: 100-200x big blind equivalent
-    // Assume big blind is roughly buyIn/50
-    const estimatedBB = Math.max(buyIn / 50, 1);
-    return Math.max(estimatedBB * 150, 1000); // 150x BB or minimum 1000
-  }
-  
-  /**
-   * Calculate level duration based on tournament type and estimated hours
-   */
-  calculateLevelDuration(durationType, estimatedHours) {
-    if (durationType === 'INFINITY') {
-      return 20; // 20 minutes for infinity tournaments
-    }
-    
-    // For timed tournaments, calculate based on estimated hours
-    // Assume 8-12 levels per hour
-    const targetLevels = Math.max(estimatedHours * 10, 8);
-    const levelDuration = Math.max((estimatedHours * 60) / targetLevels, 10);
-    
-    return Math.round(levelDuration);
-  }
-  
-  /**
-   * Build blind structure for tournament
-   */
-  buildBlindStructure(gameConfig) {
-    const startingSB = gameConfig.blinds.small;
-    const startingBB = gameConfig.blinds.big;
-    const levels = [];
-    
-    // Build progressive blind structure
-    let currentSB = startingSB;
-    let currentBB = startingBB;
-    
-    for (let level = 1; level <= 20; level++) {
-      levels.push({
-        level,
-        smallBlind: Math.round(currentSB),
-        bigBlind: Math.round(currentBB),
-        // Antes only in tournaments, and only if enabled
-        ante: gameConfig.features.antesEnabled ? Math.max(1, Math.round(currentBB * 0.1)) : 0,
-        duration: this.calculateLevelDuration(gameConfig.duration.type, gameConfig.duration.estimatedHours)
-      });
-      
-      // Increase blinds by 50% each level for first 10 levels, then 25%
-      const multiplier = level <= 10 ? 1.5 : 1.25;
-      currentSB *= multiplier;
-      currentBB *= multiplier;
-    }
-    
-    return levels;
   }
 }
 

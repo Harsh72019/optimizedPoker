@@ -49,46 +49,17 @@ class PlayerActionService {
                 throw new Error('Not your turn');
             }
 
-            // 🎯 ENHANCED VALIDATION: Pass tableId for private table detection
-            const validation = await PokerEngine.validateAction(player, gameState, tableId);
-            console.log(`🎯 [VALIDATION] Available actions for ${playerId}:`, validation.actions || validation.options);
-            console.log(`🎯 [VALIDATION] Stakes type: ${validation.stakesType || 'NO_LIMIT'}`);
+            const validation = PokerEngine.validateAction(player, gameState);
 
-            // Check if action is available (support both old and new validation format)
-            const availableActions = validation.options || Object.keys(validation.actions || {}).filter(key => validation.actions[key]);
-            console.log(`🔍 [DEBUG] Available actions array: ${availableActions}`);
-            console.log(`🔍 [DEBUG] Requested action: ${action}`);
-            console.log(`🔍 [DEBUG] Action available check: ${availableActions.includes(action)}`);
-            
-            if (!availableActions.includes(action)) {
-                throw new Error(`Invalid action. Available: ${availableActions.join(', ')}. Stakes: ${validation.stakesType || 'NO_LIMIT'}`);
+            if (!validation.options.includes(action)) {
+                throw new Error('Invalid action');
             }
-            
-            console.log(`✅ [DEBUG] Action ${action} is valid, proceeding...`);
-            
-            // 🎯 ENHANCED BET VALIDATION: Validate bet amounts for private tables
-            if ((action === 'raise' || action === 'bet') && amount > 0) {
-                console.log(`🔍 [DEBUG] Validating bet amount: ${amount}`);
-                const betValidation = await PokerEngine.validateBetAmount(player, gameState, amount, action, tableId);
-                console.log(`🔍 [DEBUG] Bet validation result:`, betValidation);
-                if (!betValidation.valid) {
-                    throw new Error(`${betValidation.error}. Suggested: ${betValidation.suggestedAmount || 'N/A'}`);
-                }
-                console.log(`✅ [BET VALID] ${action} amount ${amount} validated for ${validation.stakesType || 'NO_LIMIT'} table`);
-            }
-            
-            console.log(`🔍 [DEBUG] Getting table state...`);
 
             let tableState = await require('../table/table-manager.service').getTable(tableId);
-            console.log(`🔍 [DEBUG] Got table state, finding acting player...`);
             const actingPlayer = tableState.players.find(p => p.userId === normalizedPlayerId);
-            console.log(`🔍 [DEBUG] Acting player found: ${actingPlayer ? actingPlayer.username : 'NOT FOUND'}`);
 
-            console.log(`🔍 [DEBUG] Applying action: ${action}`);
             this.applyAction(gameState, player, action, amount, validation);
             console.log(`✅ [ACTION APPLIED] ${action} by ${playerId}`);
-            
-            console.log(`🔍 [DEBUG] Action applied successfully, continuing...`);
 
             // Emit specific action events
             if (action === 'fold') {
@@ -99,48 +70,24 @@ class PlayerActionService {
                 emitSuccess(this.io.to(tableId), 'playerAllIn', { playerId, amount: player.chips }, 'Player all-in');
             }
 
-            console.log(`🔍 [DEBUG] Creating action data...`);
             const actionData = {
                 playerId: normalizedPlayerId,
                 username: actingPlayer?.username || 'Player',
                 action,
-                amount: action === 'call' ? (validation.callAmount || validation.actions?.call || 0) : amount,
+                amount: action === 'call' ? validation.callAmount || 0 : amount,
                 result: true,
-                timestamp: new Date().toISOString(),
-                stakesType: validation.stakesType || 'NO_LIMIT'
+                timestamp: new Date().toISOString()
             };
-            console.log(`🔍 [DEBUG] Action data created:`, actionData);
 
-            console.log(`🔍 [DEBUG] Emitting action events...`);
             emitSuccess(this.io.to(tableId), 'actionTaken', actionData, this.getActionMessage(action, actionData.username, actionData.amount));
             emitSuccess(this.io.to(tableId), 'playerActionEnded', { playerId, action }, 'Action ended');
-            console.log(`🔍 [DEBUG] Action events emitted successfully`);
 
             if (GameStateMachine.isBettingRoundComplete(gameState)) {
                 console.log(`🔄 [BETTING COMPLETE] Moving to next phase from ${gameState.phase}`);
-                
-                // Debug: Log betting round completion details
-                const activePlayers = gameState.players.filter(p => p.status === 'ACTIVE');
-                console.log(`🔍 [DEBUG] Active players: ${activePlayers.length}`);
-                activePlayers.forEach(p => {
-                    const playerBet = gameState.streetBets[p.id] || 0;
-                    console.log(`🔍 [DEBUG] Player ${p.id}: hasActed=${p.hasActed}, bet=${playerBet}, currentBet=${gameState.currentBet}, status=${p.status}`);
-                });
-                
                 emitSuccess(this.io.to(tableId), 'betsReset', { pot: gameState.pot }, 'Bets collected');
                 this.moveToNextPhase(gameState);
             } else {
                 console.log(`➡️ [NEXT PLAYER] Moving turn from ${playerId}`);
-                
-                // Debug: Log why betting round is not complete
-                const activePlayers = gameState.players.filter(p => p.status === 'ACTIVE');
-                console.log(`🔍 [DEBUG] Betting round NOT complete. Active players: ${activePlayers.length}`);
-                activePlayers.forEach(p => {
-                    const playerBet = gameState.streetBets[p.id] || 0;
-                    const hasActedAndMatched = p.hasActed && (playerBet === gameState.currentBet || p.status === 'ALL_IN');
-                    console.log(`🔍 [DEBUG] Player ${p.id}: hasActed=${p.hasActed}, bet=${playerBet}, currentBet=${gameState.currentBet}, status=${p.status}, complete=${hasActedAndMatched}`);
-                });
-                
                 this.moveToNextPlayer(gameState);
             }
 
@@ -159,7 +106,6 @@ class PlayerActionService {
             }
 
             if (gameState.phase !== 'COMPLETED') {
-                console.log(`⏱️ [TIMER] Starting timer for next player: ${gameState.currentPlayerId}`);
                 this.timerManager.startTimer(tableId, gameState.currentPlayerId);
             } else {
                 console.log(`🏁 [HAND COMPLETE] Starting cleanup`);
@@ -176,8 +122,7 @@ class PlayerActionService {
             }
             return gameState;
 
-        }catch (err) { console.log(err);
-         } finally {
+        } finally {
             await gameStateManager.releaseLock(tableId);
         }
     }
@@ -196,12 +141,7 @@ class PlayerActionService {
     }
 
     applyAction(gameState, player, action, amount, validation) {
-        // Use the new production-grade action handler
-        const gameActionHandler = require('../services/game-action-handler.service');
-        
-        // For backward compatibility, handle the action application here
-        // The new handler is used in the main handle method
-        const callAmount = validation.callAmount || validation.actions?.call || 0;
+        const callAmount = validation.callAmount || 0;
 
         switch (action) {
             case 'fold':
@@ -216,12 +156,12 @@ class PlayerActionService {
                 break;
 
             case 'raise':
-                if (amount < (validation.minRaise || validation.actions?.raise?.min)) {
+                if (amount < validation.minRaise)
                     throw new Error('Raise too small');
-                }
+
                 this.applyBet(gameState, player, amount);
-                
-                // Reset other players' hasActed status for raises
+                // gameState.currentBet = player.chipsInPot;
+
                 gameState.players.forEach(p => {
                     if (p.id !== player.id && p.status === 'ACTIVE') {
                         p.hasActed = false;
@@ -271,11 +211,6 @@ class PlayerActionService {
             )
             .sort((a, b) => a.seatPosition - b.seatPosition);
 
-        console.log(`🔍 [MOVE NEXT] Active players with chips: ${active.length}`);
-        active.forEach(p => {
-            console.log(`🔍 [MOVE NEXT] Player ${p.id}: status=${p.status}, chips=${p.chips}, seat=${p.seatPosition}`);
-        });
-
         // Edge case: No active players left
         if (active.length === 0) {
             console.log('⚠️ [NO ACTIVE PLAYERS] Moving to showdown');
@@ -292,13 +227,9 @@ class PlayerActionService {
 
         const currentIndex =
             active.findIndex(p => p.id === gameState.currentPlayerId);
-        
-        console.log(`🔍 [MOVE NEXT] Current player ${gameState.currentPlayerId} is at index ${currentIndex}`);
 
         const next =
             active[(currentIndex + 1) % active.length];
-        
-        console.log(`🔍 [MOVE NEXT] Next player: ${next.id}`);
 
         gameState.currentPlayerId = next.id;
     }
@@ -328,10 +259,6 @@ class PlayerActionService {
             const winAmount = gameState.pot;
             winner.chips += winAmount;
             gameState.pot = 0;
-            
-            // 🕐 CHECK FOR TIME EXPIRY: End game if time limit reached
-            this.checkTimeExpiryAndEnd(gameState);
-            
             gameState.phase = 'COMPLETED';
             emitSuccess(this.io.to(gameState.tableId), 'gameOver', { winner: { playerId: winner.id, amount: winAmount } }, 'Game over');
             const formattedWinners = [{
@@ -414,78 +341,49 @@ class PlayerActionService {
         console.log(`🔄 [NEW ROUND] ${gameState.phase} begins`);
     }
 
-    async formatPlayerTurnData(gameState, playerId, tableState) {
+    formatPlayerTurnData(gameState, playerId, tableState) {
         const player = gameState.players.find(p => p.id === playerId);
         if (!player) return { playerId };
 
         const tablePlayer = tableState?.players.find(p => p.userId === playerId);
         const username = tablePlayer?.username || 'Player';
-        const tableId = gameState.tableId;
 
-        // 🎯 ENHANCED VALIDATION: Get available actions with private table support
-        const validation = await require('../engine/poker-engine').validateAction(player, gameState, tableId);
-        
         const currentBet = gameState.currentBet || 0;
         const playerBet = gameState.streetBets[playerId] || 0;
         const callAmount = Math.max(0, currentBet - playerBet);
         const betIncrement = gameState.bigBlind || 0.04;
+        const minRaise = currentBet + (gameState.lastRaiseAmount || betIncrement);
+        const maxRaise = player.chips + playerBet;
+
+        const availableOptions = [];
+        availableOptions.push('fold');
         
-        // Support both old and new validation formats
-        const actions = validation.actions || {};
-        const availableOptions = validation.options || Object.keys(actions).filter(key => actions[key]);
-        
-        // Get betting limits from validation
-        const minRaiseAmount = actions.raise?.min || actions.bet?.min || validation.minRaise;
-        const maxRaiseAmount = actions.raise?.max || actions.bet?.max || validation.maxRaise || player.chips;
-        
-        // Build raise steps based on stakes type
-        const stakesType = validation.stakesType || 'NO_LIMIT';
-        let raiseSteps = [];
-        
-        if (stakesType === 'FIXED_LIMIT') {
-            // Fixed limit: only one raise amount allowed
-            if (actions.raise?.exact) {
-                raiseSteps = [{ label: 'Raise', value: actions.raise.exact }];
-            }
-        } else if (stakesType === 'POT_LIMIT') {
-            // Pot limit: show pot-based raises
-            const pot = gameState.pot || 0;
-            raiseSteps = [
-                { label: '1/2 Pot', value: Math.min(pot * 0.5, maxRaiseAmount) },
-                { label: 'Pot', value: Math.min(pot, maxRaiseAmount) },
-                { label: 'All-in', value: maxRaiseAmount }
-            ].filter(step => step.value >= minRaiseAmount && step.value <= maxRaiseAmount);
-        } else if (stakesType === 'CUSTOM') {
-            // Custom: show custom increments
-            const customMax = actions.raise?.max || actions.bet?.max;
-            raiseSteps = [
-                { label: 'Min', value: minRaiseAmount },
-                { label: 'Max', value: customMax },
-                { label: 'All-in', value: Math.min(customMax, player.chips) }
-            ].filter(step => step.value >= minRaiseAmount && step.value <= maxRaiseAmount);
-        } else {
-            // No limit: standard increments
-            raiseSteps = [
-                { label: '2x BB', value: betIncrement * 2 },
-                { label: '3x BB', value: betIncrement * 3 },
-                { label: 'Pot', value: gameState.pot || 0 },
-                { label: 'All-in', value: maxRaiseAmount }
-            ].filter(step => step.value <= maxRaiseAmount && step.value >= minRaiseAmount);
+        if (callAmount === 0) {
+            availableOptions.push('check');
+        } else if (player.chips >= callAmount) {
+            availableOptions.push('call');
         }
+        
+        if (player.chips > callAmount && maxRaise >= minRaise) {
+            availableOptions.push('raise');
+        }
+
+        const raiseSteps = [
+            { label: '2x BB', value: betIncrement * 2 },
+            { label: '3x BB', value: betIncrement * 3 },
+            { label: 'Pot', value: gameState.pot || 0 },
+            { label: 'All-in', value: maxRaise }
+        ].filter(step => step.value <= maxRaise && step.value >= minRaise);
 
         return {
             playerId,
             username,
             availableOptions,
-            callAmount: actions.call || callAmount,
-            minRaiseAmount: minRaiseAmount > maxRaiseAmount ? null : minRaiseAmount,
-            maxRaiseAmount: maxRaiseAmount >= minRaiseAmount ? maxRaiseAmount : null,
+            callAmount,
+            minRaiseAmount: minRaise > maxRaise ? null : minRaise,
+            maxRaiseAmount: maxRaise >= minRaise ? maxRaise : null,
             raiseSteps: raiseSteps.length > 0 ? raiseSteps : null,
-            betIncrement,
-            stakesType,
-            stakesExplanation: validation.explanation || 'Standard poker rules',
-            // Additional info for UI
-            bettingLimits: validation.limits || null
+            betIncrement
         };
     }
 
@@ -555,19 +453,6 @@ class PlayerActionService {
                 cards: p.cards
             }))
         );
-        
-        // 🕐 CHECK FOR TIME EXPIRY: End game if time limit reached
-        const tableTimerService = require('../services/table-timer.service');
-        const shouldEndByTime = await tableTimerService.shouldEndAfterHand(gameState.tableId);
-        
-        if (shouldEndByTime) {
-            console.log(`⏰ [TIME LIMIT] Game ending due to time limit after showdown`);
-            emitSuccess(this.io.to(gameState.tableId), 'gameEndedByTime', {
-                reason: 'TIME_LIMIT',
-                message: 'Game ended due to time limit'
-            }, 'Game ended by time limit');
-        }
-        
         gameState.phase = 'COMPLETED';
         gameState.pot = 0;
     }
@@ -650,29 +535,6 @@ class PlayerActionService {
                 return `${username} went all-in with ${formatAmount(amount)} chips.`;
             default:
                 return `${username} performed ${action}.`;
-        }
-    }
-    
-    /**
-     * Check if game should end due to time expiry
-     */
-    async checkTimeExpiryAndEnd(gameState) {
-        try {
-            const tableTimerService = require('../services/table-timer.service');
-            const shouldEndByTime = await tableTimerService.shouldEndAfterHand(gameState.tableId);
-            
-            if (shouldEndByTime) {
-                console.log(`⏰ [TIME LIMIT] Game ending due to time limit`);
-                emitSuccess(this.io.to(gameState.tableId), 'gameEndedByTime', {
-                    reason: 'TIME_LIMIT',
-                    message: 'Game ended due to time limit'
-                }, 'Game ended by time limit');
-                
-                // Clear the timer
-                tableTimerService.clearTableTimer(gameState.tableId);
-            }
-        } catch (error) {
-            console.error('Error checking time expiry:', error);
         }
     }
 }

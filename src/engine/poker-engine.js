@@ -6,15 +6,12 @@ const PotCalculator = require('./pot-calculator');
 const GameStateMachine = require('./game-state-machine');
 
 class PokerEngine {
-  static async validateAction(player, gameState, tableId = null) {
-    return await ActionValidator.getAvailableActions(player, gameState, tableId);
-  }
-  
-  static async validateBetAmount(player, gameState, betAmount, action, tableId = null) {
-    return await ActionValidator.validateBetAmount(player, gameState, betAmount, action, tableId);
+  static validateAction(player, gameState) {
+    return ActionValidator.getAvailableActions(player, gameState);
   }
 
   static evaluateShowdown(gameState) {
+
     const activePlayers = gameState.players.filter(
         p => p.status !== 'FOLDED'
     );
@@ -33,7 +30,7 @@ class PokerEngine {
     console.log('[DEBUG] Winners:', JSON.stringify(winnerObjects));
 
     return PotCalculator.distribute(pots, winnerObjects);
-  }
+}
 
   static nextPhase(gameState) {
     return GameStateMachine.nextPhase(gameState);
