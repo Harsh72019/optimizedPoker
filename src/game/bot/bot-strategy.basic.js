@@ -53,8 +53,9 @@ class BasicBotStrategy {
 
     if (decision.action === 'raise') {
       const minRaise = validation.minRaise || validation.minRaiseAmount || gameState.bigBlind || 0.04;
+      const maxRaise = validation.maxRaise || validation.maxRaiseAmount || (bot.chips + (gameState.streetBets?.[bot.id] || 0));
       const amount = Math.max(decision.amount, minRaise);
-      return { type: 'raise', amount: Math.min(amount, bot.chips) };
+      return { type: 'raise', amount: Math.min(amount, maxRaise) };
     }
 
     return { type: decision.action, amount: decision.amount };

@@ -22,8 +22,10 @@ class ActionValidator {
       return {
         options: ['fold'],
         callAmount: 0,
-        minRaise: 0,
-        maxRaise: 0
+        minRaise: null,
+        maxRaise: null,
+        minRaiseAmount: null,
+        maxRaiseAmount: null
       };
     }
 
@@ -51,14 +53,19 @@ class ActionValidator {
       }
     }
 
-    const minRaiseTotal =
-      callAmount + (lastRaiseAmount || bigBlind);
+    const minRaiseAmount =
+      currentBet === 0
+        ? bigBlind
+        : currentBet + (lastRaiseAmount || bigBlind);
+    const maxRaiseAmount = playerBet + player.chips;
     console.log('🎯 Player turn | Actions: ', Array.from(options));
     return {
       options: Array.from(options),
       callAmount,
-      minRaise: minRaiseTotal,
-      maxRaise: player.chips
+      minRaise: options.has('raise') ? minRaiseAmount : null,
+      maxRaise: options.has('raise') ? maxRaiseAmount : null,
+      minRaiseAmount: options.has('raise') ? minRaiseAmount : null,
+      maxRaiseAmount: options.has('raise') ? maxRaiseAmount : null
     };
   }
 }

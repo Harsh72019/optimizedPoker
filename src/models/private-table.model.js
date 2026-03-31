@@ -290,6 +290,11 @@ const privateTableSchema = new Schema(
         enum: ['TIMED', 'INFINITY']
       },
 
+      timeLimit: {
+        type: Number,
+        min: 1
+      },
+
       buyInSettings: {
         min: {
           type: Number,

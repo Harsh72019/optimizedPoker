@@ -56,7 +56,6 @@ class StartGameService {
                 
                 bigBlindAmount = privateConfig.gameConfig.blinds.big;
                 smallBlindAmount = privateConfig.gameConfig.blinds.small;
-                
                 console.log(`🎴 [PRIVATE BLINDS] SB: ${smallBlindAmount}, BB: ${bigBlindAmount}, Type: ${privateConfig.gameConfig.blinds.type}`);
             } else {
                 // Regular table - use SubTier configuration
@@ -98,6 +97,13 @@ class StartGameService {
                 bigBlind: bigBlindAmount,
                 dealerPosition: tableState.dealerPosition
             });
+
+            if (matchmakingTable.data.isPrivate && matchmakingTable.data.privateTableId) {
+                const privateConfig = await require('../services/private-table-game-config.service').getPrivateTableGameConfig(tableId);
+                if (privateConfig) {
+                    gameState.privateTableConfig = privateConfig.gameConfig;
+                }
+            }
 
             gameState.lastRaiseAmount = bigBlindAmount;
 

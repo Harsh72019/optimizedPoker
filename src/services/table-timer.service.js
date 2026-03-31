@@ -163,8 +163,7 @@ class TableTimerService {
       if (gameState && gameState.phase !== 'COMPLETED') {
         gameState.finalRound = true;
         await gameStateManager.updateGame(tableId, gameState);
-
-        console.log(`🏁 [FINAL ROUND] Table ${tableId} marked as final round`);
+        console.log(`🏁 [FINAL ROUND WARNING] Table ${tableId} is nearing time expiry`);
 
         if (this.io) {
           emitSuccess(
@@ -223,6 +222,10 @@ class TableTimerService {
     }
   }
 
+  isTimerActive(tableId) {
+    return this.activeTimers.has(tableId);
+  }
+
   /**
    * Get remaining time for a table
    */
@@ -249,7 +252,7 @@ class TableTimerService {
       const gameStateManager = require('../state/game-state');
       const gameState = await gameStateManager.getGame(tableId);
 
-      return gameState && (gameState.timeExpired || gameState.finalRound);
+      return gameState && gameState.timeExpired;
     } catch (error) {
       console.error(`❌ [TIMER] Error checking if table should end:`, error);
       return false;

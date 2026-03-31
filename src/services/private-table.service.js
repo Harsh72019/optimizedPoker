@@ -18,6 +18,7 @@ class PrivateTableService {
       turnTimer, // in seconds
       playerCapacity, // { min: number, max: number }
       tableDuration, // 'TIMED' or 'INFINITY'
+      timeLimit,
       buyInSettings, // { min: number, max: number }
       invitationControl, // { type: 'PASSWORD' | 'INVITE', password?: string }
       rebuy = false,
@@ -37,6 +38,11 @@ class PrivateTableService {
       timerSeconds
     } = tableConfig;
     
+    const normalizedTimeLimit =
+      tableDuration === 'TIMED'
+        ? (timeLimit || Math.max(30, Math.round((estimatedHours || 2) * 60)))
+        : null;
+
     // Map new config to legacy format for existing system compatibility
     const mappedConfig = {
       name,
@@ -48,7 +54,9 @@ class PrivateTableService {
       tier,
       hostUplift,
       hostRewardPercent,
-      estimatedHours: tableDuration === 'INFINITY' ? 12 : estimatedHours,
+      estimatedHours: tableDuration === 'INFINITY'
+        ? 12
+        : Math.max(0.5, Number(((normalizedTimeLimit || 120) / 60).toFixed(2))),
       timerSeconds: timerSeconds || turnTimer,
       scheduledStartTime,
       password: invitationControl.type === 'PASSWORD' ? invitationControl.password : null,
@@ -60,6 +68,7 @@ class PrivateTableService {
         turnTimer,
         playerCapacity,
         tableDuration,
+        timeLimit: normalizedTimeLimit,
         buyInSettings,
         invitationControl,
         rebuy,

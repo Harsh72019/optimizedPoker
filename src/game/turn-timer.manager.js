@@ -46,16 +46,13 @@ class TurnTimerManager {
         return;
       }
 
-      const PokerEngine = require('../engine/poker-engine');
-      const validation = PokerEngine.validateAction(player, gameState);
-      console.log(`🎯 Standard table | Actions:  ${validation.options ? validation.options.join(', ') : 'none'}`);
-
       const tableState = await tableManager.getTable(tableId);
       const tablePlayer = tableState.players.find(p => p.userId === playerId);
 
       const PlayerActionService = require('./player-action.service');
       const actionService = new PlayerActionService(this.io, this, this.orchestrator);
       const playerTurnData = await actionService.formatPlayerTurnData(gameState, playerId, tableState);
+      console.log(`🎯 Turn policy | Actions: ${playerTurnData.availableOptions ? playerTurnData.availableOptions.join(', ') : 'none'}`);
       
       // Emit playerTurn to specific player
       console.log(`📡 [TIMER DEBUG] Emitting currentPlayerTurn to table ${tableId}`);
@@ -122,7 +119,11 @@ class TurnTimerManager {
       emitSuccess(
         this.io.to(tableId),
         'turnTimerStarted',
-        { playerId, seconds },
+        {
+          playerId,
+          seconds,
+          stakes: playerTurnData.stakes || 'NO_LIMIT'
+        },
         'Turn timer started'
       );
       console.log(`✅ [TIMER DEBUG] Timer started successfully for player ${playerId} (${seconds}s)`);
@@ -165,13 +166,14 @@ class TurnTimerManager {
       return;
     }
 
-    const PokerEngine = require('../engine/poker-engine');
-    const validation = await PokerEngine.validateAction(player, gameState, tableId);
+    const tableState = await tableManager.getTable(tableId);
+    const PlayerActionService = require('./player-action.service');
+    const actionService = new PlayerActionService(this.io, this, this.orchestrator);
+    const policy = await actionService.getActionPolicy(tableId, playerId, gameState, tableState);
 
     let autoAction = 'fold';
 
-    // Check if validation exists and has options array
-    if (validation && validation.options && validation.options.includes('check')) {
+    if (policy.availableOptions.includes('check')) {
       autoAction = 'check';
     }
 

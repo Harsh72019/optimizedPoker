@@ -98,6 +98,7 @@ class GameOrchestrator {
             
             if (isPrivateTable) {
                 console.log(`🔒 [PRIVATE SNG] Starting private table game: ${tableId}`);
+                await this.startTimedPrivateTableIfNeeded(tableId);
                 await this.privateTableOrchestrator.startGame(tableId);
             } else {
                 console.log(`🎲 [REGULAR SNG] Starting regular table game: ${tableId}`);
@@ -168,6 +169,12 @@ class GameOrchestrator {
                     console.log(`🎴 Player ${socket.user?._id} hands: ${socket.handsPlayed}`);
                 }
             });
+
+            const tableTimerService = require('../services/table-timer.service');
+            if (await tableTimerService.shouldEndAfterHand(tableId)) {
+                await this.handleGameCompletion(tableId);
+                return;
+            }
 
             // 🆕 Check if this is the final hand (SNG completion)
             const shouldComplete = await this.checkGameCompletion(tableId);
@@ -286,11 +293,14 @@ class GameOrchestrator {
     /* ------------------------------------------------ */
     async cleanupCompletedGame(tableId) {
         try {
+            const tableTimerService = require('../services/table-timer.service');
+
             // Delete game state
             await gameStateManager.deleteGame(tableId);
             
             // Set table status
             await tableManager.setStatus(tableId, 'COMPLETED');
+            tableTimerService.clearTableTimer(tableId);
             
             console.log(`✅ [CLEANUP] Game ${tableId} cleaned up successfully`);
         } catch (err) {
@@ -385,6 +395,38 @@ class GameOrchestrator {
         if (t) {
             clearTimeout(t);
             this.restartTimers.delete(tableId);
+        }
+    }
+
+    async startTimedPrivateTableIfNeeded(tableId) {
+        try {
+            const tableTimerService = require('../services/table-timer.service');
+            if (tableTimerService.isTimerActive(tableId)) {
+                return;
+            }
+
+            const privateTableGameConfig = require('../services/private-table-game-config.service');
+            const privateConfig = await privateTableGameConfig.getPrivateTableGameConfig(tableId);
+
+            if (!privateConfig || privateConfig.gameConfig.duration.type !== 'TIMED') {
+                return;
+            }
+
+            const timeLimit = privateConfig.gameConfig.duration.timeLimit;
+            if (!timeLimit) {
+                return;
+            }
+
+            const mongoHelper = require('../models/customdb');
+            await mongoHelper.updateById(
+                mongoHelper.COLLECTIONS.TABLES,
+                tableId,
+                { gameStartedAt: new Date() }
+            );
+
+            await tableTimerService.startTableTimer(tableId, timeLimit);
+        } catch (error) {
+            console.error(`❌ [ORCHESTRATOR] Failed to start timed private table ${tableId}:`, error.message);
         }
     }
 }

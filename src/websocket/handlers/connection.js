@@ -321,7 +321,7 @@ class ConnectionHandler {
                 if (gameState.currentPlayerId) {
                     const PlayerActionService = require('../../game/player-action.service');
                     const actionService = new PlayerActionService(this.io, this.orchestrator.timerManager, this.orchestrator);
-                    const turnData = actionService.formatPlayerTurnData(gameState, gameState.currentPlayerId, tableState);
+                    const turnData = await actionService.formatPlayerTurnData(gameState, gameState.currentPlayerId, tableState);
                     
                     if (gameState.currentPlayerId === userId) {
                         emitSuccess(this.socket, 'playerTurn', turnData, 'Your turn');

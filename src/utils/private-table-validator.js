@@ -73,6 +73,14 @@ class PrivateTableValidator {
     if (!['TIMED', 'INFINITY'].includes(tableConfig.tableDuration)) {
       errors.push('Table duration must be either TIMED or INFINITY');
     }
+
+    if (tableConfig.tableDuration === 'TIMED') {
+      if (!tableConfig.timeLimit) {
+        errors.push('Timed tables require a timeLimit in minutes');
+      } else if (tableConfig.timeLimit < 1) {
+        errors.push('Time limit must be at least 1 minute');
+      }
+    }
     
     // Buy-in settings validation
     if (tableConfig.buyInSettings) {

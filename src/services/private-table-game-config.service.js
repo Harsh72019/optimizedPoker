@@ -98,7 +98,8 @@ class PrivateTableGameConfigService {
       // Table duration
       duration: {
         type: privateConfig.tableDuration || 'INFINITY',
-        estimatedHours: privateTable.estimatedHours || null
+        estimatedHours: privateTable.estimatedHours || null,
+        timeLimit: privateConfig.timeLimit || null
       },
       
       // Stakes configuration
@@ -348,11 +349,7 @@ class PrivateTableGameConfigService {
     // Check if player can bet/raise based on stakes
     const canBetRaise = this.canPlayerBetRaise(gameConfig, player, gameState);
     if (canBetRaise.allowed) {
-      if (currentBet === 0) {
-        baseActions.push('bet');
-      } else {
-        baseActions.push('raise');
-      }
+      baseActions.push('raise');
     }
     
     // All-in is always available if player has chips

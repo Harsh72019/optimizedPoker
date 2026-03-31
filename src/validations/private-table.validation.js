@@ -59,6 +59,15 @@ const createPrivateTable = {
       .valid("TIMED", "INFINITY")
       .required(),
 
+    timeLimit: Joi.number()
+      .integer()
+      .min(1)
+      .when('tableDuration', {
+        is: 'TIMED',
+        then: Joi.required(),
+        otherwise: Joi.optional().allow(null)
+      }),
+
     // Buy-in settings
     buyInSettings: Joi.object({
       min: Joi.number().positive().required(),
