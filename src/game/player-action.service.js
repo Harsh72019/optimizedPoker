@@ -92,6 +92,7 @@ class PlayerActionService {
             }
 
             await gameStateManager.updateGame(tableId, gameState);
+            await require('../table/table-manager.service').syncFromGameState(tableId, gameState);
             const refreshedGameState = await gameStateManager.getGame(tableId);
             console.log(`💾 [STATE SAVED] Phase: ${gameState.phase}, Pot: ${gameState.pot}`);
 
@@ -110,14 +111,9 @@ class PlayerActionService {
             } else {
                 console.log(`🏁 [HAND COMPLETE] Starting cleanup`);
                 this.timerManager.clearTimer(tableId);
-                
-                // Persist hand BEFORE deleting game state
-                const handPersister = require('../workers/hand-persister');
-                await handPersister.persist(tableId);
-                
-                // Now delete game state and trigger next hand
-                await gameStateManager.deleteGame(tableId);
-                this.orchestrator.onHandCompleted(tableId);
+
+                await require('../table/table-manager.service').syncFromGameState(tableId, gameState);
+                await this.orchestrator.onHandCompleted(tableId);
                 console.log(`✅ [CLEANUP DONE]`);
             }
             return gameState;

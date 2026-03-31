@@ -142,7 +142,9 @@ class StartGameService {
             console.log(`🎴 [CARDS DEALT] ${gameState.players.length} players`);
 
             await gameStateManager.createGame(tableId, gameState);
+            await tableManager.syncFromGameState(tableId, gameState);
             await tableManager.setStatus(tableId, 'IN_PROGRESS');
+            const syncedTableState = await tableManager.getTable(tableId);
             
             // Debug: Verify gameState was created
             const verifyGameState = await gameStateManager.getGame(tableId);
@@ -156,7 +158,7 @@ class StartGameService {
             emitSuccess(
                 this.io.to(tableId),
                 'gameStarted',
-                this.formatGameStartData(tableState, gameState),
+                this.formatGameStartData(syncedTableState, gameState),
                 'Game started successfully'
             );
 
@@ -192,16 +194,21 @@ class StartGameService {
                 'Big blind posted'
             );
 
-            gameState.players.forEach(player => {
+            syncedTableState.players.forEach(tablePlayer => {
+                const gamePlayer = gameState.players.find(player => player.id === tablePlayer.userId);
+                if (!gamePlayer || !tablePlayer.socketId) {
+                    return;
+                }
+
                 emitSuccess(
-                    this.io.to(tableId),
+                    this.io.to(tablePlayer.socketId),
                     'receiveHand',
                     {
-                        playerId: player.id,
-                        hand: player.cards
+                        playerId: gamePlayer.id,
+                        hand: gamePlayer.cards
                     },
                     'Hand dealt'
-                )
+                );
             });
 
             console.log(`✅ [GAME STARTED] First turn: ${gameState.currentPlayerId}`);

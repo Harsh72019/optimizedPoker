@@ -41,6 +41,7 @@ class PrivateTableHandler {
 
             // Create private table with financial setup
             const result = await privateTableService.createPrivateTable(hostId, tableConfig);
+            this.socket.join(`private_table_${result.privateTable._id}`);
 
             emitSuccess(this.socket, 'privateTableCreated', {
                 privateTable: result.privateTable,
@@ -188,7 +189,9 @@ class PrivateTableHandler {
                 
                 if (!hostIsPlaying) {
                     // Host joins as spectator
+                    this.socket.join(underlyingTableId);
                     this.socket.join(`table_${underlyingTableId}`);
+                    this.socket.join(`spectator_${underlyingTableId}`);
                     emitSuccess(this.socket, 'joinedAsSpectator', {
                         tableId: underlyingTableId,
                         role: 'HOST_SPECTATOR',
@@ -401,6 +404,7 @@ class PrivateTableHandler {
             }
 
             // Join spectator room for the underlying table
+            this.socket.join(underlyingTableId);
             this.socket.join(`table_${underlyingTableId}`);
             this.socket.join(`spectator_${underlyingTableId}`);
 

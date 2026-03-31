@@ -248,6 +248,29 @@ class TableManagerService {
         return nextDealer;
     }
 
+    async syncFromGameState(tableId, gameState) {
+        if (!gameState) return null;
+
+        const table = await this.getTable(tableId);
+        const gamePlayers = new Map(gameState.players.map(player => [player.id, player]));
+
+        table.players = table.players.map(player => {
+            const gamePlayer = gamePlayers.get(player.userId);
+
+            if (!gamePlayer) {
+                return player;
+            }
+
+            return {
+                ...player,
+                chips: gamePlayer.chips,
+            };
+        });
+
+        await this.saveTable(tableId, table);
+        return table;
+    }
+
     async removePlayer(tableId, userId) {
         const table = await this.getTable(tableId);
 

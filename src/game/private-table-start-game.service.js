@@ -119,13 +119,15 @@ class PrivateTableStartGameService {
             gameState.currentPlayerId = this.getFirstPlayerAfterBigBlind(gameState);
 
             await gameStateManager.createGame(tableId, gameState);
+            await tableManager.syncFromGameState(tableId, gameState);
             await tableManager.setStatus(tableId, 'IN_PROGRESS');
+            const syncedTableState = await tableManager.getTable(tableId);
 
             // ✅ CRITICAL: Emit standard gameStarted event for client compatibility
             emitSuccess(
                 this.io.to(tableId),
                 'gameStarted',
-                this.formatGameStartData(tableState, gameState),
+                this.formatGameStartData(syncedTableState, gameState),
                 'Game started successfully'
             );
 
@@ -134,7 +136,7 @@ class PrivateTableStartGameService {
                 this.io.to(tableId),
                 'privateGameStarted',
                 {
-                    ...this.formatGameStartData(tableState, gameState),
+                    ...this.formatGameStartData(syncedTableState, gameState),
                     privateTableConfig: {
                         gameType: privateConfig.gameType,
                         stakes: privateConfig.gameConfig.stakes,
@@ -146,7 +148,7 @@ class PrivateTableStartGameService {
             );
 
             // Emit standard events
-            this.emitGameEvents(tableId, gameState, smallBlindAmount, bigBlindAmount);
+            this.emitGameEvents(tableId, syncedTableState, gameState, smallBlindAmount, bigBlindAmount);
 
             console.log(`✅ [PRIVATE GAME STARTED] First turn: ${gameState.currentPlayerId}`);
 
@@ -176,7 +178,7 @@ class PrivateTableStartGameService {
         return active[(bbIndex + 1) % active.length].id;
     }
 
-    emitGameEvents(tableId, gameState, smallBlindAmount, bigBlindAmount) {
+    emitGameEvents(tableId, tableState, gameState, smallBlindAmount, bigBlindAmount) {
         // Dealer assignment
         emitSuccess(
             this.io.to(tableId),
@@ -226,9 +228,14 @@ class PrivateTableStartGameService {
         }
 
         // Deal hands
-        gameState.players.forEach(player => {
+        tableState.players.forEach(tablePlayer => {
+            const player = gameState.players.find(gamePlayer => gamePlayer.id === tablePlayer.userId);
+            if (!player || !tablePlayer.socketId) {
+                return;
+            }
+
             emitSuccess(
-                this.io.to(tableId),
+                this.io.to(tablePlayer.socketId),
                 'receiveHand',
                 {
                     playerId: player.id,

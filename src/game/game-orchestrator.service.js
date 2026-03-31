@@ -155,6 +155,7 @@ class GameOrchestrator {
 
     async onHandCompleted(tableId) {
         try {
+            await handPersister.persist(tableId);
             await tableManager.setStatus(tableId, 'SHOWDOWN_DELAY');
             console.log(`🏁 Hand completed at table ${tableId}`);
             emitSuccess(this.io.to(tableId), 'showdownDelay', { seconds: 10 }, 'Showdown delay');
@@ -193,8 +194,10 @@ class GameOrchestrator {
     /* ------------------------------------------------ */
     async checkGameCompletion(tableId) {
         try {
-            const tableState = await tableManager.getTable(tableId);
-            const playersWithChips = tableState.players.filter(p => p.chips > 0 && !p.disconnected);
+            const gameState = await gameStateManager.getGame(tableId);
+            const playersWithChips = gameState
+                ? gameState.players.filter(p => p.chips > 0 && !p.disconnected)
+                : (await tableManager.getTable(tableId)).players.filter(p => p.chips > 0 && !p.disconnected);
             
             // SNG is complete when only 1 player has chips
             return playersWithChips.length <= 1;
@@ -211,16 +214,18 @@ class GameOrchestrator {
         try {
             console.log(`🏆 [GAME COMPLETE] Processing completion for table ${tableId}`);
             
+            const gameState = await gameStateManager.getGame(tableId);
             const tableState = await tableManager.getTable(tableId);
             const mongoHelper = require('../models/customdb');
             const tableDoc = await mongoHelper.findById(mongoHelper.COLLECTIONS.TABLES, tableId);
-            
+            const playersForStandings = gameState?.players || tableState.players;
+             
             // Determine winners
-            const winners = tableState.players
+            const winners = playersForStandings
                 .filter(p => p.chips > 0)
                 .sort((a, b) => b.chips - a.chips)
                 .map((player, index) => ({
-                    playerId: player.userId,
+                    playerId: player.userId || player.id,
                     position: index + 1,
                     percentage: index === 0 ? 100 : 0 // Winner takes all for SNG
                 }));
@@ -245,7 +250,7 @@ class GameOrchestrator {
                         hostId: privateTable.hostId,
                         buyIn: privateTable.buyIn,
                         declaredCapacity: privateTable.declaredCapacity,
-                        actualParticipants: tableState.players.length,
+                        actualParticipants: playersForStandings.length,
                         participationThreshold: privateTable.participationThreshold,
                         tierRake: privateTable.tierRake,
                         hostUplift: privateTable.hostUplift,
@@ -260,11 +265,11 @@ class GameOrchestrator {
             // Emit game completion
             emitSuccess(this.io.to(tableId), 'gameCompleted', {
                 winners,
-                finalStandings: tableState.players.map(p => ({
-                    userId: p.userId,
+                finalStandings: playersForStandings.map(p => ({
+                    userId: p.userId || p.id,
                     username: p.username,
                     finalChips: p.chips,
-                    position: winners.findIndex(w => w.playerId === p.userId) + 1 || tableState.players.length
+                    position: winners.findIndex(w => w.playerId === (p.userId || p.id)) + 1 || playersForStandings.length
                 }))
             }, 'Game completed!');
             
@@ -281,9 +286,6 @@ class GameOrchestrator {
     /* ------------------------------------------------ */
     async cleanupCompletedGame(tableId) {
         try {
-            // Persist final hand
-            await handPersister.persist(tableId);
-            
             // Delete game state
             await gameStateManager.deleteGame(tableId);
             
@@ -304,20 +306,17 @@ class GameOrchestrator {
         try {
             this.clearRestartTimer(tableId);
 
-            // 1️⃣ Persist hand first
-            await handPersister.persist(tableId);
-
-            // 2️⃣ Rotate dealer for next hand
+            // 1️⃣ Rotate dealer for next hand
             await tableManager.rotateDealer(tableId);
 
-            // 3️⃣ Delete game state
+            // 2️⃣ Delete game state
             await gameStateManager.deleteGame(tableId);
 
-            // 4️⃣ Load fresh table state
+            // 3️⃣ Load fresh table state
             const tableState =
                 await tableManager.getTable(tableId);
 
-            // 5️⃣ Remove disconnected players
+            // 4️⃣ Remove disconnected players
             for (const p of tableState.players) {
                 if (p.disconnected) {
                     await tableManager.removePlayer(
@@ -327,7 +326,7 @@ class GameOrchestrator {
                 }
             }
 
-            // 6️⃣ Reload table after cleanup
+            // 5️⃣ Reload table after cleanup
             const updatedTable =
                 await tableManager.getTable(tableId);
 
