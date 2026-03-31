@@ -1,6 +1,7 @@
 // src/game/player-action.service.js
 
 const gameStateManager = require('../state/game-state');
+const PokerEngine = require('../engine/poker-engine');
 const GameStateMachine = require('../engine/game-state-machine');
 const gameQueue = require('../queues/game-queue');
 const ProbabilityCalculator = require('./probability-calculator');
