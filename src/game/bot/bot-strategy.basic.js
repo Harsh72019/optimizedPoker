@@ -19,6 +19,12 @@ class BasicBotStrategy {
     const validation = PokerEngine.validateAction(bot, gameState);
     const behaviour = this.getBotBehaviour(bot.id);
 
+    // Check if validation is valid
+    if (!validation || !validation.options) {
+      console.error(`❌ Invalid validation for bot ${bot.id}:`, validation);
+      return { type: 'fold' };
+    }
+
     const gameData = {
       phase: gameState.phase?.toLowerCase() || 'preflop',
       pot: gameState.pot + Object.values(gameState.streetBets || {}).reduce((a, b) => a + b, 0),

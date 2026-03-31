@@ -12,6 +12,9 @@ class PrivateTableActionValidator {
     const pot = gameState.pot || 0;
     const playerChips = player.chips || 0;
     
+    const options = new Set();
+    options.add('fold'); // Always available
+    
     const actions = {
       fold: true, // Always available
       check: callAmount === 0,
@@ -21,19 +24,27 @@ class PrivateTableActionValidator {
       allIn: playerChips > 0 ? playerChips : null
     };
     
+    // Add options based on actions
+    if (actions.check) options.add('check');
+    if (actions.call) options.add('call');
+    if (actions.allIn) options.add('all-in');
+    
     // Get betting limits based on stakes type
     const bettingLimits = this.getBettingLimits(gameConfig, gameState, player);
     
     if (currentBet === 0) {
       // No current bet - player can bet
       actions.bet = bettingLimits.bet;
+      if (actions.bet) options.add('raise'); // In poker, betting when no bet exists is called 'raise' in UI
     } else {
       // Current bet exists - player can raise
       actions.raise = bettingLimits.raise;
+      if (actions.raise) options.add('raise');
     }
     
     return {
       actions,
+      options: Array.from(options), // Keep the options array for compatibility
       stakesType: gameConfig.stakes.type,
       limits: bettingLimits,
       explanation: this.getStakesExplanation(gameConfig.stakes.type)

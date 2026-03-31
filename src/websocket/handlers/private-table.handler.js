@@ -436,22 +436,15 @@ class PrivateTableHandler {
 
             // Get private table (non-populated for permission check)
             const privateTableResult = await privateTableService.getPrivateTable(tableId);
-            console.log('🔍 [DEBUG] privateTableResult type:', typeof privateTableResult);
-            console.log('🔍 [DEBUG] privateTableResult isArray:', Array.isArray(privateTableResult));
-            console.log('🔍 [DEBUG] privateTableResult:', privateTableResult);
-            
             if (!privateTableResult) {
                 throw new Error('Private table not found');
             }
             
-            // The service already returns the first element, not an array
+            // The service returns the table directly
             const privateTable = privateTableResult;
             if (!privateTable) {
                 throw new Error('Private table not found');
             }
-            
-            console.log('🔍 [DEBUG] privateTable registeredPlayers:', privateTable.registeredPlayers);
-            console.log('🔍 [DEBUG] privateTable registeredPlayers length:', privateTable.registeredPlayers?.length);
             // Verify host permissions (hostId should be a string in non-populated version)
             const hostIdToCompare = privateTable.hostId.toString();
             

@@ -170,12 +170,8 @@ class TurnTimerManager {
 
     let autoAction = 'fold';
 
-    // Handle both validation structures (standard and private tables)
-    if (validation.options && validation.options.includes('check')) {
-      // Standard table structure
-      autoAction = 'check';
-    } else if (validation.actions && validation.actions.check) {
-      // Private table structure
+    // Check if validation exists and has options array
+    if (validation && validation.options && validation.options.includes('check')) {
       autoAction = 'check';
     }
 
