@@ -129,7 +129,7 @@ async function queueWithdrawal(userId, tableId, tableBlockchainId, amount, walle
 withdrawalQueue.process(async job => {
   const { userId, tableBlockchainId, amount, walletAddress, nonce, username, userEmail } = job.data;
   console.log('🚀 ~ userEmail:', userEmail);
-
+  amount = parseFloat(amount).toFixed(2);
   const masterTableContractAddress = config.MASTER_POKER_TABLE_CONTRACT;
 
   console.log(`[BLOCKCHAIN] Processing minimal withdrawal job ${job.id}: ${amount} USDT for user ${userId}`);
