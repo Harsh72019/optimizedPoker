@@ -111,7 +111,7 @@ class TurnTimerManager {
         try {
           await this.handleTimeout(tableId, playerId);
         } catch (err) {
-          console.error('Timer auto-action error:', err.message);
+          console.error('Timer auto-action error:', err);
         }
       }, seconds * 1000);
 
@@ -170,7 +170,12 @@ class TurnTimerManager {
 
     let autoAction = 'fold';
 
-    if (validation.options.includes('check')) {
+    // Handle both validation structures (standard and private tables)
+    if (validation.options && validation.options.includes('check')) {
+      // Standard table structure
+      autoAction = 'check';
+    } else if (validation.actions && validation.actions.check) {
+      // Private table structure
       autoAction = 'check';
     }
 

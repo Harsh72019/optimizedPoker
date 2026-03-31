@@ -56,24 +56,39 @@ class PlayerActionService {
 
             // Check if action is available (support both old and new validation format)
             const availableActions = validation.options || Object.keys(validation.actions || {}).filter(key => validation.actions[key]);
+            console.log(`🔍 [DEBUG] Available actions array: ${availableActions}`);
+            console.log(`🔍 [DEBUG] Requested action: ${action}`);
+            console.log(`🔍 [DEBUG] Action available check: ${availableActions.includes(action)}`);
+            
             if (!availableActions.includes(action)) {
                 throw new Error(`Invalid action. Available: ${availableActions.join(', ')}. Stakes: ${validation.stakesType || 'NO_LIMIT'}`);
             }
             
+            console.log(`✅ [DEBUG] Action ${action} is valid, proceeding...`);
+            
             // 🎯 ENHANCED BET VALIDATION: Validate bet amounts for private tables
             if ((action === 'raise' || action === 'bet') && amount > 0) {
+                console.log(`🔍 [DEBUG] Validating bet amount: ${amount}`);
                 const betValidation = await PokerEngine.validateBetAmount(player, gameState, amount, action, tableId);
+                console.log(`🔍 [DEBUG] Bet validation result:`, betValidation);
                 if (!betValidation.valid) {
                     throw new Error(`${betValidation.error}. Suggested: ${betValidation.suggestedAmount || 'N/A'}`);
                 }
                 console.log(`✅ [BET VALID] ${action} amount ${amount} validated for ${validation.stakesType || 'NO_LIMIT'} table`);
             }
+            
+            console.log(`🔍 [DEBUG] Getting table state...`);
 
             let tableState = await require('../table/table-manager.service').getTable(tableId);
+            console.log(`🔍 [DEBUG] Got table state, finding acting player...`);
             const actingPlayer = tableState.players.find(p => p.userId === normalizedPlayerId);
+            console.log(`🔍 [DEBUG] Acting player found: ${actingPlayer ? actingPlayer.username : 'NOT FOUND'}`);
 
+            console.log(`🔍 [DEBUG] Applying action: ${action}`);
             this.applyAction(gameState, player, action, amount, validation);
             console.log(`✅ [ACTION APPLIED] ${action} by ${playerId}`);
+            
+            console.log(`🔍 [DEBUG] Action applied successfully, continuing...`);
 
             // Emit specific action events
             if (action === 'fold') {
@@ -84,6 +99,7 @@ class PlayerActionService {
                 emitSuccess(this.io.to(tableId), 'playerAllIn', { playerId, amount: player.chips }, 'Player all-in');
             }
 
+            console.log(`🔍 [DEBUG] Creating action data...`);
             const actionData = {
                 playerId: normalizedPlayerId,
                 username: actingPlayer?.username || 'Player',
@@ -93,9 +109,12 @@ class PlayerActionService {
                 timestamp: new Date().toISOString(),
                 stakesType: validation.stakesType || 'NO_LIMIT'
             };
+            console.log(`🔍 [DEBUG] Action data created:`, actionData);
 
+            console.log(`🔍 [DEBUG] Emitting action events...`);
             emitSuccess(this.io.to(tableId), 'actionTaken', actionData, this.getActionMessage(action, actionData.username, actionData.amount));
             emitSuccess(this.io.to(tableId), 'playerActionEnded', { playerId, action }, 'Action ended');
+            console.log(`🔍 [DEBUG] Action events emitted successfully`);
 
             if (GameStateMachine.isBettingRoundComplete(gameState)) {
                 console.log(`🔄 [BETTING COMPLETE] Moving to next phase from ${gameState.phase}`);
@@ -157,7 +176,8 @@ class PlayerActionService {
             }
             return gameState;
 
-        } finally {
+        }catch (err) { console.log(err);
+         } finally {
             await gameStateManager.releaseLock(tableId);
         }
     }
