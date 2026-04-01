@@ -28,6 +28,7 @@ class GameOrchestrator {
         // 🕐 Initialize table timer service
         const tableTimerService = require('../services/table-timer.service');
         tableTimerService.setIO(io);
+        tableTimerService.setOrchestrator(this);
 
         this.waitingTimers = new Map();   // tableId -> timeout
         this.restartTimers = new Map();   // tableId -> timeout
@@ -217,7 +218,7 @@ class GameOrchestrator {
     /* ------------------------------------------------ */
     /* HANDLE GAME COMPLETION (FINANCIAL SETTLEMENT)  */
     /* ------------------------------------------------ */
-    async handleGameCompletion(tableId) {
+    async handleGameCompletion(tableId, options = {}) {
         try {
             console.log(`🏆 [GAME COMPLETE] Processing completion for table ${tableId}`);
             
@@ -272,6 +273,7 @@ class GameOrchestrator {
             // Emit game completion
             emitSuccess(this.io.to(tableId), 'gameCompleted', {
                 winners,
+                reason: options.reason || 'NORMAL_COMPLETION',
                 finalStandings: playersForStandings.map(p => ({
                     userId: p.userId || p.id,
                     username: p.username,
@@ -294,12 +296,29 @@ class GameOrchestrator {
     async cleanupCompletedGame(tableId) {
         try {
             const tableTimerService = require('../services/table-timer.service');
+            const mongoHelper = require('../models/customdb');
 
             // Delete game state
             await gameStateManager.deleteGame(tableId);
-            
-            // Set table status
-            await tableManager.setStatus(tableId, 'COMPLETED');
+
+            const tableDoc = await mongoHelper.findById(
+                mongoHelper.COLLECTIONS.TABLES,
+                tableId
+            );
+
+            if (tableDoc.success && tableDoc.data && tableDoc.data.privateTableId) {
+                await mongoHelper.updateById(
+                    mongoHelper.COLLECTIONS.PRIVATE_TABLES,
+                    tableDoc.data.privateTableId,
+                    {
+                        status: 'COMPLETED',
+                        completedAt: new Date()
+                    }
+                );
+            }
+
+            // Clear seated players and mark the underlying table completed
+            await tableManager.clearPlayers(tableId, 'COMPLETED');
             tableTimerService.clearTableTimer(tableId);
             
             console.log(`✅ [CLEANUP] Game ${tableId} cleaned up successfully`);

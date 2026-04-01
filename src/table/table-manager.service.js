@@ -291,6 +291,17 @@ class TableManagerService {
         return table;
     }
 
+    async clearPlayers(tableId, status = 'COMPLETED') {
+        const table = await this.getTable(tableId);
+
+        table.players = [];
+        table.dealerPosition = null;
+        table.status = status;
+
+        await this.saveTable(tableId, table);
+        return table;
+    }
+
     async getSeatedCount(tableId) {
         const table = await this.getTable(tableId);
         return table.players.length;

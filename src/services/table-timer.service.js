@@ -7,10 +7,15 @@ class TableTimerService {
   constructor() {
     this.activeTimers = new Map(); // tableId -> timer info
     this.io = null; // Will be set by the orchestrator
+    this.orchestrator = null;
   }
 
   setIO(io) {
     this.io = io;
+  }
+
+  setOrchestrator(orchestrator) {
+    this.orchestrator = orchestrator;
   }
 
   /**
@@ -132,6 +137,12 @@ class TableTimerService {
         }
       } else {
         console.log(`🏁 [GAME ENDED] Table ${tableId} ended due to time limit`);
+
+        if (this.orchestrator) {
+          await this.orchestrator.handleGameCompletion(tableId, {
+            reason: 'TIME_LIMIT'
+          });
+        }
 
         if (this.io) {
           emitSuccess(
