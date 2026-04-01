@@ -102,6 +102,14 @@ const createPrivateTable = {
 
     // Features
     rebuy: Joi.boolean().default(false),
+    antes: Joi.boolean().default(false),
+    anteValue: Joi.number()
+      .positive()
+      .when('antes', {
+        is: true,
+        then: Joi.required(),
+        otherwise: Joi.optional().allow(null)
+      }),
     antesStraddles: Joi.boolean().default(false),
     buyInReentryRules: Joi.string()
       .valid("ALLOWED_ON_REBUY_ONLY", "ALWAYS_ALLOWED", "NEVER_ALLOWED")

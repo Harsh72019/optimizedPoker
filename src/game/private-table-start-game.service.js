@@ -75,6 +75,8 @@ class PrivateTableStartGameService {
             // Handle antes if enabled
             if (privateConfig.gameConfig.features.antesEnabled) {
                 const antesResult = privateTableGameConfig.calculateAntes(privateConfig.gameConfig, gameState.players);
+                gameState.antes = antesResult.antes;
+                gameState.anteValue = antesResult.anteAmount || 0;
                 
                 gameState.players.forEach(p => {
                     const anteAmount = antesResult.antes[p.id] || 0;
@@ -220,8 +222,15 @@ class PrivateTableStartGameService {
                 this.io.to(tableId),
                 'antesPosted',
                 { 
+                    anteValue: gameState.anteValue || 0,
                     totalAntes: gameState.totalAntes,
-                    players: gameState.players.filter(p => gameState.streetBets[p.id] > 0)
+                    players: gameState.players
+                        .filter(player => (gameState.antes?.[player.id] || 0) > 0)
+                        .map(player => ({
+                            userId: player.id,
+                            seatPosition: player.seatPosition,
+                            ante: gameState.antes[player.id]
+                        }))
                 },
                 'Antes posted'
             );
@@ -273,7 +282,8 @@ class PrivateTableStartGameService {
                 dealerPosition: gameState.dealerPosition,
                 smallBlindPosition: gameState.smallBlindPosition,
                 bigBlindPosition: gameState.bigBlindPosition,
-                totalAntes: gameState.totalAntes || 0
+                totalAntes: gameState.totalAntes || 0,
+                anteValue: gameState.anteValue || 0
             }
         };
     }

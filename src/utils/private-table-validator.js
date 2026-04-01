@@ -110,6 +110,15 @@ class PrivateTableValidator {
       }
     }
     
+    // Antes validation
+    if (tableConfig.antes === true) {
+      if (!tableConfig.anteValue) {
+        errors.push('Ante value is required when antes are enabled');
+      } else if (tableConfig.anteValue <= 0) {
+        errors.push('Ante value must be greater than 0');
+      }
+    }
+
     // Buy-in settings validation
     if (tableConfig.buyInSettings) {
       const { min, max } = tableConfig.buyInSettings;

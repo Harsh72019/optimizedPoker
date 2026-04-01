@@ -113,6 +113,26 @@ class StartGameService {
                 gameState.totalContributions[p.id] = 0;
             });
 
+            if (gameState.privateTableConfig?.features?.antesEnabled) {
+                const privateTableGameConfig = require('../services/private-table-game-config.service');
+                const antesResult = privateTableGameConfig.calculateAntes(gameState.privateTableConfig, gameState.players);
+
+                gameState.antes = antesResult.antes;
+                gameState.anteValue = antesResult.anteAmount || 0;
+                gameState.totalAntes = antesResult.totalAntes || 0;
+
+                gameState.players.forEach(p => {
+                    const anteAmount = antesResult.antes[p.id] || 0;
+                    if (anteAmount > 0) {
+                        p.chips -= anteAmount;
+                        gameState.streetBets[p.id] += anteAmount;
+                        gameState.totalContributions[p.id] += anteAmount;
+                    }
+                });
+
+                console.log(`🎯 [ANTES] Posted ${gameState.totalAntes} in antes (${gameState.anteValue} each where possible)`);
+            }
+
             // ✅ Deduct blinds into streetBets (NOT pot)
             gameState.players.forEach(p => {
                 if (p.seatPosition === gameState.smallBlindPosition) {
@@ -200,6 +220,25 @@ class StartGameService {
                 'Big blind posted'
             );
 
+            if ((gameState.totalAntes || 0) > 0) {
+                emitSuccess(
+                    this.io.to(tableId),
+                    'antesPosted',
+                    {
+                        anteValue: gameState.anteValue || 0,
+                        totalAntes: gameState.totalAntes,
+                        players: gameState.players
+                            .filter(player => (gameState.antes?.[player.id] || 0) > 0)
+                            .map(player => ({
+                                userId: player.id,
+                                seatPosition: player.seatPosition,
+                                ante: gameState.antes[player.id]
+                            }))
+                    },
+                    'Antes posted'
+                );
+            }
+
             syncedTableState.players.forEach(tablePlayer => {
                 const gamePlayer = gameState.players.find(player => player.id === tablePlayer.userId);
                 if (!gamePlayer || !tablePlayer.socketId) {
@@ -276,7 +315,9 @@ class StartGameService {
                 boardCards: gameState.boardCards || [],
                 dealerPosition: gameState.dealerPosition,
                 smallBlindPosition: gameState.smallBlindPosition,
-                bigBlindPosition: gameState.bigBlindPosition
+                bigBlindPosition: gameState.bigBlindPosition,
+                totalAntes: gameState.totalAntes || 0,
+                anteValue: gameState.anteValue || 0
             }
         };
     }

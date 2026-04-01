@@ -22,6 +22,8 @@ class PrivateTableService {
       buyInSettings, // { min: number, max: number }
       invitationControl, // { type: 'PASSWORD' | 'INVITE', password?: string }
       rebuy = false,
+      antes = false,
+      anteValue,
       antesStraddles = false,
       buyInReentryRules = 'ALLOWED_ON_REBUY_ONLY',
       scheduledStartTime,
@@ -72,7 +74,9 @@ class PrivateTableService {
         buyInSettings,
         invitationControl,
         rebuy,
-        antesStraddles,
+        antes,
+        anteValue: antes ? anteValue : 0,
+        antesStraddles: typeof antesStraddles === 'boolean' ? antesStraddles : antes,
         buyInReentryRules
       }
     };

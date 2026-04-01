@@ -65,6 +65,8 @@ class PrivateTableSNGIntegrationTest {
         password: "test123"
       },
       rebuy: true,
+      antes: false,
+      anteValue: 0,
       antesStraddles: false,
       buyInReentryRules: "ALWAYS_ALLOWED"
     };
@@ -94,6 +96,8 @@ class PrivateTableSNGIntegrationTest {
         tableDuration: 'TIMED',
         buyInSettings: { min: 500, max: 1000 },
         rebuy: true,
+        antes: true,
+        anteValue: 5,
         antesStraddles: true
       };
 

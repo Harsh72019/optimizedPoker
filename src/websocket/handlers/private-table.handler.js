@@ -140,6 +140,7 @@ class PrivateTableHandler {
                             spotsRemaining: updatedTableInfo.declaredCapacity - (updatedTableInfo.registeredPlayers?.length || 0)
                         };
                         
+                        
                         socket.emit('privateTableInfo', {
                             success: true,
                             data: personalizedTableInfo,

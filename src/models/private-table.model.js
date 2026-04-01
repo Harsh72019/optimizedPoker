@@ -327,6 +327,16 @@ const privateTableSchema = new Schema(
         default: false
       },
 
+      antes: {
+        type: Boolean,
+        default: false
+      },
+
+      anteValue: {
+        type: Number,
+        min: 0
+      },
+
       antesStraddles: {
         type: Boolean,
         default: false

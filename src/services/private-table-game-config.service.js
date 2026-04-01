@@ -89,7 +89,8 @@ class PrivateTableGameConfigService {
       
       // Game features
       features: {
-        antesEnabled: privateConfig.antesStraddles || false,
+        antesEnabled: privateConfig.antes || privateConfig.antesStraddles || false,
+        anteValue: privateConfig.anteValue || 0,
         straddlesEnabled: privateConfig.antesStraddles || false,
         autoMuck: true, // Default for private tables
         showdown: true
@@ -175,7 +176,10 @@ class PrivateTableGameConfigService {
       return { antes: {}, totalAntes: 0 };
     }
     
-    const anteAmount = Math.max(1, Math.floor(gameConfig.blinds.big * 0.1)); // 10% of big blind
+    const configuredAnte = Number(gameConfig.features.anteValue) || 0;
+    const anteAmount = configuredAnte > 0
+      ? configuredAnte
+      : Math.max(1, Math.floor(gameConfig.blinds.big * 0.1));
     const antes = {};
     let totalAntes = 0;
     

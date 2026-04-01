@@ -406,15 +406,17 @@ class ConnectionHandler {
                 privateTableId,
                 tableState, 
                 showLoading,
-                privateTableInfo: {
-                    gameType: privateTable.gameType,
-                    stakes: config.stakes,
-                    features: {
-                        rebuy: config.rebuy,
-                        antesStraddles: config.antesStraddles
-                    },
-                    registeredPlayers: privateTable.registeredPlayers || []
-                }
+                    privateTableInfo: {
+                        gameType: privateTable.gameType,
+                        stakes: config.stakes,
+                        features: {
+                            rebuy: config.rebuy,
+                            antes: config.antes || false,
+                            anteValue: config.anteValue || 0,
+                            antesStraddles: config.antesStraddles
+                        },
+                        registeredPlayers: privateTable.registeredPlayers || []
+                    }
             }, 'Joined private table game successfully');
             
             const formattedData = this.formatTableData(tableState, gameState);
