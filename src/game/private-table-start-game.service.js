@@ -77,12 +77,12 @@ class PrivateTableStartGameService {
                 const antesResult = privateTableGameConfig.calculateAntes(privateConfig.gameConfig, gameState.players);
                 gameState.antes = antesResult.antes;
                 gameState.anteValue = antesResult.anteAmount || 0;
+                gameState.pot = (gameState.pot || 0) + (antesResult.totalAntes || 0);
                 
                 gameState.players.forEach(p => {
                     const anteAmount = antesResult.antes[p.id] || 0;
                     if (anteAmount > 0) {
                         p.chips -= anteAmount;
-                        gameState.streetBets[p.id] += anteAmount;
                         gameState.totalContributions[p.id] += anteAmount;
                     }
                 });

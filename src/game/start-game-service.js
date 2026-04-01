@@ -120,12 +120,12 @@ class StartGameService {
                 gameState.antes = antesResult.antes;
                 gameState.anteValue = antesResult.anteAmount || 0;
                 gameState.totalAntes = antesResult.totalAntes || 0;
+                gameState.pot = (gameState.pot || 0) + gameState.totalAntes;
 
                 gameState.players.forEach(p => {
                     const anteAmount = antesResult.antes[p.id] || 0;
                     if (anteAmount > 0) {
                         p.chips -= anteAmount;
-                        gameState.streetBets[p.id] += anteAmount;
                         gameState.totalContributions[p.id] += anteAmount;
                     }
                 });
