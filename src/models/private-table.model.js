@@ -263,6 +263,14 @@ const privateTableSchema = new Schema(
         blinds: {
           small: Number,
           big: Number
+        },
+        fixedLimitRules: {
+          minRaise: Number,
+          maxRaise: Number
+        },
+        customRules: {
+          minRaise: Number,
+          maxRaise: Number
         }
       },
 

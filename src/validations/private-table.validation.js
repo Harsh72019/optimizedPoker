@@ -38,7 +38,23 @@ const createPrivateTable = {
       blinds: Joi.object({
         small: Joi.number().positive().required(),
         big: Joi.number().positive().required()
-      }).required()
+      }).required(),
+      fixedLimitRules: Joi.object({
+        minRaise: Joi.number().positive().required(),
+        maxRaise: Joi.number().positive().required()
+      }).when('type', {
+        is: 'FIXED_LIMIT',
+        then: Joi.required(),
+        otherwise: Joi.optional()
+      }),
+      customRules: Joi.object({
+        minRaise: Joi.number().positive().required(),
+        maxRaise: Joi.number().positive().required()
+      }).when('type', {
+        is: 'CUSTOM',
+        then: Joi.required(),
+        otherwise: Joi.optional()
+      })
     }).required(),
 
     // Timer configuration

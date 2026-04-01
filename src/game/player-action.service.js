@@ -54,10 +54,9 @@ class PlayerActionService {
             const actingPlayer = tableState.players.find(p => p.userId === normalizedPlayerId);
             const actionPolicy = await this.getActionPolicy(tableId, normalizedPlayerId, gameState, tableState);
 
-            this.validateActionRequest(action, amount, actionPolicy, player, gameState);
+            this.validateActionRequest(action, amount, actionPolicy);
 
-            const normalizedAmount = this.normalizeActionAmount(action, amount, player, gameState);
-            this.applyAction(gameState, player, action, normalizedAmount, actionPolicy);
+            this.applyAction(gameState, player, action, amount, actionPolicy);
             console.log(`✅ [ACTION APPLIED] ${action} by ${playerId}`);
 
             // Emit specific action events
@@ -69,7 +68,7 @@ class PlayerActionService {
                 emitSuccess(
                     this.io.to(tableId),
                     'playerAllIn',
-                    { playerId, amount: gameState.streetBets[normalizedPlayerId] || normalizedAmount },
+                    { playerId, amount: player.chips },
                     'Player all-in'
                 );
             }
@@ -78,7 +77,7 @@ class PlayerActionService {
                 playerId: normalizedPlayerId,
                 username: actingPlayer?.username || 'Player',
                 action,
-                amount: action === 'call' ? actionPolicy.callAmount || 0 : normalizedAmount,
+                amount: action === 'call' ? actionPolicy.callAmount || 0 : amount,
                 result: true,
                 timestamp: new Date().toISOString()
             };
@@ -378,48 +377,16 @@ class PlayerActionService {
     }
 
     buildRegularActionPolicy(player, gameState) {
-        const currentBet = gameState.currentBet || 0;
-        const playerBet = gameState.streetBets[player.id] || 0;
-        const callAmount = Math.max(0, currentBet - playerBet);
-        const raiseIncrement = gameState.lastRaiseAmount || gameState.bigBlind || 0;
-        const minRaiseAmount = currentBet === 0
-            ? gameState.bigBlind
-            : currentBet + raiseIncrement;
-        const maxRaiseAmount = playerBet + player.chips;
-        const availableOptions = ['fold'];
-
-        if (player.status === 'ALL_IN' || player.chips <= 0) {
-            return {
-                availableOptions: ['fold'],
-                callAmount: 0,
-                minRaiseAmount: null,
-                maxRaiseAmount: null,
-                raiseSteps: null,
-                betIncrement: gameState.bigBlind || 0
-            };
-        }
-
-        if (callAmount === 0) {
-            availableOptions.push('check');
-        } else if (player.chips >= callAmount) {
-            availableOptions.push('call');
-        } else {
-            availableOptions.push('all-in');
-        }
-
-        if (!availableOptions.includes('all-in') && player.chips > 0) {
-            availableOptions.push('all-in');
-        }
-
-        if (player.chips > callAmount && maxRaiseAmount >= minRaiseAmount) {
-            availableOptions.push('raise');
-        }
+        const validation = PokerEngine.validateAction(player, gameState);
+        const availableOptions = validation.options || [];
+        const minRaiseAmount = validation.minRaiseAmount ?? validation.minRaise ?? null;
+        const maxRaiseAmount = validation.maxRaiseAmount ?? validation.maxRaise ?? null;
 
         return {
             availableOptions,
-            callAmount,
-            minRaiseAmount: availableOptions.includes('raise') ? minRaiseAmount : null,
-            maxRaiseAmount: availableOptions.includes('raise') ? maxRaiseAmount : null,
+            callAmount: validation.callAmount || 0,
+            minRaiseAmount,
+            maxRaiseAmount,
             raiseSteps: availableOptions.includes('raise')
                 ? this.buildRaiseSteps(minRaiseAmount, maxRaiseAmount, gameState)
                 : null,
@@ -428,76 +395,18 @@ class PlayerActionService {
     }
 
     buildPrivateActionPolicy(privateConfig, player, gameState) {
-        const currentBet = gameState.currentBet || 0;
-        const playerBet = gameState.streetBets[player.id] || 0;
-        const callAmount = Math.max(0, currentBet - playerBet);
-        const availableOptions = ['fold'];
-        const lastRaiseAmount = gameState.lastRaiseAmount || privateConfig.blinds?.big || gameState.bigBlind || 0;
-        const maxRaiseAmount = playerBet + player.chips;
-        let minRaiseAmount = null;
-
-        if (player.status === 'ALL_IN' || player.chips <= 0) {
-            return {
-                availableOptions: ['fold'],
-                callAmount: 0,
-                minRaiseAmount: null,
-                maxRaiseAmount: null,
-                raiseSteps: null,
-                betIncrement: privateConfig.blinds?.big || gameState.bigBlind || 0,
-                stakes: privateConfig.stakes?.type || 'NO_LIMIT',
-                timer: privateConfig.timer,
-                tableDuration: privateConfig.duration
-            };
-        }
-
-        if (callAmount === 0) {
-            availableOptions.push('check');
-        } else if (player.chips >= callAmount) {
-            availableOptions.push('call');
-        } else {
-            availableOptions.push('all-in');
-        }
-
-        if (!availableOptions.includes('all-in') && player.chips > 0) {
-            availableOptions.push('all-in');
-        }
-
-        switch (privateConfig.stakes?.type) {
-            case 'FIXED_LIMIT':
-                minRaiseAmount = currentBet === 0
-                    ? privateConfig.stakes.betSize
-                    : currentBet + privateConfig.stakes.betSize;
-                break;
-            case 'POT_LIMIT':
-                minRaiseAmount = currentBet === 0
-                    ? privateConfig.stakes.bigBlind
-                    : currentBet + Math.max(lastRaiseAmount, privateConfig.stakes.bigBlind);
-                break;
-            case 'CUSTOM':
-                minRaiseAmount = currentBet === 0
-                    ? privateConfig.stakes.customRules.minBet
-                    : currentBet + Math.max(lastRaiseAmount, privateConfig.stakes.customRules.minBet);
-                break;
-            case 'NO_LIMIT':
-            default:
-                minRaiseAmount = currentBet === 0
-                    ? privateConfig.stakes.bigBlind
-                    : currentBet + Math.max(lastRaiseAmount, privateConfig.stakes.bigBlind);
-                break;
-        }
-
-        const effectiveMaxRaise = this.getPrivateMaxRaiseAmount(privateConfig, player, gameState, maxRaiseAmount);
-        if (player.chips > callAmount && effectiveMaxRaise >= minRaiseAmount) {
-            availableOptions.push('raise');
-        }
+        const regularPolicy = this.buildRegularActionPolicy(player, gameState);
+        const hasRaise = regularPolicy.availableOptions.includes('raise');
+        const privateRaisePolicy = hasRaise
+            ? this.getPrivateRaisePolicy(privateConfig, player, gameState, regularPolicy)
+            : { minRaiseAmount: null, maxRaiseAmount: null };
 
         return {
-            availableOptions,
-            callAmount,
-            minRaiseAmount: availableOptions.includes('raise') ? minRaiseAmount : null,
-            maxRaiseAmount: availableOptions.includes('raise') ? effectiveMaxRaise : null,
-            raiseSteps: availableOptions.includes('raise')
-                ? this.buildRaiseSteps(minRaiseAmount, effectiveMaxRaise, gameState)
+            ...regularPolicy,
+            minRaiseAmount: hasRaise ? privateRaisePolicy.minRaiseAmount : null,
+            maxRaiseAmount: hasRaise ? privateRaisePolicy.maxRaiseAmount : null,
+            raiseSteps: hasRaise
+                ? this.buildRaiseSteps(privateRaisePolicy.minRaiseAmount, privateRaisePolicy.maxRaiseAmount, gameState)
                 : null,
             betIncrement: privateConfig.blinds?.big || gameState.bigBlind || 0,
             stakes: privateConfig.stakes?.type || 'NO_LIMIT',
@@ -506,26 +415,49 @@ class PlayerActionService {
         };
     }
 
-    getPrivateMaxRaiseAmount(privateConfig, player, gameState, tableMaxRaise) {
+    getPrivateRaisePolicy(privateConfig, player, gameState, regularPolicy) {
+        const currentBet = gameState.currentBet || 0;
         const playerBet = gameState.streetBets[player.id] || 0;
+        const callAmount = Math.max(0, currentBet - playerBet);
+        const tableMaxRaise = regularPolicy.maxRaiseAmount ?? (player.chips + playerBet);
+        const lastRaiseAmount = gameState.lastRaiseAmount || privateConfig.blinds?.big || gameState.bigBlind || 0;
+        let minRaiseAmount = regularPolicy.minRaiseAmount ?? null;
+        let maxRaiseAmount = tableMaxRaise;
 
         switch (privateConfig.stakes?.type) {
-            case 'FIXED_LIMIT':
-                return Math.min(tableMaxRaise, (gameState.currentBet || 0) + privateConfig.stakes.betSize);
-            case 'POT_LIMIT':
-                return Math.min(
-                    tableMaxRaise,
-                    Math.max(
-                        playerBet,
-                        (gameState.pot || 0) + (gameState.currentBet || 0) + Math.max(0, (gameState.currentBet || 0) - playerBet)
-                    )
-                );
-            case 'CUSTOM':
-                return Math.min(tableMaxRaise, privateConfig.stakes.customRules.maxBet);
+            case 'FIXED_LIMIT': {
+                minRaiseAmount = privateConfig.stakes?.fixedLimitRules?.minRaise ?? regularPolicy.minRaiseAmount;
+                maxRaiseAmount = privateConfig.stakes?.fixedLimitRules?.maxRaise ?? minRaiseAmount;
+                break;
+            }
+            case 'POT_LIMIT': {
+                minRaiseAmount = currentBet === 0
+                    ? (privateConfig.stakes?.bigBlind || gameState.bigBlind || 0)
+                    : currentBet + Math.max(lastRaiseAmount, privateConfig.stakes?.bigBlind || gameState.bigBlind || 0);
+                const potSizedRaiseTo = currentBet + callAmount + (gameState.pot || 0);
+                maxRaiseAmount = Math.min(tableMaxRaise, potSizedRaiseTo);
+                break;
+            }
+            case 'CUSTOM': {
+                const customMin = privateConfig.stakes?.customRules?.minRaise || regularPolicy.minRaiseAmount || 0;
+                const customMax = privateConfig.stakes?.customRules?.maxRaise || tableMaxRaise;
+                minRaiseAmount = customMin;
+                maxRaiseAmount = Math.min(tableMaxRaise, customMax);
+                break;
+            }
             case 'NO_LIMIT':
-            default:
-                return tableMaxRaise;
+            default: {
+                minRaiseAmount = regularPolicy.minRaiseAmount;
+                maxRaiseAmount = tableMaxRaise;
+                break;
+            }
         }
+
+        if (maxRaiseAmount < minRaiseAmount) {
+            maxRaiseAmount = minRaiseAmount;
+        }
+
+        return { minRaiseAmount, maxRaiseAmount };
     }
 
     buildRaiseSteps(minRaiseAmount, maxRaiseAmount, gameState) {
@@ -557,7 +489,7 @@ class PlayerActionService {
         return steps.length > 0 ? steps : null;
     }
 
-    validateActionRequest(action, amount, policy, player, gameState) {
+    validateActionRequest(action, amount, policy) {
         if (!policy.availableOptions.includes(action)) {
             throw new Error('Invalid action');
         }
@@ -575,20 +507,6 @@ class PlayerActionService {
                 throw new Error(`Raise cannot exceed ${policy.maxRaiseAmount}`);
             }
         }
-    }
-
-    normalizeActionAmount(action, amount, player, gameState) {
-        const playerBet = gameState.streetBets[player.id] || 0;
-
-        if (action === 'raise' || action === 'bet') {
-            return amount - playerBet;
-        }
-
-        if (action === 'all-in') {
-            return player.chips;
-        }
-
-        return amount;
     }
 
     async handleShowdown(gameState) {

@@ -57,6 +57,10 @@ const privateTournamentConfig = {
     blinds: {
       small: 25,
       big: 50
+    },
+    customRules: {
+      minRaise: 50,
+      maxRaise: 500
     }
   },
   

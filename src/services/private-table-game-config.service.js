@@ -126,8 +126,10 @@ class PrivateTableGameConfigService {
     switch (stakesConfig.type) {
       case 'FIXED_LIMIT':
         config.betting = 'fixed';
-        config.betSize = config.bigBlind;
-        config.maxRaises = 4; // Standard fixed limit
+        config.fixedLimitRules = {
+          minRaise: stakesConfig.fixedLimitRules?.minRaise || config.bigBlind,
+          maxRaise: stakesConfig.fixedLimitRules?.maxRaise || config.bigBlind
+        };
         break;
         
       case 'POT_LIMIT':
@@ -142,9 +144,8 @@ class PrivateTableGameConfigService {
       case 'CUSTOM':
         config.betting = 'custom';
         config.customRules = {
-          minBet: config.bigBlind,
-          maxBet: config.bigBlind * 10, // Example custom limit
-          maxRaises: 6
+          minRaise: stakesConfig.customRules?.minRaise || config.bigBlind,
+          maxRaise: stakesConfig.customRules?.maxRaise || config.bigBlind * 10
         };
         break;
         
@@ -258,13 +259,14 @@ class PrivateTableGameConfigService {
   }
   
   validateFixedLimitBet(stakes, betAmount, currentBet) {
-    const validBet = stakes.betSize;
-    
-    if (betAmount !== validBet && betAmount !== currentBet + validBet) {
+    const minRaise = stakes.fixedLimitRules?.minRaise ?? stakes.bigBlind;
+    const maxRaise = stakes.fixedLimitRules?.maxRaise ?? minRaise;
+
+    if (betAmount < minRaise || betAmount > maxRaise) {
       return { 
         valid: false, 
-        error: `Fixed limit: bet must be ${validBet}`,
-        suggestedAmount: validBet
+        error: `Fixed limit raise must be between ${minRaise} and ${maxRaise}`,
+        suggestedAmount: minRaise
       };
     }
     
@@ -309,21 +311,21 @@ class PrivateTableGameConfigService {
   }
   
   validateCustomBet(stakes, betAmount, currentBet, playerChips) {
-    const { minBet, maxBet } = stakes.customRules;
+    const { minRaise, maxRaise } = stakes.customRules;
     
-    if (betAmount < minBet) {
+    if (betAmount < minRaise) {
       return { 
         valid: false, 
-        error: `Minimum bet is ${minBet}`,
-        suggestedAmount: minBet
+        error: `Minimum raise is ${minRaise}`,
+        suggestedAmount: minRaise
       };
     }
     
-    if (betAmount > maxBet && betAmount < playerChips) {
+    if (betAmount > maxRaise && betAmount < playerChips) {
       return { 
         valid: false, 
-        error: `Maximum bet is ${maxBet}`,
-        suggestedAmount: maxBet
+        error: `Maximum raise is ${maxRaise}`,
+        suggestedAmount: maxRaise
       };
     }
     
@@ -374,9 +376,9 @@ class PrivateTableGameConfigService {
     switch (stakes.type) {
       case 'FIXED_LIMIT':
         return {
-          allowed: true,
-          minAmount: stakes.betSize,
-          maxAmount: stakes.betSize
+          allowed: player.chips >= (stakes.fixedLimitRules?.minRaise ?? stakes.bigBlind),
+          minAmount: stakes.fixedLimitRules?.minRaise ?? stakes.bigBlind,
+          maxAmount: stakes.fixedLimitRules?.maxRaise ?? stakes.fixedLimitRules?.minRaise ?? stakes.bigBlind
         };
         
       case 'POT_LIMIT':
@@ -396,9 +398,9 @@ class PrivateTableGameConfigService {
         
       case 'CUSTOM':
         return {
-          allowed: player.chips >= stakes.customRules.minBet,
-          minAmount: stakes.customRules.minBet,
-          maxAmount: Math.min(stakes.customRules.maxBet, player.chips)
+          allowed: player.chips >= stakes.customRules.minRaise,
+          minAmount: stakes.customRules.minRaise,
+          maxAmount: Math.min(stakes.customRules.maxRaise, player.chips)
         };
         
       default:

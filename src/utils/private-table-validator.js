@@ -36,6 +36,34 @@ class PrivateTableValidator {
       if (tableConfig.stakes.type === 'CUSTOM' && !tableConfig.stakes.blinds) {
         errors.push('Custom stakes require blinds configuration');
       }
+
+      if (tableConfig.stakes.type === 'FIXED_LIMIT') {
+        const rules = tableConfig.stakes.fixedLimitRules;
+        if (!rules) {
+          errors.push('Fixed limit stakes require fixedLimitRules');
+        } else {
+          if (!rules.minRaise || !rules.maxRaise) {
+            errors.push('Fixed limit rules must include minRaise and maxRaise');
+          }
+          if (rules.minRaise > rules.maxRaise) {
+            errors.push('Fixed limit minRaise cannot be greater than maxRaise');
+          }
+        }
+      }
+
+      if (tableConfig.stakes.type === 'CUSTOM') {
+        const rules = tableConfig.stakes.customRules;
+        if (!rules) {
+          errors.push('Custom stakes require customRules');
+        } else {
+          if (!rules.minRaise || !rules.maxRaise) {
+            errors.push('Custom rules must include minRaise and maxRaise');
+          }
+          if (rules.minRaise > rules.maxRaise) {
+            errors.push('Custom minRaise cannot be greater than maxRaise');
+          }
+        }
+      }
       
       if (tableConfig.stakes.blinds) {
         if (!tableConfig.stakes.blinds.small || !tableConfig.stakes.blinds.big) {
