@@ -539,6 +539,7 @@ const MODELS = {
   TOURNAMENT_TABLES: 'tournament_table',
   RAKE_LEDGER: 'rakeledger',
   RECRUIT_EARNING: 'recruit_earning',
+  TRANSACTION_LEDGER: 'transactionLedger',
 };
 
 /**

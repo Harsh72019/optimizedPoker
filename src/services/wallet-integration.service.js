@@ -614,7 +614,7 @@ class WalletIntegrationService {
       status: blockchainTxHash ? 'COMPLETED' : 'PENDING'
     };
     
-    const logResult = await mongoHelper.create(mongoHelper.COLLECTIONS.TRANSACTION_LEDGER, transactionLogData);
+    const logResult = await mongoHelper.create(mongoHelper.COLLECTIONS.TRANSACTION_LEDGER, transactionLogData , mongoHelper.MODELS.TRANSACTION_LEDGER);
     
     if (logResult.success) {
       console.log(`📝 Transaction logged: ${type} - ${amount} for user ${userId}`);

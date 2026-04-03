@@ -23,6 +23,8 @@ class ConnectionHandler {
         this.socket.on('setBack', async (data) => this.handleBack(data));
         this.socket.on('getTableInfo', async (data) => this.handleGetTableInfo(data));
         this.socket.on('getPlayerInfo', async (data) => this.handleGetPlayerInfo(data));
+        this.socket.on('privateTableRebuy', this.handlePrivateTableRebuy.bind(this));
+        this.socket.on('privateTableLeave', this.handlePrivateTableLeave.bind(this));
     }
 
     async handleAway(data) {
@@ -499,6 +501,7 @@ class ConnectionHandler {
             const finalChips = playerBefore?.chips || 0;
 
             const tableState = await tableManager.removePlayer(tableId, userId);
+            await this.orchestrator.markPrivateTablePlayerLeaving(tableId, userId);
 
             // Get full user document for walletAddress
             const mongoHelper = require('../../models/customdb');
@@ -563,6 +566,38 @@ class ConnectionHandler {
         } catch (err) {
             emitError(this.socket, 'unableToLeave', err.message);
         }
+    }
+
+    async handlePrivateTableRebuy(data) {
+        try {
+            const { token, amount } = data;
+            const user = await verifyEventToken(token, this.socket);
+            const tableId = this.socket.tableId;
+
+            if (!tableId) {
+                emitError(this.socket, 'privateTableRebuyError', 'Not in a table');
+                return;
+            }
+
+            const result = await this.orchestrator.handlePrivateTableRebuy(tableId, user, amount);
+
+            emitSuccess(
+                this.socket,
+                'privateTableRebuySuccess',
+                {
+                    tableId,
+                    amount: result.amount,
+                    totalChips: result.totalChips,
+                },
+                'Rebuy successful'
+            );
+        } catch (err) {
+            emitError(this.socket, 'privateTableRebuyError', err.message);
+        }
+    }
+
+    async handlePrivateTableLeave(data) {
+        await this.handleLeaveTable(data);
     }
 
     async handleGetTableInfo(data) {
