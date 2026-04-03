@@ -43,13 +43,25 @@ class GameOrchestrator {
         try {
             const privateConfig = await this.getPrivateTableConfig(tableId);
             if (!privateConfig?.gameConfig?.buyIn?.allowRebuy) {
+                console.log(`💸 [PRIVATE REBUY] Rebuy disabled for table ${tableId}`);
                 return false;
             }
 
             const tableState = await tableManager.getTable(tableId);
-            return tableState.players.some(
+            const playersSnapshot = tableState.players.map(player => ({
+                userId: player.userId,
+                username: player.username,
+                chips: Number(player.chips || 0),
+                disconnected: !!player.disconnected,
+            }));
+            const shouldPause = tableState.players.some(
                 player => !player.disconnected && Number(player.chips || 0) <= 0
             );
+            console.log(`💸 [PRIVATE REBUY] Rebuy inspection for table ${tableId}:`, {
+                shouldPause,
+                players: playersSnapshot,
+            });
+            return shouldPause;
         } catch (error) {
             console.error(`âŒ [PRIVATE REBUY] Failed to inspect table ${tableId}:`, error.message);
             return false;
@@ -71,8 +83,23 @@ class GameOrchestrator {
             const pendingPlayers = tableState.players.filter(
                 player => !player.disconnected && Number(player.chips || 0) <= 0
             );
+            console.log(`💸 [PRIVATE REBUY] Starting rebuy window evaluation for table ${tableId}:`, {
+                players: tableState.players.map(player => ({
+                    userId: player.userId,
+                    username: player.username,
+                    chips: Number(player.chips || 0),
+                    disconnected: !!player.disconnected,
+                    socketId: player.socketId,
+                })),
+                pendingPlayers: pendingPlayers.map(player => ({
+                    userId: player.userId,
+                    username: player.username,
+                    chips: Number(player.chips || 0),
+                })),
+            });
 
             if (pendingPlayers.length === 0) {
+                console.log(`💸 [PRIVATE REBUY] No pending rebuy players found for table ${tableId}; preparing next hand`);
                 await this.prepareNextHand(tableId);
                 return;
             }
@@ -117,8 +144,11 @@ class GameOrchestrator {
 
             for (const player of pendingPlayers) {
                 if (!player.socketId) {
+                    console.log(`⚠️ [PRIVATE REBUY] Skipping rebuyRequired emit for ${player.username} (${player.userId}) because socketId is missing`);
                     continue;
                 }
+
+                console.log(`📣 [PRIVATE REBUY] Emitting rebuyRequired to ${player.username} (${player.userId}) on socket ${player.socketId}`);
 
                 emitSuccess(
                     this.io.to(player.socketId),
@@ -478,15 +508,22 @@ class GameOrchestrator {
                 return;
             }
 
+            const shouldPauseForRebuy = await this.shouldPauseForPrivateRebuy(tableId);
+            console.log(`💸 [PRIVATE REBUY] Post-hand decision for table ${tableId}:`, {
+                shouldPauseForRebuy,
+            });
+
             // 🆕 Check if this is the final hand (SNG completion)
             const shouldComplete = await this.checkGameCompletion(tableId);
+            console.log(`🏁 [HAND COMPLETE] Completion check for table ${tableId}:`, {
+                shouldComplete,
+                shouldPauseForRebuy,
+            });
             
-            if (shouldComplete) {
+            if (shouldComplete && !shouldPauseForRebuy) {
                 await this.handleGameCompletion(tableId);
                 return;
             }
-
-            const shouldPauseForRebuy = await this.shouldPauseForPrivateRebuy(tableId);
 
             const timeout = setTimeout(async () => {
                 if (shouldPauseForRebuy) {
