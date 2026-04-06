@@ -39,6 +39,34 @@ class GameOrchestrator {
         this.privateRebuyWindows = new Map(); // tableId -> rebuy window metadata
     }
 
+    async getPrivateRebuyCandidates(tableId) {
+        const tableState = await tableManager.getTable(tableId);
+        const gameState = await gameStateManager.getGame(tableId);
+        const gamePlayers = new Map(
+            (gameState?.players || []).map(player => [player.id, player])
+        );
+
+        return tableState.players.map(player => {
+            const gamePlayer = gamePlayers.get(player.userId);
+
+            return {
+                ...player,
+                chips: Number(gamePlayer?.chips ?? player.chips ?? 0),
+                gameStatus: gamePlayer?.status || null,
+            };
+        });
+    }
+
+    getPrivateRebuyThreshold(gameConfig) {
+        const bigBlind = Number(gameConfig?.blinds?.big || 0);
+        const configuredAnte = Number(gameConfig?.features?.anteValue || 0);
+        const computedAnte = gameConfig?.features?.antesEnabled
+            ? (configuredAnte > 0 ? configuredAnte : Math.max(1, Math.floor(bigBlind * 0.1)))
+            : 0;
+
+        return Math.max(bigBlind, computedAnte);
+    }
+
     async shouldPauseForPrivateRebuy(tableId) {
         try {
             const privateConfig = await this.getPrivateTableConfig(tableId);
@@ -47,18 +75,21 @@ class GameOrchestrator {
                 return false;
             }
 
-            const tableState = await tableManager.getTable(tableId);
-            const playersSnapshot = tableState.players.map(player => ({
+            const rebuyThreshold = this.getPrivateRebuyThreshold(privateConfig.gameConfig);
+            const playersForRebuy = await this.getPrivateRebuyCandidates(tableId);
+            const playersSnapshot = playersForRebuy.map(player => ({
                 userId: player.userId,
                 username: player.username,
                 chips: Number(player.chips || 0),
                 disconnected: !!player.disconnected,
+                gameStatus: player.gameStatus,
             }));
-            const shouldPause = tableState.players.some(
-                player => !player.disconnected && Number(player.chips || 0) <= 0
+            const shouldPause = playersForRebuy.some(
+                player => !player.disconnected && Number(player.chips || 0) < rebuyThreshold
             );
             console.log(`💸 [PRIVATE REBUY] Rebuy inspection for table ${tableId}:`, {
                 shouldPause,
+                rebuyThreshold,
                 players: playersSnapshot,
             });
             return shouldPause;
@@ -79,17 +110,19 @@ class GameOrchestrator {
                 return;
             }
 
-            const tableState = await tableManager.getTable(tableId);
-            const pendingPlayers = tableState.players.filter(
-                player => !player.disconnected && Number(player.chips || 0) <= 0
+            const rebuyThreshold = this.getPrivateRebuyThreshold(privateConfig.gameConfig);
+            const playersForRebuy = await this.getPrivateRebuyCandidates(tableId);
+            const pendingPlayers = playersForRebuy.filter(
+                player => !player.disconnected && Number(player.chips || 0) < rebuyThreshold
             );
             console.log(`💸 [PRIVATE REBUY] Starting rebuy window evaluation for table ${tableId}:`, {
-                players: tableState.players.map(player => ({
+                players: playersForRebuy.map(player => ({
                     userId: player.userId,
                     username: player.username,
                     chips: Number(player.chips || 0),
                     disconnected: !!player.disconnected,
                     socketId: player.socketId,
+                    gameStatus: player.gameStatus,
                 })),
                 pendingPlayers: pendingPlayers.map(player => ({
                     userId: player.userId,
@@ -157,12 +190,13 @@ class GameOrchestrator {
                         tableId,
                         playerId: player.userId,
                         currentChips: Number(player.chips || 0),
+                        rebuyThreshold,
                         minAmount,
                         maxAmount,
                         secondsRemaining: seconds,
                         canLeave: true,
                     },
-                    'Rebuy or leave within 30 seconds to continue'
+                    'Rebuy or leave within 30 seconds to meet the next-hand minimum'
                 );
             }
 
@@ -222,7 +256,10 @@ class GameOrchestrator {
             await blockchainService.prepareTableForJoin(tableDoc.data, requestedAmount, user.walletAddress);
         }
 
-        const nextChipCount = Number(playerResult.data.chipsInPlay || 0) + requestedAmount;
+        const tableState = await tableManager.getTable(tableId);
+        const tablePlayer = tableState.players.find(player => player.userId === userId);
+        const currentTableChips = Math.max(0, Number(tablePlayer?.chips || 0));
+        const nextChipCount = currentTableChips + requestedAmount;
         const updateResult = await mongoHelper.updateById(
             mongoHelper.COLLECTIONS.PLAYERS,
             playerResult.data._id,
@@ -238,8 +275,6 @@ class GameOrchestrator {
             throw new Error(updateResult.error || 'Failed to update player stack after rebuy');
         }
 
-        const tableState = await tableManager.getTable(tableId);
-        const tablePlayer = tableState.players.find(player => player.userId === userId);
         if (tablePlayer) {
             tablePlayer.chips = nextChipCount;
             await tableManager.saveTable(tableId, tableState);
