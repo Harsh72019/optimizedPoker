@@ -573,7 +573,7 @@ class ConnectionHandler {
             const { token, amount } = data;
             const user = await verifyEventToken(token, this.socket);
             const tableId = this.socket.tableId;
-
+            console.log(tableId , "tableId in rebuy--------------", user.username);
             if (!tableId) {
                 emitError(this.socket, 'privateTableRebuyError', 'Not in a table');
                 return;
