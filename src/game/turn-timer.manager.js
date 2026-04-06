@@ -30,6 +30,10 @@ class TurnTimerManager {
         console.error(`❌ [TIMER DEBUG] No gameState found for table ${tableId}`);
         return;
       }
+      if (gameState.phase === 'SHOWDOWN' || gameState.phase === 'COMPLETED') {
+        console.log(`Skipping timer for ${tableId} because hand is in ${gameState.phase}`);
+        return;
+      }
       
       console.log(`✅ [TIMER DEBUG] GameState found for table ${tableId}, current player: ${gameState.currentPlayerId}`);
 
@@ -37,6 +41,11 @@ class TurnTimerManager {
 
       if (!player) {
         console.error(`❌ [TIMER DEBUG] Player ${playerId} not found in gameState`);
+        return;
+      }
+
+      if (player.status !== 'ACTIVE') {
+        console.log(`Skipping timer for ${playerId} because status is ${player.status}`);
         return;
       }
 
@@ -154,6 +163,11 @@ class TurnTimerManager {
       return;
     }
 
+    if (gameState.phase === 'SHOWDOWN' || gameState.phase === 'COMPLETED') {
+      console.log(`Skipping timeout for ${tableId} because hand is in ${gameState.phase}`);
+      return;
+    }
+
     if (gameState.currentPlayerId !== playerId) {
       console.log(`⚠️ Not current player's turn. Current: ${gameState.currentPlayerId}, Timeout: ${playerId}`);
       return;
@@ -163,6 +177,11 @@ class TurnTimerManager {
 
     if (!player) {
       console.log(`⚠️ Player ${playerId} not found in game`);
+      return;
+    }
+
+    if (player.status !== 'ACTIVE') {
+      console.log(`Skipping timeout for ${playerId} because status is ${player.status}`);
       return;
     }
 

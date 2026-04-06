@@ -28,8 +28,18 @@ class PrivateTableTurnTimerManager {
       const gameState = await gameStateManager.getGame(tableId);
       if (!gameState) return;
 
+      if (gameState.phase === 'SHOWDOWN' || gameState.phase === 'COMPLETED') {
+        console.log(`Skipping private timer for ${tableId} because hand is in ${gameState.phase}`);
+        return;
+      }
+
       const player = gameState.players.find(p => p.id === playerId);
       if (!player) return;
+
+      if (player.status !== 'ACTIVE') {
+        console.log(`Skipping private timer for ${playerId} because status is ${player.status}`);
+        return;
+      }
 
       // Get private table configuration for timer settings
       const privateConfig = await privateTableGameConfig.getPrivateTableGameConfig(tableId);
@@ -203,6 +213,11 @@ class PrivateTableTurnTimerManager {
       return;
     }
 
+    if (gameState.phase === 'SHOWDOWN' || gameState.phase === 'COMPLETED') {
+      console.log(`Skipping private timeout for ${tableId} because hand is in ${gameState.phase}`);
+      return;
+    }
+
     if (gameState.currentPlayerId !== playerId) {
       console.log(`⚠️ Not current player's turn. Current: ${gameState.currentPlayerId}, Timeout: ${playerId}`);
       return;
@@ -211,6 +226,11 @@ class PrivateTableTurnTimerManager {
     const player = gameState.players.find(p => p.id === playerId);
     if (!player) {
       console.log(`⚠️ Player ${playerId} not found in game`);
+      return;
+    }
+
+    if (player.status !== 'ACTIVE') {
+      console.log(`Skipping private timeout for ${playerId} because status is ${player.status}`);
       return;
     }
 
