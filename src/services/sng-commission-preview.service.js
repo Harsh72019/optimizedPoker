@@ -1,4 +1,5 @@
 const mongoHelper = require('../models/customdb');
+const setupFeeService = require('./setup-fee.service');
 
 class SNGCommissionPreviewService {
   
@@ -150,38 +151,22 @@ class SNGCommissionPreviewService {
    * Calculate setup fee for SNG
    */
   async calculateSetupFee(config) {
-    const { buyIn, declaredCapacity, duration, timerSeconds } = config;
-    
-    // Get setup fee constants
-    const setupFeeConfig = await this.getSetupFeeConfig();
-    const { a, b, c, d } = setupFeeConfig.constants;
-    const speedBonusTable = setupFeeConfig.speedBonusTable;
-    
-    // Get speed bonus
-    const speedBonus = speedBonusTable[timerSeconds] || 0;
-    
-    // Calculate setup fee
-    const baseFee = 0.05;
-    const buyInComponent = a * buyIn;
-    const capacityComponent = b * declaredCapacity;
-    const durationComponent = c * duration;
-    const speedDiscount = d * speedBonus;
-    
-    const preciseFee = baseFee + buyInComponent + capacityComponent + durationComponent - speedDiscount;
-    const chargedAmount = Math.floor(preciseFee * 100) / 100; // Floor to cents
-    const remainder = preciseFee - chargedAmount;
-    
+    const calculation = await setupFeeService.calculateSetupFee({
+      buyIn,
+      declaredCapacity,
+      hours: duration,
+      timerSeconds
+    });
+
+    const { terms } = calculation.calculationDetails;
+
     return {
-      chargedAmount,
-      remainder,
+      chargedAmount: calculation.displayedAmount,
+      remainder: calculation.roundingResidue,
       calculationDetails: {
-        baseFee,
-        buyInComponent,
-        capacityComponent,
-        durationComponent,
-        speedDiscount,
-        preciseFee,
-        speedBonus
+        ...terms,
+        preciseFee: calculation.fullPrecisionResult,
+        speedBonus: calculation.calculationDetails.speedBonus
       }
     };
   }
@@ -336,38 +321,11 @@ class SNGCommissionPreviewService {
    * Get setup fee configuration
    */
   async getSetupFeeConfig() {
-    const configResult = await mongoHelper.findOne(mongoHelper.COLLECTIONS.ADMIN_CONFIG, 'configType', 'SNG_SETUP_FEE');
-    
-    if (configResult.success && configResult.data) {
-      return configResult.data.config;
-    }
-    
-    const defaultConfig = {
-      configType: 'SNG_SETUP_FEE',
-      config: {
-        constants: {
-          a: 0.005, // scales with buy-in
-          b: 0.03,  // scales with capacity
-          c: 0.10,  // scales with duration
-          d: 0.10   // speed bonus discount
-        },
-        speedBonusTable: {
-          30: 0,  // 30s = no bonus
-          20: 1,  // 20s = -$0.10
-          15: 2,  // 15s = -$0.20
-          10: 3,  // 10s = -$0.30
-          5: 4    // 5s = -$0.40
-        }
-      }
+    const config = await setupFeeService.getSetupFeeConfig();
+    return {
+      constants: config.setupFeeConstants,
+      speedBonusTable: config.speedBonus
     };
-    
-    const createResult = await mongoHelper.create(mongoHelper.COLLECTIONS.ADMIN_CONFIG, defaultConfig);
-    
-    if (createResult.success) {
-      return createResult.data.config;
-    } else {
-      throw new Error(`Failed to create SNG setup fee config: ${createResult.error}`);
-    }
   }
   
   /**

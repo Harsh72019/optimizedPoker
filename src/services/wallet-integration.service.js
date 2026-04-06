@@ -2,593 +2,532 @@ const mongoHelper = require('../models/customdb');
 const blockchainService = require('./blockchain.service');
 
 class WalletIntegrationService {
-  
-  /**
-   * Charge setup fee from host wallet using blockchain
-   */
+  generateTransactionId(prefix, gameId, userId = 'system') {
+    return `${prefix}_${gameId || 'na'}_${userId}_${Date.now()}`;
+  }
+
+  async resolveUser(userId, role = 'User') {
+    const userResult = await mongoHelper.findById(mongoHelper.COLLECTIONS.USERS, userId);
+
+    if (!userResult.success || !userResult.data) {
+      throw new Error(`${role} not found`);
+    }
+
+    const user = userResult.data;
+    if (!user.walletAddress) {
+      throw new Error(`${role} wallet address not found`);
+    }
+
+    return user;
+  }
+
+  async findExistingTransaction(type, userId, gameId, idempotencyKey) {
+    if (!idempotencyKey) {
+      return null;
+    }
+
+    const existingResult = await mongoHelper.find(mongoHelper.COLLECTIONS.TRANSACTION_LEDGER, {
+      userId,
+      type,
+      gameId,
+      'metadata.idempotencyKey': idempotencyKey,
+      status: { $in: ['PENDING', 'COMPLETED'] }
+    });
+
+    if (!existingResult.success || !existingResult.data || existingResult.data.length === 0) {
+      return null;
+    }
+
+    return existingResult.data[0];
+  }
+
   async chargeSetupFee(hostId, amount, gameId) {
-    try {
-      const userResult = await mongoHelper.findById(mongoHelper.COLLECTIONS.USERS, hostId);
-      
-      if (!userResult.success || !userResult.data) {
-        throw new Error('Host not found');
-      }
-      
-      const user = userResult.data;
-      
-      if (!user.walletAddress) {
-        throw new Error('Host wallet address not found');
-      }
-      
-      // Get current blockchain balance from user's pool using existing service
-      const currentBalance = await this.getPoolBalance(user.walletAddress);
-      
-      // Check sufficient balance
-      if (parseFloat(currentBalance) < amount) {
-        throw new Error(`Insufficient pool balance. Required: ${amount}, Available: ${currentBalance}`);
-      }
-      
-      // Transfer setup fee from user's pool to platform using existing blockchain service
-      const transferResult = await this.transferSetupFeeFromPool(user.walletAddress, amount);
-      
-      if (!transferResult.success) {
-        throw new Error(`Setup fee transfer failed: ${transferResult.error}`);
-      }
-      
-      // Log transaction with blockchain hash
-      await this.logTransaction({
-        userId: hostId,
-        type: 'SETUP_FEE_CHARGE',
-        amount: -amount,
-        gameId,
-        description: `Setup fee for game ${gameId}`,
-        walletAddress: user.walletAddress,
-        blockchainTxHash: transferResult.txHash
-      });
-      
-      console.log(`💰 Setup fee charged via blockchain: ${amount} from host ${hostId}`);
-      console.log(`🔗 Transaction hash: ${transferResult.txHash}`);
-      
+    const host = await this.resolveUser(hostId, 'Host');
+    const idempotencyKey = `setup_fee:${gameId}:${hostId}`;
+    const existingTransaction = await this.findExistingTransaction(
+      'SETUP_FEE_CHARGE',
+      hostId,
+      gameId,
+      idempotencyKey
+    );
+
+    if (existingTransaction) {
       return {
         success: true,
-        chargedAmount: amount,
-        walletAddress: user.walletAddress,
-        transactionId: `setup_${gameId}_${Date.now()}`,
-        blockchainTxHash: transferResult.txHash,
-        blockchainPending: transferResult.pending || false
+        chargedAmount: Math.abs(existingTransaction.amount),
+        walletAddress: host.walletAddress,
+        transactionId: existingTransaction.transactionId,
+        blockchainTxHash: existingTransaction.blockchainTxHash || null,
+        blockchainPending: existingTransaction.status === 'PENDING',
+        duplicate: true
       };
-      
-    } catch (error) {
-      console.error(`❌ Setup fee charge failed:`, error);
-      throw error;
     }
+
+    const currentBalance = await this.getPoolBalance(host.walletAddress);
+
+    if (parseFloat(currentBalance) < amount) {
+      throw new Error(`Insufficient pool balance. Required: ${amount}, Available: ${currentBalance}`);
+    }
+
+    const transferResult = await this.transferSetupFeeFromPool(host.walletAddress, amount);
+    if (!transferResult.success) {
+      throw new Error(`Setup fee transfer failed: ${transferResult.error}`);
+    }
+
+    const ledger = await this.logTransaction({
+      userId: hostId,
+      type: 'SETUP_FEE_CHARGE',
+      amount: -amount,
+      gameId,
+      description: `Setup fee for game ${gameId}`,
+      walletAddress: host.walletAddress,
+      blockchainTxHash: transferResult.txHash,
+      status: transferResult.pending ? 'PENDING' : 'COMPLETED',
+      metadata: { idempotencyKey }
+    });
+
+    return {
+      success: true,
+      chargedAmount: amount,
+      walletAddress: host.walletAddress,
+      transactionId: ledger?.transactionId || this.generateTransactionId('setup', gameId, hostId),
+      blockchainTxHash: transferResult.txHash,
+      blockchainPending: transferResult.pending || false
+    };
   }
-  
-  /**
-   * Get user's pool balance using existing blockchain service
-   */
+
+  async refundSetupFee(hostId, amount, gameId, reason = 'Table creation failed') {
+    const host = await this.resolveUser(hostId, 'Host');
+    const refundResult = await this.processRefundToPool(host.walletAddress, amount, gameId);
+
+    if (!refundResult.success) {
+      throw new Error(`Setup fee refund failed: ${refundResult.error}`);
+    }
+
+    await this.logTransaction({
+      userId: hostId,
+      type: 'BUY_IN_REFUND',
+      amount,
+      gameId,
+      description: `Setup fee refund for ${gameId}: ${reason}`,
+      walletAddress: host.walletAddress,
+      blockchainTxHash: refundResult.txHash,
+      status: refundResult.pending ? 'PENDING' : 'COMPLETED',
+      metadata: { refundType: 'SETUP_FEE' }
+    });
+
+    return refundResult;
+  }
+
   async getPoolBalance(walletAddress) {
     try {
       const { ethers } = require('ethers');
       const config = require('../config/config');
       const walletFactoryAbi = require('../services/walletfactory.json').abi;
-      
+
       const provider = new ethers.JsonRpcProvider(config.POLYGON_URL);
       const walletFactoryContract = new ethers.Contract(config.WALLET_FACTORY_ADDRESS, walletFactoryAbi, provider);
-      
       const poolBalance = await walletFactoryContract.getPlayerBalance(walletAddress);
-      return ethers.formatUnits(poolBalance, 6); // USDT has 6 decimals
+      return ethers.formatUnits(poolBalance, 6);
     } catch (error) {
-      console.error(`❌ Failed to get pool balance:`, error);
       throw new Error(`Failed to get pool balance: ${error.message}`);
     }
   }
-  
-  /**
-   * Transfer setup fee using existing blockchain service transfer mechanism
-   */
+
   async transferSetupFeeFromPool(userWalletAddress, amount) {
     try {
       const config = require('../config/config');
-      
-      // Use master poker table contract as platform wallet (same as existing pattern)
       const platformWalletAddress = config.MASTER_POKER_TABLE_CONTRACT;
-      
-      console.log(`💸 [SETUP_FEE] Using existing blockchain service for transfer`);
-      console.log(`💸 [SETUP_FEE] Amount: ${amount} USDT`);
-      console.log(`💸 [SETUP_FEE] From: ${userWalletAddress}`);
-      console.log(`💸 [SETUP_FEE] To: ${platformWalletAddress}`);
-      
-      // Use existing blockchain service transfer function
       const transferResult = await blockchainService.transferFromPoolToTable(
-        userWalletAddress, 
-        platformWalletAddress, 
+        userWalletAddress,
+        platformWalletAddress,
         amount
       );
-      
-      if (transferResult.success) {
-        console.log(`✅ [SETUP_FEE] Transfer successful: ${transferResult.txHash}`);
-        return {
-          success: true,
-          txHash: transferResult.txHash,
-          amount: amount,
-          pending: transferResult.pending || false
-        };
-      } else {
-        console.error(`❌ [SETUP_FEE] Transfer failed: ${transferResult.error}`);
-        return {
-          success: false,
-          error: transferResult.error
-        };
+
+      if (!transferResult.success) {
+        return { success: false, error: transferResult.error };
       }
-      
-    } catch (error) {
-      console.error(`❌ [SETUP_FEE] Transfer error:`, error);
+
       return {
-        success: false,
-        error: error.message
+        success: true,
+        txHash: transferResult.txHash,
+        amount,
+        pending: transferResult.pending || false
       };
+    } catch (error) {
+      return { success: false, error: error.message };
     }
   }
-  
-  /**
-   * Pay host reward
-   */
-  async payHostReward(hostId, amount, gameId) {
-    try {
-      const userResult = await mongoHelper.findById(mongoHelper.COLLECTIONS.USERS, hostId);
-      
-      if (!userResult.success || !userResult.data) {
-        throw new Error('Host not found');
-      }
-      
-      const user = userResult.data;
-      
-      if (!user.walletAddress) {
-        throw new Error('Host wallet address not found');
-      }
-      
-      // TODO: Implement blockchain transfer for host reward
-      // This should transfer tokens from platform wallet to host wallet
-      console.log(`💰 Host reward should be paid via blockchain: ${amount} to host ${hostId}`);
-      
-      // Log transaction
+
+  async getPayoutSourceTable(sourceTableId) {
+    if (!sourceTableId) {
+      return null;
+    }
+
+    const tableResult = await mongoHelper.findById(mongoHelper.COLLECTIONS.TABLES, sourceTableId);
+    if (!tableResult.success || !tableResult.data) {
+      return null;
+    }
+
+    return tableResult.data;
+  }
+
+  async queueTablePayout(user, amount, sourceTableId) {
+    const payoutTable = await this.getPayoutSourceTable(sourceTableId);
+
+    if (!payoutTable || !payoutTable.tableBlockchainId) {
+      return {
+        success: false,
+        error: 'Payout source table is missing blockchain information'
+      };
+    }
+
+    const queueResult = await blockchainService.queueWithdrawal(
+      user._id || user.id,
+      sourceTableId,
+      payoutTable.tableBlockchainId,
+      amount,
+      user.walletAddress,
+      user.email || 'no-reply@system.local',
+      user.username || user.name || 'Player'
+    );
+
+    return {
+      success: true,
+      txHash: queueResult.jobId || null,
+      pending: true,
+      queueResult,
+      sourceTableId,
+      tableBlockchainId: payoutTable.tableBlockchainId
+    };
+  }
+
+  async payHostReward(hostId, amount, gameId, options = {}) {
+    const host = await this.resolveUser(hostId, 'Host');
+    const idempotencyKey = options.idempotencyKey || `host_reward:${gameId}:${hostId}`;
+    const existingTransaction = await this.findExistingTransaction(
+      'HOST_REWARD',
+      hostId,
+      gameId,
+      idempotencyKey
+    );
+
+    if (existingTransaction) {
+      return {
+        success: true,
+        paidAmount: existingTransaction.amount,
+        walletAddress: host.walletAddress,
+        transactionId: existingTransaction.transactionId,
+        blockchainPending: existingTransaction.status === 'PENDING',
+        duplicate: true,
+        sourceTableId: options.sourceTableId
+      };
+    }
+
+    const payoutResult = await this.queueTablePayout(host, amount, options.sourceTableId);
+
+    if (!payoutResult.success) {
       await this.logTransaction({
         userId: hostId,
         type: 'HOST_REWARD',
-        amount: amount,
+        amount,
         gameId,
-        description: `Host reward for game ${gameId}`,
-        walletAddress: user.walletAddress,
-        blockchainTxHash: null // Will be populated when blockchain integration is complete
+        description: `Failed host reward for game ${gameId}`,
+        walletAddress: host.walletAddress,
+        status: 'FAILED',
+        metadata: { error: payoutResult.error, sourceTableId: options.sourceTableId, idempotencyKey }
       });
-      
-      console.log(`💰 Host reward logged: ${amount} to host ${hostId}`);
-      
+      throw new Error(payoutResult.error);
+    }
+
+    const ledger = await this.logTransaction({
+      userId: hostId,
+      type: 'HOST_REWARD',
+      amount,
+      gameId,
+      description: `Host reward for game ${gameId}`,
+      walletAddress: host.walletAddress,
+      blockchainTxHash: payoutResult.txHash,
+      status: 'PENDING',
+      metadata: { sourceTableId: options.sourceTableId, queueResult: payoutResult.queueResult, idempotencyKey }
+    });
+
+    return {
+      success: true,
+      paidAmount: amount,
+      walletAddress: host.walletAddress,
+      transactionId: ledger?.transactionId || this.generateTransactionId('host_reward', gameId, hostId),
+      blockchainPending: true,
+      sourceTableId: options.sourceTableId
+    };
+  }
+
+  async payAffiliateCommission(affiliateId, amount, gameId, referredUserId, options = {}) {
+    const affiliate = await this.resolveUser(affiliateId, 'Affiliate');
+    const idempotencyKey = options.idempotencyKey || `affiliate:${gameId}:${affiliateId}`;
+    const existingTransaction = await this.findExistingTransaction(
+      'AFFILIATE_COMMISSION',
+      affiliateId,
+      gameId,
+      idempotencyKey
+    );
+
+    if (existingTransaction) {
       return {
         success: true,
-        paidAmount: amount,
-        walletAddress: user.walletAddress,
-        transactionId: `host_reward_${gameId}_${Date.now()}`,
-        blockchainPending: true
+        paidAmount: existingTransaction.amount,
+        walletAddress: affiliate.walletAddress,
+        transactionId: existingTransaction.transactionId,
+        blockchainPending: existingTransaction.status === 'PENDING',
+        duplicate: true,
+        sourceTableId: options.sourceTableId
       };
-      
-    } catch (error) {
-      console.error(`❌ Host reward payment failed:`, error);
-      throw error;
     }
-  }
-  
-  /**
-   * Pay affiliate commission
-   */
-  async payAffiliateCommission(affiliateId, amount, gameId, referredUserId) {
-    try {
-      const affiliateResult = await mongoHelper.findById(mongoHelper.COLLECTIONS.USERS, affiliateId);
-      
-      if (!affiliateResult.success || !affiliateResult.data) {
-        throw new Error('Affiliate not found');
-      }
-      
-      const affiliate = affiliateResult.data;
-      
-      if (!affiliate.walletAddress) {
-        throw new Error('Affiliate wallet address not found');
-      }
-      
-      // TODO: Implement blockchain transfer for affiliate commission
-      // This should transfer tokens from platform wallet to affiliate wallet
-      console.log(`💰 Affiliate commission should be paid via blockchain: ${amount} to affiliate ${affiliateId}`);
-      
-      // Log transaction
+
+    const payoutResult = await this.queueTablePayout(affiliate, amount, options.sourceTableId);
+
+    if (!payoutResult.success) {
       await this.logTransaction({
         userId: affiliateId,
         type: 'AFFILIATE_COMMISSION',
-        amount: amount,
+        amount,
         gameId,
-        description: `Affiliate commission for game ${gameId} (referred user: ${referredUserId})`,
+        description: `Failed affiliate commission for game ${gameId}`,
         walletAddress: affiliate.walletAddress,
-        blockchainTxHash: null, // Will be populated when blockchain integration is complete
-        metadata: { referredUserId }
+        status: 'FAILED',
+        metadata: { referredUserId, error: payoutResult.error, sourceTableId: options.sourceTableId, idempotencyKey }
       });
-      
-      console.log(`💰 Affiliate commission logged: ${amount} to affiliate ${affiliateId}`);
-      
-      return {
-        success: true,
-        paidAmount: amount,
-        walletAddress: affiliate.walletAddress,
-        transactionId: `affiliate_${gameId}_${Date.now()}`,
-        blockchainPending: true
-      };
-      
-    } catch (error) {
-      console.error(`❌ Affiliate commission payment failed:`, error);
-      throw error;
+      throw new Error(payoutResult.error);
     }
+
+    const ledger = await this.logTransaction({
+      userId: affiliateId,
+      type: 'AFFILIATE_COMMISSION',
+      amount,
+      gameId,
+      description: `Affiliate commission for game ${gameId}`,
+      walletAddress: affiliate.walletAddress,
+      blockchainTxHash: payoutResult.txHash,
+      status: 'PENDING',
+      metadata: { referredUserId, sourceTableId: options.sourceTableId, queueResult: payoutResult.queueResult, idempotencyKey }
+    });
+
+    return {
+      success: true,
+      paidAmount: amount,
+      walletAddress: affiliate.walletAddress,
+      transactionId: ledger?.transactionId || this.generateTransactionId('affiliate', gameId, affiliateId),
+      blockchainPending: true,
+      sourceTableId: options.sourceTableId
+    };
   }
-  
-  /**
-   * Distribute prize pool to winners
-   */
-  async distributePrizePool(winners, gameId) {
+
+  async distributePrizePool(winners, gameId, options = {}) {
     const results = [];
-    
+
     for (const winner of winners) {
+      const { userId, amount, position } = winner;
       try {
-        const { userId, amount, position } = winner;
-        
-        const userResult = await mongoHelper.findById(mongoHelper.COLLECTIONS.USERS, userId);
-        
-        if (!userResult.success || !userResult.data) {
-          console.error(`❌ Winner not found: ${userId}`);
+        const user = await this.resolveUser(userId, 'Winner');
+        const idempotencyKey = `prize:${gameId}:${userId}:${position}`;
+        const existingTransaction = await this.findExistingTransaction(
+          'PRIZE_PAYOUT',
+          userId,
+          gameId,
+          idempotencyKey
+        );
+
+        if (existingTransaction) {
           results.push({
             userId,
             position,
-            amount,
-            success: false,
-            error: 'User not found'
+            amount: existingTransaction.amount,
+            success: true,
+            walletAddress: user.walletAddress,
+            transactionId: existingTransaction.transactionId,
+            blockchainPending: existingTransaction.status === 'PENDING',
+            duplicate: true
           });
           continue;
         }
-        
-        const user = userResult.data;
-        
-        if (!user.walletAddress) {
-          console.error(`❌ Winner wallet address not found: ${userId}`);
-          results.push({
+
+        const payoutResult = await this.queueTablePayout(user, amount, options.sourceTableId);
+
+        if (!payoutResult.success) {
+          await this.logTransaction({
             userId,
-            position,
+            type: 'PRIZE_PAYOUT',
             amount,
-            success: false,
-            error: 'Wallet address not found'
+            gameId,
+            description: `Failed prize payout for game ${gameId}`,
+            walletAddress: user.walletAddress,
+            status: 'FAILED',
+            metadata: { position, sourceTableId: options.sourceTableId, error: payoutResult.error, idempotencyKey }
           });
-          continue;
+          throw new Error(payoutResult.error);
         }
-        
-        // TODO: Implement blockchain transfer for prize payout
-        // This should transfer tokens from platform/table wallet to winner wallet
-        console.log(`🏆 Prize should be paid via blockchain: ${amount} to winner ${userId}`);
-        
-        // Log transaction
-        await this.logTransaction({
+
+        const ledger = await this.logTransaction({
           userId,
           type: 'PRIZE_PAYOUT',
-          amount: amount,
+          amount,
           gameId,
           description: `Prize payout for position ${position} in game ${gameId}`,
           walletAddress: user.walletAddress,
-          blockchainTxHash: null, // Will be populated when blockchain integration is complete
-          metadata: { position }
+          blockchainTxHash: payoutResult.txHash,
+          status: 'PENDING',
+          metadata: { position, sourceTableId: options.sourceTableId, queueResult: payoutResult.queueResult, idempotencyKey }
         });
-        
+
         results.push({
           userId,
           position,
           amount,
           success: true,
           walletAddress: user.walletAddress,
-          transactionId: `prize_${gameId}_${userId}_${Date.now()}`,
+          transactionId: ledger?.transactionId || this.generateTransactionId('prize', gameId, userId),
           blockchainPending: true
         });
-        
-        console.log(`🏆 Prize logged: ${amount} to winner ${userId} (position ${position})`);
-        
       } catch (error) {
-        console.error(`❌ Prize payout failed for ${winner.userId}:`, error);
-        results.push({
-          userId: winner.userId,
-          position: winner.position,
-          amount: winner.amount,
-          success: false,
-          error: error.message
-        });
+        results.push({ userId, position, amount, success: false, error: error.message });
       }
     }
-    
+
     return results;
   }
-  
-  /**
-   * Refund buy-ins when tournament is cancelled
-   */
+
   async refundBuyIns(playerIds, buyInAmount, gameId) {
     const results = [];
-    
+
     for (const playerId of playerIds) {
       try {
-        const userResult = await mongoHelper.findById(mongoHelper.COLLECTIONS.USERS, playerId);
-        
-        if (!userResult.success || !userResult.data) {
-          console.error(`❌ Player not found for refund: ${playerId}`);
-          results.push({
-            userId: playerId,
-            refundAmount: buyInAmount,
-            success: false,
-            error: 'User not found'
-          });
-          continue;
-        }
-        
-        const user = userResult.data;
-        
-        if (!user.walletAddress) {
-          console.error(`❌ Player wallet address not found: ${playerId}`);
-          results.push({
-            userId: playerId,
-            refundAmount: buyInAmount,
-            success: false,
-            error: 'Wallet address not found'
-          });
-          continue;
-        }
-        
-        // Process blockchain refund from platform to player's pool
-        console.log(`💰 [REFUND] Processing refund: ${buyInAmount} USDT to player ${playerId}`);
-        
+        const user = await this.resolveUser(playerId, 'Player');
         const refundResult = await this.processRefundToPool(user.walletAddress, buyInAmount, gameId);
-        
-        if (refundResult.success) {
-          // Log successful transaction
-          await this.logTransaction({
-            userId: playerId,
-            type: 'BUY_IN_REFUND',
-            amount: buyInAmount,
-            gameId,
-            description: `Buy-in refund for cancelled game ${gameId}`,
-            walletAddress: user.walletAddress,
-            blockchainTxHash: refundResult.txHash
-          });
-          
-          results.push({
-            userId: playerId,
-            refundAmount: buyInAmount,
-            success: true,
-            walletAddress: user.walletAddress,
-            transactionId: `refund_${gameId}_${playerId}_${Date.now()}`,
-            blockchainTxHash: refundResult.txHash,
-            blockchainPending: refundResult.pending || false
-          });
-          
-          console.log(`✅ [REFUND] Refund successful: ${buyInAmount} USDT to ${playerId}`);
-        } else {
-          // Log failed transaction
-          await this.logTransaction({
-            userId: playerId,
-            type: 'BUY_IN_REFUND_FAILED',
-            amount: buyInAmount,
-            gameId,
-            description: `Failed buy-in refund for cancelled game ${gameId}: ${refundResult.error}`,
-            walletAddress: user.walletAddress,
-            blockchainTxHash: null
-          });
-          
-          results.push({
-            userId: playerId,
-            refundAmount: buyInAmount,
-            success: false,
-            error: refundResult.error
-          });
-          
-          console.error(`❌ [REFUND] Refund failed for ${playerId}: ${refundResult.error}`);
+
+        await this.logTransaction({
+          userId: playerId,
+          type: 'BUY_IN_REFUND',
+          amount: buyInAmount,
+          gameId,
+          description: `Buy-in refund for game ${gameId}`,
+          walletAddress: user.walletAddress,
+          blockchainTxHash: refundResult.success ? refundResult.txHash : null,
+          status: refundResult.success ? (refundResult.pending ? 'PENDING' : 'COMPLETED') : 'FAILED',
+          metadata: refundResult.success ? {} : { error: refundResult.error }
+        });
+
+        if (!refundResult.success) {
+          results.push({ userId: playerId, refundAmount: buyInAmount, success: false, error: refundResult.error });
+          continue;
         }
-        
-      } catch (error) {
-        console.error(`❌ Refund failed for ${playerId}:`, error);
+
         results.push({
           userId: playerId,
           refundAmount: buyInAmount,
-          success: false,
-          error: error.message
+          success: true,
+          walletAddress: user.walletAddress,
+          transactionId: this.generateTransactionId('refund', gameId, playerId),
+          blockchainTxHash: refundResult.txHash,
+          blockchainPending: refundResult.pending || false
         });
+      } catch (error) {
+        results.push({ userId: playerId, refundAmount: buyInAmount, success: false, error: error.message });
       }
     }
-    
+
     return results;
   }
-  
-  /**
-   * Process refund from platform wallet to player's pool
-   */
+
   async processRefundToPool(playerWalletAddress, amount, gameId) {
     try {
       const config = require('../config/config');
-      
-      // Use master poker table contract as platform wallet (same as setup fee destination)
       const platformWalletAddress = config.MASTER_POKER_TABLE_CONTRACT;
-      
-      console.log(`💸 [REFUND] Transferring ${amount} USDT from platform to player pool`);
-      console.log(`💸 [REFUND] From: ${platformWalletAddress}`);
-      console.log(`💸 [REFUND] To: ${playerWalletAddress}`);
-      
-      // Use existing blockchain service transfer function (reverse direction)
-      // Note: This assumes the platform wallet can transfer back to player pools
-      // You may need to implement a specific refund function in blockchain service
       const transferResult = await blockchainService.transferFromPoolToTable(
-        platformWalletAddress, // From platform
-        playerWalletAddress,   // To player pool
+        platformWalletAddress,
+        playerWalletAddress,
         amount
       );
-      
-      if (transferResult.success) {
-        console.log(`✅ [REFUND] Transfer successful: ${transferResult.txHash}`);
-        return {
-          success: true,
-          txHash: transferResult.txHash,
-          amount: amount,
-          pending: transferResult.pending || false
-        };
-      } else {
-        console.error(`❌ [REFUND] Transfer failed: ${transferResult.error}`);
-        return {
-          success: false,
-          error: transferResult.error
-        };
+
+      if (!transferResult.success) {
+        return { success: false, error: transferResult.error };
       }
-      
-    } catch (error) {
-      console.error(`❌ [REFUND] Transfer error:`, error);
+
       return {
-        success: false,
-        error: error.message
+        success: true,
+        txHash: transferResult.txHash,
+        amount,
+        pending: transferResult.pending || false,
+        gameId
       };
+    } catch (error) {
+      return { success: false, error: error.message };
     }
   }
-  
-  /**
-   * Charge buy-in from player
-   */
+
   async chargeBuyIn(playerId, amount, gameId) {
-    try {
-      const userResult = await mongoHelper.findById(mongoHelper.COLLECTIONS.USERS, playerId);
-      
-      if (!userResult.success || !userResult.data) {
-        throw new Error('Player not found');
-      }
-      
-      const user = userResult.data;
-      
-      if (!user.walletAddress) {
-        throw new Error('Player wallet address not found');
-      }
-      
-      // Get current pool balance
-      const currentBalance = await this.getPoolBalance(user.walletAddress);
-      
-      // Check sufficient balance
-      if (parseFloat(currentBalance) < amount) {
-        throw new Error(`Insufficient balance. Required: ${amount}, Available: ${currentBalance}`);
-      }
-      
-      // TODO: Implement blockchain transfer for buy-in charge
-      // This should transfer tokens from player's pool to table/platform wallet
-      console.log(`💰 Buy-in should be charged via blockchain: ${amount} from player ${playerId}`);
-      
-      // Log transaction
-      await this.logTransaction({
-        userId: playerId,
-        type: 'BUY_IN_CHARGE',
-        amount: -amount,
-        gameId,
-        description: `Buy-in for game ${gameId}`,
-        walletAddress: user.walletAddress,
-        blockchainTxHash: null // Will be populated when blockchain integration is complete
-      });
-      
-      console.log(`💰 Buy-in charge logged: ${amount} from player ${playerId}`);
-      
-      return {
-        success: true,
-        chargedAmount: amount,
-        walletAddress: user.walletAddress,
-        transactionId: `buyin_${gameId}_${playerId}_${Date.now()}`,
-        blockchainPending: true
-      };
-      
-    } catch (error) {
-      console.error(`❌ Buy-in charge failed:`, error);
-      throw error;
+    const user = await this.resolveUser(playerId, 'Player');
+    const currentBalance = await this.getPoolBalance(user.walletAddress);
+
+    if (parseFloat(currentBalance) < amount) {
+      throw new Error(`Insufficient balance. Required: ${amount}, Available: ${currentBalance}`);
     }
+
+    const ledger = await this.logTransaction({
+      userId: playerId,
+      type: 'BUY_IN_CHARGE',
+      amount: -amount,
+      gameId,
+      description: `Buy-in reserved for game ${gameId}`,
+      walletAddress: user.walletAddress,
+      status: 'PENDING',
+      metadata: {
+        transferHandledByGameFlow: true,
+        note: 'Blockchain table transfer is handled by the table join/orchestrator flow.'
+      }
+    });
+
+    return {
+      success: true,
+      chargedAmount: amount,
+      walletAddress: user.walletAddress,
+      transactionId: ledger?.transactionId || this.generateTransactionId('buyin', gameId, playerId),
+      blockchainPending: true
+    };
   }
-  
-  /**
-   * Get user balance from blockchain pool using existing service
-   */
+
   async getUserBalance(userId) {
-    try {
-      const userResult = await mongoHelper.findById(mongoHelper.COLLECTIONS.USERS, userId);
-      
-      if (!userResult.success || !userResult.data) {
-        throw new Error('User not found');
-      }
-      
-      const user = userResult.data;
-      
-      if (!user.walletAddress) {
-        throw new Error('User wallet address not found');
-      }
-      
-      // Use existing blockchain service to get balance
-      const poolBalance = await this.getPoolBalance(user.walletAddress);
-      
-      return {
-        userId,
-        walletAddress: user.walletAddress,
-        poolBalance: parseFloat(poolBalance),
-        lastUpdated: new Date()
-      };
-    } catch (error) {
-      console.error(`❌ Get balance failed:`, error);
-      throw error;
-    }
+    const user = await this.resolveUser(userId, 'User');
+    const poolBalance = await this.getPoolBalance(user.walletAddress);
+
+    return {
+      userId,
+      walletAddress: user.walletAddress,
+      poolBalance: parseFloat(poolBalance),
+      lastUpdated: new Date()
+    };
   }
-  
-  /**
-   * Add funds to user balance (for testing/admin)
-   */
+
   async addFunds(userId, amount, description = 'Admin credit') {
-    try {
-      const userResult = await mongoHelper.findById(mongoHelper.COLLECTIONS.USERS, userId);
-      
-      if (!userResult.success || !userResult.data) {
-        throw new Error('User not found');
-      }
-      
-      const user = userResult.data;
-      
-      if (!user.walletAddress) {
-        throw new Error('User wallet address not found');
-      }
-      
-      // TODO: Implement blockchain transfer for admin credit
-      // This should transfer tokens from admin/platform wallet to user's pool
-      console.log(`💰 Admin funds should be added via blockchain: ${amount} to user ${userId}`);
-      
-      await this.logTransaction({
-        userId,
-        type: 'ADMIN_CREDIT',
-        amount: amount,
-        description,
-        walletAddress: user.walletAddress,
-        blockchainTxHash: null // Will be populated when blockchain integration is complete
-      });
-      
-      return {
-        success: true,
-        addedAmount: amount,
-        walletAddress: user.walletAddress,
-        blockchainPending: true
-      };
-      
-    } catch (error) {
-      console.error(`❌ Add funds failed:`, error);
-      throw error;
-    }
+    const user = await this.resolveUser(userId, 'User');
+    const ledger = await this.logTransaction({
+      userId,
+      type: 'ADMIN_CREDIT',
+      amount,
+      description,
+      walletAddress: user.walletAddress,
+      status: 'PENDING',
+      metadata: { manualFundingRequired: true }
+    });
+
+    return {
+      success: true,
+      addedAmount: amount,
+      walletAddress: user.walletAddress,
+      transactionId: ledger?.transactionId || this.generateTransactionId('admin_credit', 'manual', userId),
+      blockchainPending: true
+    };
   }
-  
-  /**
-   * Log financial transaction
-   */
+
   async logTransaction(transactionData) {
     const {
       userId,
@@ -597,87 +536,73 @@ class WalletIntegrationService {
       gameId,
       description,
       walletAddress,
-      blockchainTxHash,
-      metadata = {}
+      blockchainTxHash = null,
+      metadata = {},
+      status = blockchainTxHash ? 'COMPLETED' : 'PENDING'
     } = transactionData;
-    
+
+    let balanceAfter = 0;
+    if (walletAddress) {
+      try {
+        balanceAfter = parseFloat(await this.getPoolBalance(walletAddress));
+      } catch (error) {
+        balanceAfter = 0;
+      }
+    }
+
     const transactionLogData = {
       userId,
       type,
       amount,
       gameId,
       description,
+      balanceAfter,
       walletAddress,
       blockchainTxHash,
-      transactionId: `txn_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      transactionId: this.generateTransactionId('txn', gameId, userId),
       metadata,
-      status: blockchainTxHash ? 'COMPLETED' : 'PENDING'
+      status
     };
-    
-    const logResult = await mongoHelper.create(mongoHelper.COLLECTIONS.TRANSACTION_LEDGER, transactionLogData , mongoHelper.MODELS.TRANSACTION_LEDGER);
-    
-    if (logResult.success) {
-      console.log(`📝 Transaction logged: ${type} - ${amount} for user ${userId}`);
-      return logResult.data;
-    } else {
-      console.error(`❌ Failed to log transaction: ${logResult.error}`);
-      return null;
-    }
+
+    const logResult = await mongoHelper.create(mongoHelper.COLLECTIONS.TRANSACTION_LEDGER, transactionLogData);
+    return logResult.success ? logResult.data : null;
   }
-  
-  /**
-   * Validate sufficient balance for multiple operations
-   */
+
   async validateSufficientBalance(userId, requiredAmount) {
-    try {
-      const userResult = await mongoHelper.findById(mongoHelper.COLLECTIONS.USERS, userId);
-      
-      if (!userResult.success || !userResult.data) {
-        throw new Error('User not found');
-      }
-      
-      const user = userResult.data;
-      
-      if (!user.walletAddress) {
-        throw new Error('User wallet address not found');
-      }
-      
-      // Get balance from user's pool
-      const currentBalance = await this.getPoolBalance(user.walletAddress);
-      const balance = parseFloat(currentBalance);
-      
-      return {
-        sufficient: balance >= requiredAmount,
-        currentBalance: balance,
-        requiredAmount,
-        shortfall: Math.max(0, requiredAmount - balance),
-        walletAddress: user.walletAddress
-      };
-    } catch (error) {
-      console.error(`❌ Balance validation failed:`, error);
-      throw error;
-    }
+    const user = await this.resolveUser(userId, 'User');
+    const currentBalance = await this.getPoolBalance(user.walletAddress);
+    const balance = parseFloat(currentBalance);
+
+    return {
+      sufficient: balance >= requiredAmount,
+      currentBalance: balance,
+      requiredAmount,
+      shortfall: Math.max(0, requiredAmount - balance),
+      walletAddress: user.walletAddress
+    };
   }
-  
-  /**
-   * Batch process multiple wallet operations
-   */
+
   async batchProcessTransactions(transactions) {
     const results = [];
-    
+
     for (const transaction of transactions) {
       try {
         let result;
-        
         switch (transaction.type) {
           case 'CHARGE_SETUP_FEE':
             result = await this.chargeSetupFee(transaction.userId, transaction.amount, transaction.gameId);
             break;
           case 'PAY_HOST_REWARD':
-            result = await this.payHostReward(transaction.userId, transaction.amount, transaction.gameId);
+            result = await this.payHostReward(transaction.userId, transaction.amount, transaction.gameId, transaction.options || {});
             break;
           case 'PAY_AFFILIATE':
-            result = await this.payAffiliateCommission(transaction.userId, transaction.amount, transaction.gameId, transaction.referredUserId);
+            result = await this.payAffiliateCommission(
+              transaction.userId,
+              transaction.amount,
+              transaction.gameId,
+              transaction.referredUserId,
+              transaction.options || {}
+            );
             break;
           case 'CHARGE_BUY_IN':
             result = await this.chargeBuyIn(transaction.userId, transaction.amount, transaction.gameId);
@@ -685,14 +610,13 @@ class WalletIntegrationService {
           default:
             throw new Error(`Unknown transaction type: ${transaction.type}`);
         }
-        
+
         results.push({ ...transaction, result, success: true });
-        
       } catch (error) {
         results.push({ ...transaction, error: error.message, success: false });
       }
     }
-    
+
     return results;
   }
 }

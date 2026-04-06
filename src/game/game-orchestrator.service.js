@@ -595,8 +595,13 @@ class GameOrchestrator {
                 
                 if (privateTableDoc.success && privateTableDoc.data) {
                     const privateTable = privateTableDoc.data;
+
+                    if (privateTable.settlementCompleted) {
+                        console.log(`💰 [SETTLEMENT] Skipping duplicate settlement for private table ${privateTable._id}`);
+                        return;
+                    }
                     
-                    await financialIntegrationService.onGameCompleted({
+                    const financialResult = await financialIntegrationService.onGameCompleted({
                         gameId: tableId,
                         tableId,
                         gameType: privateTable.gameType,
@@ -612,6 +617,17 @@ class GameOrchestrator {
                         affiliateId: privateTable.affiliateId,
                         winners
                     });
+
+                    await mongoHelper.updateById(
+                        mongoHelper.COLLECTIONS.PRIVATE_TABLES,
+                        privateTable._id,
+                        {
+                            settlementCompleted: true,
+                            settlementCompletedAt: new Date(),
+                            settlementSummary: financialResult.settlement,
+                            walletResults: financialResult.walletResults
+                        }
+                    );
                 }
             }
             

@@ -3,6 +3,8 @@ const financialService = require('./financial.service');
 const setupFeeService = require('./setup-fee.service');
 const rakeTierService = require('./rake-tier.service');
 const commissionPreviewService = require('./commission-preview.service');
+const walletIntegrationService = require('./wallet-integration.service');
+const trustedHostService = require('./trusted-host.service');
 
 class PrivateTableService {
   
@@ -91,13 +93,42 @@ class PrivateTableService {
     
     const effectiveRake = tierRake + (hostUplift || 0);
     
-    // Calculate and charge setup fee first (with temporary ID)
     const tempId = `private_${Date.now()}`;
-    const setupFeeResult = await setupFeeService.chargeSetupFee(
-      tempId,
-      hostId,
-      { buyIn: mappedConfig.buyIn, declaredCapacity: mappedConfig.declaredCapacity, hours: mappedConfig.estimatedHours, timerSeconds: mappedConfig.timerSeconds }
-    );
+    const setupFeeConfig = {
+      buyIn: mappedConfig.buyIn,
+      declaredCapacity: mappedConfig.declaredCapacity,
+      hours: mappedConfig.estimatedHours,
+      timerSeconds: mappedConfig.timerSeconds
+    };
+    const setupFeePreview = await setupFeeService.calculateSetupFee(setupFeeConfig);
+    await walletIntegrationService.validateSufficientBalance(hostId, setupFeePreview.displayedAmount);
+
+    let walletChargeResult = null;
+    let setupFeeResult = null;
+
+    try {
+      walletChargeResult = await walletIntegrationService.chargeSetupFee(
+        hostId,
+        setupFeePreview.displayedAmount,
+        tempId
+      );
+
+      setupFeeResult = await setupFeeService.chargeSetupFee(
+        tempId,
+        hostId,
+        setupFeeConfig,
+        {
+          transactionId: walletChargeResult.transactionId,
+          blockchainTxHash: walletChargeResult.blockchainTxHash,
+          walletAddress: walletChargeResult.walletAddress,
+          metadata: {
+            blockchainPending: walletChargeResult.blockchainPending || false
+          }
+        }
+      );
+    } catch (error) {
+      throw new Error(`Failed to charge setup fee: ${error.message}`);
+    }
     
     // Create private table record using mongoHelper (let it generate Doc_ ID)
     // 🎮 HOST AUTO-REGISTRATION: Host is automatically registered as the first player
@@ -154,6 +185,19 @@ class PrivateTableService {
     );
     
     if (!result.success) {
+      if (walletChargeResult) {
+        try {
+          await walletIntegrationService.refundSetupFee(
+            hostId,
+            setupFeePreview.displayedAmount,
+            tempId,
+            'Private table record creation failed'
+          );
+        } catch (refundError) {
+          console.error('Failed to refund setup fee after table creation error:', refundError.message);
+        }
+      }
+
       throw new Error('Failed to create private table: ' + result.error);
     }
     
@@ -176,6 +220,15 @@ class PrivateTableService {
     
     console.log(`🎮 [HOST AUTO-REG] Host ${hostId} automatically registered as player in table ${privateTable._id}`);
     
+    try {
+      await this.updateSetupFeeLedger(setupFeeResult.ledgerEntry._id, privateTable._id, {
+        privateTableId: privateTable._id,
+        setupFeeTransactionId: walletChargeResult?.transactionId || null
+      });
+    } catch (ledgerError) {
+      console.error('Failed to backfill setup fee ledger with private table id:', ledgerError.message);
+    }
+
     return {
       privateTable,
       setupFee: setupFeeResult,
@@ -795,9 +848,11 @@ class PrivateTableService {
   /**
    * Update setup fee ledger with game ID
    */
-  async updateSetupFeeLedger(ledgerId, gameId) {
-    // TODO: Implement setup fee ledger update
-    console.log(`📝 Updated setup fee ledger ${ledgerId} with game ID ${gameId}`);
+  async updateSetupFeeLedger(ledgerId, gameId, metadata = {}) {
+    return setupFeeService.updateSetupFeeCharge(ledgerId, {
+      gameId,
+      metadata
+    });
   }
   
   /**
@@ -821,8 +876,8 @@ class PrivateTableService {
    * Get host type (regular or trusted)
    */
   async getHostType(hostId) {
-    // TODO: Implement logic to determine if host is trusted
-    return 'REGULAR';
+    const hostType = await trustedHostService.getHostType(hostId);
+    return hostType.toUpperCase();
   }
   
   /**
@@ -853,3 +908,5 @@ class PrivateTableService {
 }
 
 module.exports = new PrivateTableService();
+
+

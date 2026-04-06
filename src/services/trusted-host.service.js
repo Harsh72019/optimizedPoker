@@ -1,40 +1,33 @@
-const { User, GameFinancials, AdminConfig } = require('../models');
+const mongoHelper = require('../models/customdb');
 
 class TrustedHostService {
-  
-  /**
-   * Determine if host is trusted based on criteria
-   */
   async getHostType(hostId) {
+    const userResult = await mongoHelper.findById(mongoHelper.COLLECTIONS.USERS, hostId);
+    if (userResult.success && userResult.data && userResult.data.isTrustedHost) {
+      return 'trusted';
+    }
+
     const hostStats = await this.getHostStatistics(hostId);
     const trustedCriteria = await this.getTrustedHostCriteria();
-    
-    const isTrusted = this.evaluateTrustedStatus(hostStats, trustedCriteria);
-    
-    return isTrusted ? 'trusted' : 'regular';
+    return this.evaluateTrustedStatus(hostStats, trustedCriteria) ? 'trusted' : 'regular';
   }
-  
-  /**
-   * Get comprehensive host statistics
-   */
+
   async getHostStatistics(hostId) {
-    const user = await User.findById(hostId);
-    if (!user) {
+    const userResult = await mongoHelper.findById(mongoHelper.COLLECTIONS.USERS, hostId);
+    if (!userResult.success || !userResult.data) {
       throw new Error('Host not found');
     }
-    
-    // Get financial statistics
-    const financialStats = await GameFinancials.aggregate([
-      { $match: { hostId: hostId, status: 'SETTLED' } },
+
+    const user = userResult.data;
+    const financialStatsResult = await mongoHelper.aggregate(mongoHelper.COLLECTIONS.GAME_FINANCIALS, [
+      { $match: { hostId, status: 'SETTLED' } },
       {
         $group: {
           _id: null,
           totalGamesHosted: { $sum: 1 },
           totalSetupFeesPaid: { $sum: '$setupFee' },
           totalPlayersServed: { $sum: '$actualParticipants' },
-          avgParticipationRate: { 
-            $avg: { $divide: ['$actualParticipants', '$declaredCapacity'] } 
-          },
+          avgParticipationRate: { $avg: { $divide: ['$actualParticipants', '$declaredCapacity'] } },
           totalPrizePoolGenerated: { $sum: '$prizePool' },
           gamesInLast30Days: {
             $sum: {
@@ -57,70 +50,64 @@ class TrustedHostService {
         }
       }
     ]);
-    
-    const stats = financialStats[0] || {
-      totalGamesHosted: 0,
-      totalSetupFeesPaid: 0,
-      totalPlayersServed: 0,
-      avgParticipationRate: 0,
-      totalPrizePoolGenerated: 0,
-      gamesInLast30Days: 0,
-      successfulGames: 0
-    };
-    
-    // Calculate success rate
-    stats.successRate = stats.totalGamesHosted > 0 
-      ? (stats.successfulGames / stats.totalGamesHosted) * 100 
-      : 0;
-    
-    // Get account age
-    stats.accountAgeInDays = Math.floor((Date.now() - user.createdAt.getTime()) / (1000 * 60 * 60 * 24));
-    
-    // Get user reputation/rating if available
+
+    const stats = financialStatsResult.success && financialStatsResult.data && financialStatsResult.data[0]
+      ? financialStatsResult.data[0]
+      : {
+          totalGamesHosted: 0,
+          totalSetupFeesPaid: 0,
+          totalPlayersServed: 0,
+          avgParticipationRate: 0,
+          totalPrizePoolGenerated: 0,
+          gamesInLast30Days: 0,
+          successfulGames: 0
+        };
+
+    const createdAt = user.createdAt || user.created_at || new Date();
+    stats.successRate = stats.totalGamesHosted > 0 ? (stats.successfulGames / stats.totalGamesHosted) * 100 : 0;
+    stats.accountAgeInDays = Math.floor((Date.now() - new Date(createdAt).getTime()) / (1000 * 60 * 60 * 24));
     stats.userRating = user.rating || 0;
     stats.isVerified = user.isVerified || false;
-    
+
     return stats;
   }
-  
-  /**
-   * Get trusted host criteria configuration
-   */
+
   async getTrustedHostCriteria() {
-    let config = await AdminConfig.findOne({ configType: 'TRUSTED_HOST_CRITERIA' });
-    
-    if (!config) {
-      config = new AdminConfig({
-        configType: 'TRUSTED_HOST_CRITERIA',
-        config: {
-          criteria: {
-            minGamesHosted: 10,
-            minSuccessRate: 80, // 80% of games must meet 75%+ participation
-            minAccountAgeDays: 30,
-            minTotalPlayersServed: 50,
-            minSetupFeesPaid: 100,
-            requireVerification: true,
-            minRating: 4.0,
-            minGamesInLast30Days: 3
-          },
-          privileges: {
-            maxHostUplift: 2.5, // vs 1.5 for regular
-            maxHostReward: 25,  // vs 15 for regular
-            tier5Access: true,  // Access to tier 5 (2% SNG rake)
-            prioritySupport: true,
-            customTableLimits: true
-          }
-        }
-      });
-      await config.save();
+    const configResult = await mongoHelper.findOne(mongoHelper.COLLECTIONS.ADMIN_CONFIG, 'configType', 'TRUSTED_HOST_CRITERIA');
+    if (configResult.success && configResult.data) {
+      return configResult.data.config;
     }
-    
-    return config.config;
+
+    const createResult = await mongoHelper.create(mongoHelper.COLLECTIONS.ADMIN_CONFIG, {
+      configType: 'TRUSTED_HOST_CRITERIA',
+      config: {
+        criteria: {
+          minGamesHosted: 10,
+          minSuccessRate: 80,
+          minAccountAgeDays: 30,
+          minTotalPlayersServed: 50,
+          minSetupFeesPaid: 100,
+          requireVerification: true,
+          minRating: 4.0,
+          minGamesInLast30Days: 3
+        },
+        privileges: {
+          maxHostUplift: 2.5,
+          maxHostReward: 25,
+          tier5Access: true,
+          prioritySupport: true,
+          customTableLimits: true
+        }
+      }
+    });
+
+    if (!createResult.success) {
+      throw new Error(`Failed to create trusted host criteria: ${createResult.error}`);
+    }
+
+    return createResult.data.config;
   }
-  
-  /**
-   * Evaluate if host meets trusted criteria
-   */
+
   evaluateTrustedStatus(hostStats, criteria) {
     const checks = {
       gamesHosted: hostStats.totalGamesHosted >= criteria.criteria.minGamesHosted,
@@ -132,88 +119,76 @@ class TrustedHostService {
       rating: hostStats.userRating >= criteria.criteria.minRating,
       recentActivity: hostStats.gamesInLast30Days >= criteria.criteria.minGamesInLast30Days
     };
-    
-    // All criteria must be met
-    const allCriteriaMet = Object.values(checks).every(check => check === true);
-    
-    console.log(`🔍 Trusted host evaluation for host:`, {
-      hostStats: {
-        gamesHosted: hostStats.totalGamesHosted,
-        successRate: hostStats.successRate.toFixed(1) + '%',
-        accountAge: hostStats.accountAgeInDays + ' days',
-        playersServed: hostStats.totalPlayersServed,
-        setupFeesPaid: hostStats.totalSetupFeesPaid,
-        isVerified: hostStats.isVerified,
-        rating: hostStats.userRating,
-        recentGames: hostStats.gamesInLast30Days
-      },
-      checks,
-      result: allCriteriaMet ? 'TRUSTED' : 'REGULAR'
-    });
-    
-    return allCriteriaMet;
+
+    return Object.values(checks).every(Boolean);
   }
-  
-  /**
-   * Manually promote host to trusted status (admin only)
-   */
+
   async promoteToTrusted(hostId, adminId, reason) {
-    const user = await User.findById(hostId);
-    if (!user) {
+    const userResult = await mongoHelper.findById(mongoHelper.COLLECTIONS.USERS, hostId);
+    if (!userResult.success || !userResult.data) {
       throw new Error('Host not found');
     }
-    
-    // Add trusted status flag
-    user.isTrustedHost = true;
-    user.trustedHostPromotedBy = adminId;
-    user.trustedHostPromotedAt = new Date();
-    user.trustedHostReason = reason;
-    await user.save();
-    
-    console.log(`⭐ Host ${hostId} manually promoted to trusted by admin ${adminId}: ${reason}`);
-    
+
+    const updateResult = await mongoHelper.updateById(
+      mongoHelper.COLLECTIONS.USERS,
+      hostId,
+      {
+        isTrustedHost: true,
+        trustedHostPromotedBy: adminId,
+        trustedHostPromotedAt: new Date(),
+        trustedHostReason: reason
+      },
+      mongoHelper.MODELS.USER
+    );
+
+    if (!updateResult.success) {
+      throw new Error(`Failed to promote trusted host: ${updateResult.error}`);
+    }
+
     return {
       success: true,
       hostId,
       promotedBy: adminId,
-      promotedAt: user.trustedHostPromotedAt,
+      promotedAt: updateResult.data.trustedHostPromotedAt,
       reason
     };
   }
-  
-  /**
-   * Revoke trusted status
-   */
+
   async revokeTrustedStatus(hostId, adminId, reason) {
-    const user = await User.findById(hostId);
-    if (!user) {
+    const userResult = await mongoHelper.findById(mongoHelper.COLLECTIONS.USERS, hostId);
+    if (!userResult.success || !userResult.data) {
       throw new Error('Host not found');
     }
-    
-    user.isTrustedHost = false;
-    user.trustedHostRevokedBy = adminId;
-    user.trustedHostRevokedAt = new Date();
-    user.trustedHostRevokeReason = reason;
-    await user.save();
-    
-    console.log(`❌ Trusted status revoked for host ${hostId} by admin ${adminId}: ${reason}`);
-    
+
+    const updateResult = await mongoHelper.updateById(
+      mongoHelper.COLLECTIONS.USERS,
+      hostId,
+      {
+        isTrustedHost: false,
+        trustedHostRevokedBy: adminId,
+        trustedHostRevokedAt: new Date(),
+        trustedHostRevokeReason: reason
+      },
+      mongoHelper.MODELS.USER
+    );
+
+    if (!updateResult.success) {
+      throw new Error(`Failed to revoke trusted host: ${updateResult.error}`);
+    }
+
     return {
       success: true,
       hostId,
       revokedBy: adminId,
-      revokedAt: user.trustedHostRevokedAt,
+      revokedAt: updateResult.data.trustedHostRevokedAt,
       reason
     };
   }
-  
-  /**
-   * Get host privileges based on type
-   */
+
   async getHostPrivileges(hostId) {
     const hostType = await this.getHostType(hostId);
     const criteria = await this.getTrustedHostCriteria();
-    
+
     if (hostType === 'trusted') {
       return {
         hostType: 'trusted',
@@ -223,129 +198,115 @@ class TrustedHostService {
         prioritySupport: criteria.privileges.prioritySupport,
         customTableLimits: criteria.privileges.customTableLimits
       };
-    } else {
-      return {
-        hostType: 'regular',
-        maxHostUplift: 1.5,
-        maxHostReward: 15,
-        tier5Access: false,
-        prioritySupport: false,
-        customTableLimits: false
-      };
     }
+
+    return {
+      hostType: 'regular',
+      maxHostUplift: 1.5,
+      maxHostReward: 15,
+      tier5Access: false,
+      prioritySupport: false,
+      customTableLimits: false
+    };
   }
-  
-  /**
-   * Validate host action based on privileges
-   */
+
   async validateHostAction(hostId, action, value) {
     const privileges = await this.getHostPrivileges(hostId);
-    
+
     switch (action) {
       case 'HOST_UPLIFT':
         if (value > privileges.maxHostUplift) {
           throw new Error(`Host uplift ${value}% exceeds maximum allowed ${privileges.maxHostUplift}% for ${privileges.hostType} host`);
         }
         break;
-        
       case 'HOST_REWARD':
         if (value > privileges.maxHostReward) {
           throw new Error(`Host reward ${value}% exceeds maximum allowed ${privileges.maxHostReward}% for ${privileges.hostType} host`);
         }
         break;
-        
       case 'TIER_5_ACCESS':
         if (!privileges.tier5Access) {
           throw new Error('Tier 5 access is only available for trusted hosts');
         }
         break;
-        
       default:
         throw new Error(`Unknown action: ${action}`);
     }
-    
+
     return { valid: true, privileges };
   }
-  
-  /**
-   * Get all trusted hosts
-   */
+
   async getAllTrustedHosts() {
-    // Get manually promoted trusted hosts
-    const manuallyTrusted = await User.find({ isTrustedHost: true });
-    
-    // Get automatically qualified trusted hosts
-    const allHosts = await User.find({ 
-      _id: { $in: await this.getActiveHostIds() }
-    });
-    
+    const usersResult = await mongoHelper.find(mongoHelper.COLLECTIONS.USERS, { isTrustedHost: true });
     const trustedHosts = [];
-    
-    for (const host of allHosts) {
-      const hostType = await this.getHostType(host._id);
-      if (hostType === 'trusted') {
-        const stats = await this.getHostStatistics(host._id);
-        trustedHosts.push({
-          hostId: host._id,
-          username: host.username,
-          email: host.email,
-          hostType,
-          isManuallyPromoted: host.isTrustedHost || false,
-          stats
-        });
-      }
+
+    if (!usersResult.success || !Array.isArray(usersResult.data)) {
+      return trustedHosts;
     }
-    
+
+    for (const host of usersResult.data) {
+      const stats = await this.getHostStatistics(host._id);
+      trustedHosts.push({
+        hostId: host._id,
+        username: host.username,
+        email: host.email,
+        hostType: 'trusted',
+        isManuallyPromoted: !!host.isTrustedHost,
+        stats
+      });
+    }
+
     return trustedHosts;
   }
-  
-  /**
-   * Get active host IDs (hosts who have created games)
-   */
-  async getActiveHostIds() {
-    const hostIds = await GameFinancials.distinct('hostId');
-    return hostIds;
-  }
-  
-  /**
-   * Update trusted host criteria (admin only)
-   */
+
   async updateTrustedHostCriteria(newCriteria, adminId) {
-    let config = await AdminConfig.findOne({ configType: 'TRUSTED_HOST_CRITERIA' });
-    
-    if (!config) {
-      config = new AdminConfig({ configType: 'TRUSTED_HOST_CRITERIA', config: {} });
+    const configResult = await mongoHelper.findOne(mongoHelper.COLLECTIONS.ADMIN_CONFIG, 'configType', 'TRUSTED_HOST_CRITERIA');
+
+    if (configResult.success && configResult.data) {
+      const updateResult = await mongoHelper.updateById(
+        mongoHelper.COLLECTIONS.ADMIN_CONFIG,
+        configResult.data._id,
+        {
+          config: { ...configResult.data.config, ...newCriteria },
+          lastUpdatedBy: adminId,
+          version: Number(configResult.data.version || 0) + 1
+        }
+      );
+
+      if (!updateResult.success) {
+        throw new Error(`Failed to update trusted host criteria: ${updateResult.error}`);
+      }
+
+      return updateResult.data;
     }
-    
-    config.config = { ...config.config, ...newCriteria };
-    config.lastUpdatedBy = adminId;
-    config.version += 1;
-    
-    await config.save();
-    
-    console.log(`⚙️ Trusted host criteria updated by admin ${adminId}`);
-    
-    return config;
+
+    const createResult = await mongoHelper.create(mongoHelper.COLLECTIONS.ADMIN_CONFIG, {
+      configType: 'TRUSTED_HOST_CRITERIA',
+      config: newCriteria,
+      lastUpdatedBy: adminId,
+      version: 1
+    });
+
+    if (!createResult.success) {
+      throw new Error(`Failed to create trusted host criteria: ${createResult.error}`);
+    }
+
+    return createResult.data;
   }
-  
-  /**
-   * Generate trusted host report
-   */
+
   async generateTrustedHostReport() {
     const allTrustedHosts = await this.getAllTrustedHosts();
     const criteria = await this.getTrustedHostCriteria();
-    
-    const report = {
+
+    return {
       totalTrustedHosts: allTrustedHosts.length,
-      manuallyPromoted: allTrustedHosts.filter(h => h.isManuallyPromoted).length,
-      autoQualified: allTrustedHosts.filter(h => !h.isManuallyPromoted).length,
+      manuallyPromoted: allTrustedHosts.filter((host) => host.isManuallyPromoted).length,
+      autoQualified: allTrustedHosts.filter((host) => !host.isManuallyPromoted).length,
       criteria: criteria.criteria,
       privileges: criteria.privileges,
       hosts: allTrustedHosts,
       generatedAt: new Date()
     };
-    
-    return report;
   }
 }
 

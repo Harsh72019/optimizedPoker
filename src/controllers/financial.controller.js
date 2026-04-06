@@ -7,7 +7,7 @@ const cashGameRakeService = require('../services/cash-game-rake.service');
 const trustedHostService = require('../services/trusted-host.service');
 const officialTournamentService = require('../services/official-tournament.service');
 const walletIntegrationService = require('../services/wallet-integration.service');
-const { AdminConfig } = require('../models');
+const mongoHelper = require('../models/customdb');
 
 /**
  * Generate financial preview for table creation
@@ -141,9 +141,13 @@ const getTournamentPreview = catchAsync(async (req, res) => {
  */
 const getAdminConfig = catchAsync(async (req, res) => {
   const { configType } = req.params;
-  const config = await AdminConfig.findOne({ configType: configType.toUpperCase() });
+  const configResult = await mongoHelper.findOne(
+    mongoHelper.COLLECTIONS.ADMIN_CONFIG,
+    'configType',
+    configType.toUpperCase()
+  );
   
-  if (!config) {
+  if (!configResult.success || !configResult.data) {
     return res.status(httpStatus.NOT_FOUND).json({
       success: false,
       message: 'Configuration not found'
@@ -152,7 +156,7 @@ const getAdminConfig = catchAsync(async (req, res) => {
   
   res.status(httpStatus.OK).json({
     success: true,
-    data: config
+    data: configResult.data
   });
 });
 
@@ -162,25 +166,48 @@ const getAdminConfig = catchAsync(async (req, res) => {
 const updateAdminConfig = catchAsync(async (req, res) => {
   const { configType } = req.params;
   const adminId = req.user.id;
-  
-  let config = await AdminConfig.findOne({ configType: configType.toUpperCase() });
-  
-  if (!config) {
-    config = new AdminConfig({
+  const configResult = await mongoHelper.findOne(
+    mongoHelper.COLLECTIONS.ADMIN_CONFIG,
+    'configType',
+    configType.toUpperCase()
+  );
+
+  let savedConfig;
+
+  if (!configResult.success || !configResult.data) {
+    const createResult = await mongoHelper.create(mongoHelper.COLLECTIONS.ADMIN_CONFIG, {
       configType: configType.toUpperCase(),
-      config: req.body
+      config: req.body,
+      lastUpdatedBy: adminId,
+      version: 1
     });
+
+    if (!createResult.success) {
+      throw new Error(createResult.error);
+    }
+
+    savedConfig = createResult.data;
   } else {
-    config.config = { ...config.config, ...req.body };
-    config.version += 1;
+    const updateResult = await mongoHelper.updateById(
+      mongoHelper.COLLECTIONS.ADMIN_CONFIG,
+      configResult.data._id,
+      {
+        config: { ...configResult.data.config, ...req.body },
+        lastUpdatedBy: adminId,
+        version: Number(configResult.data.version || 0) + 1
+      }
+    );
+
+    if (!updateResult.success) {
+      throw new Error(updateResult.error);
+    }
+
+    savedConfig = updateResult.data;
   }
-  
-  config.lastUpdatedBy = adminId;
-  await config.save();
   
   res.status(httpStatus.OK).json({
     success: true,
-    data: config
+    data: savedConfig
   });
 });
 

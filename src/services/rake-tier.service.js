@@ -1,4 +1,5 @@
 const mongoHelper = require('../models/customdb');
+const trustedHostService = require('./trusted-host.service');
 
 class RakeTierService {
   
@@ -285,15 +286,7 @@ class RakeTierService {
    * Determine host type (regular or trusted)
    */
   async getHostType(hostId) {
-    // TODO: Implement logic to check if host is trusted
-    // This could be based on:
-    // - Number of successful games hosted
-    // - Player feedback/ratings
-    // - Platform verification status
-    // - Manual admin approval
-    
-    // For now, return 'regular' as default
-    return 'regular';
+    return trustedHostService.getHostType(hostId);
   }
   
   /**
