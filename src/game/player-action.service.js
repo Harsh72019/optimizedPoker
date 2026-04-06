@@ -48,6 +48,8 @@ class PlayerActionService {
 
             if (gameState.currentPlayerId !== normalizedPlayerId) {
                 throw new Error('Not your turn');
+            } else {
+                this.timerManager.clearTimer(tableId);
             }
 
             let tableState = await require('../table/table-manager.service').getTable(tableId);
@@ -109,15 +111,18 @@ class PlayerActionService {
                 emitSuccess(this.io.to(tableId), 'winningProbability', probabilities, 'Probabilities updated');
             }
 
-            if (gameState.phase !== 'COMPLETED') {
+            if (gameState.phase !== 'COMPLETED' && gameState.phase !== 'SHOWDOWN' && gameState.currentPlayerId) {
                 this.timerManager.startTimer(tableId, gameState.currentPlayerId);
-            } else {
+            } else if (gameState.phase === 'COMPLETED') {
                 console.log(`🏁 [HAND COMPLETE] Starting cleanup`);
                 this.timerManager.clearTimer(tableId);
 
                 await require('../table/table-manager.service').syncFromGameState(tableId, gameState);
                 await this.orchestrator.onHandCompleted(tableId);
                 console.log(`✅ [CLEANUP DONE]`);
+            }
+            else {
+                this.timerManager.clearTimer(tableId);
             }
             return gameState;
 
@@ -240,6 +245,49 @@ class PlayerActionService {
         gameState.phase = 'SHOWDOWN';
     }
 
+    async animateRunoutAndShowdown(gameState) {
+        if (gameState.phase === 'COMPLETED') {
+            return;
+        }
+
+        gameState.phase = 'SHOWDOWN';
+        emitSuccess(this.io.to(gameState.tableId), 'newPhase', { phase: 'SHOWDOWN' }, 'SHOWDOWN phase started');
+
+        const delayMs = 800;
+
+        while (gameState.boardCards.length < 5) {
+            const nextCard = gameState.deck.pop();
+            if (!nextCard) {
+                break;
+            }
+
+            gameState.boardCards.push(nextCard);
+
+            emitSuccess(
+                this.io.to(gameState.tableId),
+                'communityCardsDealt',
+                gameState.boardCards,
+                'Runout card dealt'
+            );
+
+            const probabilities = ProbabilityCalculator.calculateWinningProbabilities(gameState);
+            if (probabilities.length > 0) {
+                emitSuccess(this.io.to(gameState.tableId), 'winningProbability', probabilities, 'Probabilities updated');
+            }
+
+            await gameStateManager.updateGame(gameState.tableId, gameState);
+            await require('../table/table-manager.service').syncFromGameState(gameState.tableId, gameState);
+
+            await new Promise(resolve => setTimeout(resolve, delayMs));
+        }
+
+        await this.handleShowdown(gameState);
+        await gameStateManager.updateGame(gameState.tableId, gameState);
+        await require('../table/table-manager.service').syncFromGameState(gameState.tableId, gameState);
+        this.timerManager.clearTimer(gameState.tableId);
+        await this.orchestrator.onHandCompleted(gameState.tableId);
+    }
+
     moveToNextPhase(gameState) {
         if (gameState.phase === 'COMPLETED') return;
 
@@ -257,15 +305,14 @@ class PlayerActionService {
             winner.chips += winAmount;
             gameState.pot = 0;
             gameState.phase = 'COMPLETED';
-            emitSuccess(this.io.to(gameState.tableId), 'gameOver', { winner: { playerId: winner.id, amount: winAmount } }, 'Game over');
             const formattedWinners = [{
                 potType: "Main Pot",
                 amount: winAmount,
                 winners: [{
-                    username: 'Player',
+                    username: winner.username || 'Player',
                     amount: winAmount,
                     status: 'active',
-                    winningHand: 'High Card',
+                    winningHand: 'Win by Fold',
                     cards: {
                         holeCards: winner.cards || [],
                         communityCards: gameState.boardCards || [],
@@ -279,8 +326,9 @@ class PlayerActionService {
 
         if (this.isAllInRunoutRequired(gameState)) {
             console.log(`⚡ [ALL-IN RUNOUT] Auto-completing board`);
-            this.runoutBoard(gameState);
-            this.handleShowdown(gameState);
+            this.animateRunoutAndShowdown(gameState).catch(error => {
+                console.error(`âŒ [ALL-IN RUNOUT] Failed for table ${gameState.tableId}:`, error);
+            });
             return;
         }
 
@@ -539,7 +587,7 @@ class PlayerActionService {
                 const tablePlayer = tableState.players.find(p => p.userId === r.playerId);
                 
                 return {
-                    username: tablePlayer?.username || 'Player',
+                    username: tablePlayer?.username || winner?.username || 'Player',
                     amount: r.amount,
                     status: 'active',
                     winningHand: r.handName || 'High Card',
