@@ -225,12 +225,10 @@ class PlayerActionService {
             this.moveToNextPhase(gameState);
             return;
         }
-
-        // Edge case: Only 1 active player left
+        // If exactly one player can still act, give them the turn.
         if (active.length === 1) {
-            console.log('⚠️ [ONLY 1 ACTIVE] Moving to showdown');
-            gameState.currentPlayerId = null;
-            this.moveToNextPhase(gameState);
+            console.log(`[SINGLE ACTIVE PLAYER] Next to act: ${active[0].id}`);
+            gameState.currentPlayerId = active[0].id;
             return;
         }
 
