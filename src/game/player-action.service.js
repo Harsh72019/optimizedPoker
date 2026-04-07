@@ -17,6 +17,7 @@ class PlayerActionService {
     async forceEndHand(tableId) {
         const gameState = await gameStateManager.getGame(tableId);
 
+        gameState.currentPlayerId = null;
         gameState.phase = 'COMPLETED';
 
         await gameStateManager.updateGame(tableId, gameState);
@@ -58,6 +59,10 @@ class PlayerActionService {
 
             this.validateActionRequest(action, amount, actionPolicy);
 
+            const actionAmount = action === 'all-in'
+                ? player.chips
+                : (action === 'call' ? actionPolicy.callAmount || 0 : amount);
+
             this.applyAction(gameState, player, action, amount, actionPolicy);
             console.log(`✅ [ACTION APPLIED] ${action} by ${playerId}`);
 
@@ -70,7 +75,7 @@ class PlayerActionService {
                 emitSuccess(
                     this.io.to(tableId),
                     'playerAllIn',
-                    { playerId, amount: player.chips },
+                    { playerId, amount: actionAmount },
                     'Player all-in'
                 );
             }
@@ -79,7 +84,7 @@ class PlayerActionService {
                 playerId: normalizedPlayerId,
                 username: actingPlayer?.username || 'Player',
                 action,
-                amount: action === 'call' ? actionPolicy.callAmount || 0 : amount,
+                amount: actionAmount,
                 result: true,
                 timestamp: new Date().toISOString()
             };
@@ -216,6 +221,7 @@ class PlayerActionService {
         // Edge case: No active players left
         if (active.length === 0) {
             console.log('⚠️ [NO ACTIVE PLAYERS] Moving to showdown');
+            gameState.currentPlayerId = null;
             this.moveToNextPhase(gameState);
             return;
         }
@@ -223,6 +229,7 @@ class PlayerActionService {
         // Edge case: Only 1 active player left
         if (active.length === 1) {
             console.log('⚠️ [ONLY 1 ACTIVE] Moving to showdown');
+            gameState.currentPlayerId = null;
             this.moveToNextPhase(gameState);
             return;
         }
@@ -304,6 +311,7 @@ class PlayerActionService {
             const winAmount = gameState.pot;
             winner.chips += winAmount;
             gameState.pot = 0;
+            gameState.currentPlayerId = null;
             gameState.phase = 'COMPLETED';
             const formattedWinners = [{
                 potType: "Main Pot",
@@ -326,6 +334,7 @@ class PlayerActionService {
 
         if (this.isAllInRunoutRequired(gameState)) {
             console.log(`⚡ [ALL-IN RUNOUT] Auto-completing board`);
+            gameState.currentPlayerId = null;
             this.animateRunoutAndShowdown(gameState).catch(error => {
                 console.error(`âŒ [ALL-IN RUNOUT] Failed for table ${gameState.tableId}:`, error);
             });
@@ -368,6 +377,7 @@ class PlayerActionService {
 
         if (nextPhase === 'SHOWDOWN') {
             console.log(`🎰 [SHOWDOWN] Evaluating hands`);
+            gameState.currentPlayerId = null;
             this.handleShowdown(gameState);
             return;
         }
@@ -379,6 +389,7 @@ class PlayerActionService {
         // Edge case: No active player to act
         if (!gameState.currentPlayerId) {
             console.log('⚠️ [NO PLAYER TO ACT] Moving to showdown');
+            gameState.currentPlayerId = null;
             this.handleShowdown(gameState);
             return;
         }

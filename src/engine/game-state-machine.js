@@ -13,26 +13,24 @@ class GameStateMachine {
   }
 
   static isBettingRoundComplete(gameState) {
-    const activePlayers = gameState.players.filter(
-      p => p.status === 'ACTIVE'
+    const nonFoldedPlayers = gameState.players.filter(
+      p => p.status !== 'FOLDED'
     );
 
-    // Only one active → hand ends
-    if (activePlayers.length <= 1) return true;
+    // Everyone else folded, so the hand can be awarded immediately.
+    if (nonFoldedPlayers.length <= 1) return true;
 
-    // All active players must:
-    // 1) Have acted
-    // 2) Match current bet OR be ALL_IN
-    return activePlayers.every(p => {
+    const actionablePlayers = nonFoldedPlayers.filter(
+      p => p.status === 'ACTIVE' && p.chips > 0
+    );
+
+    // Nobody can act anymore, so betting is over and the board can run out.
+    if (actionablePlayers.length === 0) return true;
+
+    // Remaining active players must have acted and matched the current bet.
+    return actionablePlayers.every(p => {
       const playerBet = gameState.streetBets[p.id] || 0;
-
-      return (
-        p.hasActed &&
-        (
-          playerBet === gameState.currentBet ||
-          p.status === 'ALL_IN'
-        )
-      );
+      return p.hasActed && playerBet === gameState.currentBet;
     });
   }
 
@@ -41,12 +39,14 @@ class GameStateMachine {
       p => p.status !== 'FOLDED'
     );
 
+    if (nonFolded.length <= 1) return false;
+
     const activeNonAllIn = nonFolded.filter(
-      p => p.status === 'ACTIVE'
+      p => p.status === 'ACTIVE' && p.chips > 0
     );
 
-    // If nobody left who can bet → showdown
-    return activeNonAllIn.length <= 1;
+    // If nobody left can bet, we should proceed to showdown.
+    return activeNonAllIn.length === 0;
   }
 }
 

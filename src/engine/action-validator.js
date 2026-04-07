@@ -17,10 +17,10 @@ class ActionValidator {
     const options = new Set();
     options.add('fold');
 
-    // Cannot act if ALL_IN
+    // ALL_IN players are already committed and should not be offered any action.
     if (player.status === 'ALL_IN' || player.chips <= 0) {
       return {
-        options: ['fold'],
+        options: [],
         callAmount: 0,
         minRaise: null,
         maxRaise: null,

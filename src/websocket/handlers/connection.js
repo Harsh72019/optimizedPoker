@@ -319,8 +319,12 @@ class ConnectionHandler {
                     emitSuccess(this.socket, 'communityCardsDealt', gameState.boardCards, 'Community cards');
                 }
                 
-                // Send current player turn info
-                if (gameState.currentPlayerId) {
+                // Send current player turn info only when that player can still act.
+                const currentPlayer = gameState.currentPlayerId
+                    ? gameState.players.find(p => p.id === gameState.currentPlayerId)
+                    : null;
+
+                if (currentPlayer && currentPlayer.status === 'ACTIVE') {
                     const PlayerActionService = require('../../game/player-action.service');
                     const actionService = new PlayerActionService(this.io, this.orchestrator.timerManager, this.orchestrator);
                     const turnData = await actionService.formatPlayerTurnData(gameState, gameState.currentPlayerId, tableState);
