@@ -339,6 +339,113 @@ class WalletIntegrationService {
     };
   }
 
+  async queuePlayerTableCashout(userId, amount, gameId, sourceTableId, options = {}) {
+    const user = await this.resolveUser(userId, 'Player');
+    const idempotencyKey = options.idempotencyKey || `table_cashout:${sourceTableId}:${userId}`;
+    const existingTransaction = await this.findAnyTransaction(
+      'TABLE_CASHOUT',
+      userId,
+      gameId,
+      idempotencyKey
+    );
+
+    if (existingTransaction?.status === 'COMPLETED') {
+      return {
+        success: true,
+        paidAmount: existingTransaction.amount,
+        walletAddress: user.walletAddress,
+        transactionId: existingTransaction.transactionId,
+        blockchainPending: false,
+        duplicate: true,
+        sourceTableId
+      };
+    }
+
+    if (existingTransaction?.status === 'PENDING') {
+      return {
+        success: true,
+        paidAmount: existingTransaction.amount,
+        walletAddress: user.walletAddress,
+        transactionId: existingTransaction.transactionId,
+        blockchainPending: true,
+        duplicate: true,
+        sourceTableId
+      };
+    }
+
+    const ledgerInput = {
+      existingTransaction,
+      userId,
+      type: 'TABLE_CASHOUT',
+      amount,
+      gameId,
+      description: options.description || `Table cashout for game ${gameId}`,
+      walletAddress: user.walletAddress,
+      metadata: {
+        idempotencyKey,
+        payoutContext: options.payoutContext || 'TABLE_CASHOUT',
+        sourceTableId
+      }
+    };
+
+    const { entry: ledger } = await this.createOrRecycleLedgerEntry(ledgerInput);
+
+    try {
+      const payoutTable = await this.getPayoutSourceTable(sourceTableId);
+
+      if (!payoutTable || !payoutTable.tableBlockchainId) {
+        throw new Error('Payout source table is missing blockchain information');
+      }
+
+      const queueResult = await blockchainService.queueWithdrawal(
+        user._id || user.id,
+        sourceTableId,
+        payoutTable.tableBlockchainId,
+        amount,
+        user.walletAddress,
+        user.email || 'no-reply@system.local',
+        user.username || user.name || 'Player',
+        {
+          ledgerEntryId: ledger._id,
+          payoutContext: options.payoutContext || 'TABLE_CASHOUT'
+        }
+      );
+
+      await this.updateTransactionLedger(ledger._id, {
+        walletAddress: user.walletAddress,
+        blockchainTxHash: queueResult.jobId || null,
+        status: 'PENDING',
+        metadata: {
+          sourceTableId,
+          queueResult,
+          payoutContext: options.payoutContext || 'TABLE_CASHOUT',
+          queuedAt: new Date().toISOString()
+        }
+      });
+
+      return {
+        success: true,
+        paidAmount: amount,
+        walletAddress: user.walletAddress,
+        transactionId: ledger.transactionId,
+        blockchainPending: true,
+        sourceTableId
+      };
+    } catch (error) {
+      await this.updateTransactionLedger(ledger._id, {
+        walletAddress: user.walletAddress,
+        status: 'FAILED',
+        metadata: {
+          error: error.message,
+          sourceTableId,
+          payoutContext: options.payoutContext || 'TABLE_CASHOUT',
+          failedAt: new Date().toISOString()
+        }
+      });
+      throw error;
+    }
+  }
+
   async payHostReward(hostId, amount, gameId, options = {}) {
     const host = await this.resolveUser(hostId, 'Host');
     const idempotencyKey = options.idempotencyKey || `host_reward:${gameId}:${hostId}`;

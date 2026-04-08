@@ -709,6 +709,8 @@ class GameOrchestrator {
                         );
                     }
                 }
+            } else {
+                await this.queueRegularTableCompletionCashouts(tableId, playersForStandings);
             }
             
             // Emit game completion
@@ -728,6 +730,36 @@ class GameOrchestrator {
             
         } catch (err) {
             console.error(`❌ handleGameCompletion error:`, err.message);
+        }
+    }
+
+    async queueRegularTableCompletionCashouts(tableId, playersForStandings) {
+        const eligiblePlayers = playersForStandings.filter(player =>
+            !player.isBot
+            && Number(player.chips || 0) > 0
+            && (player.userId || player.id)
+        );
+
+        if (eligiblePlayers.length === 0) {
+            return;
+        }
+
+        for (const player of eligiblePlayers) {
+            const playerId = player.userId || player.id;
+            try {
+                await walletIntegrationService.queuePlayerTableCashout(
+                    playerId,
+                    Number(player.chips || 0),
+                    tableId,
+                    tableId,
+                    {
+                        payoutContext: 'GAME_COMPLETION',
+                        description: `Game completion cashout for table ${tableId}`
+                    }
+                );
+            } catch (error) {
+                console.error(`❌ [GAME COMPLETE] Failed to queue cashout for ${playerId} on table ${tableId}:`, error.message);
+            }
         }
     }
 

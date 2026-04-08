@@ -74,6 +74,35 @@ async function waitForTransactionConfirmation(tx, meta = {}) {
   }
 }
 
+async function updateWithdrawalLedgerStatus(ledgerEntryId, updates = {}) {
+  if (!ledgerEntryId) {
+    return;
+  }
+
+  try {
+    const currentEntry = await mongoHelper.findById(mongoHelper.COLLECTIONS.TRANSACTION_LEDGER, ledgerEntryId);
+    const currentMetadata = currentEntry.success && currentEntry.data ? (currentEntry.data.metadata || {}) : {};
+    const nextMetadata = updates.metadata
+      ? { ...currentMetadata, ...updates.metadata }
+      : currentMetadata;
+
+    const updateResult = await mongoHelper.updateById(
+      mongoHelper.COLLECTIONS.TRANSACTION_LEDGER,
+      ledgerEntryId,
+      {
+        ...updates,
+        metadata: nextMetadata
+      }
+    );
+
+    if (!updateResult.success) {
+      console.error(`[BLOCKCHAIN] Failed to update withdrawal ledger ${ledgerEntryId}: ${updateResult.error}`);
+    }
+  } catch (error) {
+    console.error(`[BLOCKCHAIN] Failed to persist withdrawal ledger update ${ledgerEntryId}: ${error.message}`);
+  }
+}
+
 async function submitBlockchainTransaction(submitFn) {
   const runSubmission = async () => submitFn();
   const queuedSubmission = transactionSubmissionChain.then(runSubmission, runSubmission);
@@ -103,7 +132,7 @@ async function checkRedisHealth() {
 }
 
 // ✅ MINIMAL: Queue withdrawal - NO DATABASE OPERATIONS
-async function queueWithdrawal(userId, tableId, tableBlockchainId, amount, walletAddress, userEmail, username) {
+async function queueWithdrawal(userId, tableId, tableBlockchainId, amount, walletAddress, userEmail, username, options = {}) {
   console.log('🚀 ~ queueWithdrawal ~ userEmail:', userEmail);
   console.log(`[BLOCKCHAIN] Queueing minimal withdrawal for user: ${username}, amount: ${amount}`);
 
@@ -136,6 +165,8 @@ async function queueWithdrawal(userId, tableId, tableBlockchainId, amount, walle
         nonce,
         userEmail,
         username,
+        ledgerEntryId: options.ledgerEntryId || null,
+        payoutContext: options.payoutContext || null,
         createdAt: new Date().toISOString(),
       },
       {
@@ -164,7 +195,7 @@ async function queueWithdrawal(userId, tableId, tableBlockchainId, amount, walle
 
 // ✅ MINIMAL: Process withdrawal - NO DATABASE OPERATIONS
 withdrawalQueue.process(async job => {
-  const { userId, tableBlockchainId, amount, walletAddress, nonce, username, userEmail } = job.data;
+  let { userId, tableBlockchainId, amount, walletAddress, nonce, username, userEmail, ledgerEntryId, payoutContext } = job.data;
   console.log('🚀 ~ userEmail:', userEmail);
   amount = parseFloat(amount).toFixed(2);
   const masterTableContractAddress = config.MASTER_POKER_TABLE_CONTRACT;
@@ -263,6 +294,16 @@ withdrawalQueue.process(async job => {
     // Wait for confirmation
     const receipt = await tx.wait();
 
+    await updateWithdrawalLedgerStatus(ledgerEntryId, {
+      blockchainTxHash: receipt.hash,
+      status: 'COMPLETED',
+      metadata: {
+        withdrawalJobId: job.id,
+        payoutContext,
+        confirmedAt: new Date().toISOString()
+      }
+    });
+
     job.progress(100);
     console.log(`[BLOCKCHAIN] Withdrawal successful for job ${job.id}: ${receipt.hash}`);
     console.log(`[BLOCKCHAIN] User ${username} received ${amount} USDT`);
@@ -289,6 +330,15 @@ withdrawalQueue.process(async job => {
   } catch (error) {
     console.error(`[BLOCKCHAIN] Withdrawal failed for job ${job.id}: ${error.message}`);
     console.error(`[BLOCKCHAIN] Error details: ${error.stack}`);
+    await updateWithdrawalLedgerStatus(ledgerEntryId, {
+      status: 'FAILED',
+      metadata: {
+        withdrawalJobId: job.id,
+        payoutContext,
+        error: error.message,
+        failedAt: new Date().toISOString()
+      }
+    });
     try {
       await mailService.sendEmail({
         to: userEmail,

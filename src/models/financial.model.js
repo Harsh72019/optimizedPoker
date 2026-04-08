@@ -192,7 +192,7 @@ const transactionLedgerSchema = new Schema({
   userId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
   type: { 
     type: String, 
-    enum: ['SETUP_FEE_CHARGE', 'HOST_REWARD', 'AFFILIATE_COMMISSION', 'PRIZE_PAYOUT', 'BUY_IN_CHARGE', 'BUY_IN_REFUND', 'ADMIN_CREDIT'],
+    enum: ['SETUP_FEE_CHARGE', 'HOST_REWARD', 'AFFILIATE_COMMISSION', 'PRIZE_PAYOUT', 'BUY_IN_CHARGE', 'BUY_IN_REFUND', 'ADMIN_CREDIT', 'TABLE_CASHOUT'],
     required: true 
   },
   amount: { type: Number, required: true },

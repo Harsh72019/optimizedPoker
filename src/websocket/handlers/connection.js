@@ -3,7 +3,6 @@
 const tableManager = require('../../table/table-manager.service');
 const { emitSuccess, emitError } = require('../socket-emitter');
 const verifyEventToken = require('../verify-event-token');
-const blockchainService = require('../../services/blockchain.service');
 
 class ConnectionHandler {
     constructor(io, socket, orchestrator) {
@@ -541,23 +540,20 @@ class ConnectionHandler {
             const walletAddress = userDoc.success && userDoc.data ? userDoc.data.walletAddress : null;
             
             if (finalChips > 0 && walletAddress) {
-                // Get user email for blockchain service
-                const userEmail = userDoc.success && userDoc.data ? userDoc.data.email : null;
-                const username = user.username;
-                const tableBlockchainId = tableStateBefore.tableBlockchainId;
-                
-                blockchainService.queueWithdrawal(
+                const walletIntegrationService = require('../../services/wallet-integration.service');
+                walletIntegrationService.queuePlayerTableCashout(
                     userId,
-                    tableId, 
-                    tableBlockchainId,
                     finalChips,
-                    walletAddress,
-                    userEmail,
-                    username
-                ).catch(err => 
+                    tableId,
+                    tableId,
+                    {
+                        payoutContext: 'PLAYER_LEAVE',
+                        description: `Player leave cashout for table ${tableId}`
+                    }
+                ).catch(err =>
                     console.error('💰 [BLOCKCHAIN] Withdrawal queue error:', err.message)
                 );
-                console.log(`💰 [BLOCKCHAIN] Queued withdrawal for ${finalChips} chips (async)`);
+                console.log(`💰 [BLOCKCHAIN] Queued cashout for ${finalChips} chips (async)`);
             } else {
                 console.log(`⚠️ [BLOCKCHAIN] Skipping withdrawal - chips: ${finalChips}, wallet: ${walletAddress ? 'present' : 'missing'}`);
             }
