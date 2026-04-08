@@ -89,6 +89,7 @@ class ConnectionHandler {
 
             if (!gameState) {
                 await tableManager.removePlayer(tableId, userId);
+                await this.orchestrator.checkPrivateTableCompletion(tableId, 'TABLE_EMPTIED_BEFORE_HAND');
                 this.syncPlayerToMongoTable(tableId, userId, 'leave').catch(err =>
                     console.error('Failed to sync disconnect to MongoDB:', err.message)
                 );
@@ -551,7 +552,10 @@ class ConnectionHandler {
 
             if (status === 'WAITING' && seatedCount < 2) {
                 this.orchestrator.cancelWaiting(tableId);
-                await tableManager.setStatus(tableId, 'IDLE');
+                const completed = await this.orchestrator.checkPrivateTableCompletion(tableId, 'PLAYER_LEFT_WAITING_TABLE');
+                if (!completed) {
+                    await tableManager.setStatus(tableId, 'IDLE');
+                }
             }
             
             this.socket.leave(tableId);

@@ -304,15 +304,15 @@ class GameOrchestrator {
 
     async markPrivateTablePlayerLeaving(tableId, userId) {
         const rebuyWindow = this.privateRebuyWindows.get(tableId);
-        if (!rebuyWindow) {
-            return;
+        if (rebuyWindow) {
+            const playerEntry = rebuyWindow.players.get(userId);
+            if (playerEntry && playerEntry.status === 'pending') {
+                playerEntry.status = 'left';
+                await this.checkPrivateRebuyResolution(tableId);
+            }
         }
 
-        const playerEntry = rebuyWindow.players.get(userId);
-        if (playerEntry && playerEntry.status === 'pending') {
-            playerEntry.status = 'left';
-            await this.checkPrivateRebuyResolution(tableId);
-        }
+        await this.checkPrivateTableCompletion(tableId, 'PLAYER_LEFT');
     }
 
     async checkPrivateRebuyResolution(tableId) {
@@ -595,6 +595,55 @@ class GameOrchestrator {
         }
     }
 
+    async checkPrivateTableCompletion(tableId, reason = 'PRIVATE_TABLE_CONDITION_MET') {
+        try {
+            const tableResult = await mongoHelper.findById(mongoHelper.COLLECTIONS.TABLES, tableId);
+            if (!tableResult.success || !tableResult.data?.privateTableId) {
+                return false;
+            }
+
+            const tableDoc = tableResult.data;
+            const privateTableResult = await mongoHelper.findById(
+                mongoHelper.COLLECTIONS.PRIVATE_TABLES,
+                tableDoc.privateTableId
+            );
+
+            if (!privateTableResult.success || !privateTableResult.data) {
+                return false;
+            }
+
+            const privateTable = privateTableResult.data;
+            if (['COMPLETED', 'CANCELLED'].includes(privateTable.status)) {
+                return false;
+            }
+
+            const tableState = await tableManager.getTable(tableId);
+            const gameState = await gameStateManager.getGame(tableId);
+            const playersSnapshot = gameState?.players?.length ? gameState.players : tableState.players;
+            const activePlayers = playersSnapshot.filter(
+                player => Number(player.chips || 0) > 0 && !player.disconnected
+            );
+
+            console.log(`🏁 [PRIVATE TABLE CHECK] Completion inspection for ${tableId}:`, {
+                reason,
+                privateTableStatus: privateTable.status,
+                tableStatus: tableState.status,
+                playersRemaining: activePlayers.length,
+                hasGameState: !!gameState,
+            });
+
+            if (activePlayers.length <= 1) {
+                await this.handleGameCompletion(tableId, { reason });
+                return true;
+            }
+
+            return false;
+        } catch (error) {
+            console.error(`❌ [PRIVATE TABLE CHECK] Error checking completion for ${tableId}:`, error.message);
+            return false;
+        }
+    }
+
     /* ------------------------------------------------ */
     /* HANDLE GAME COMPLETION (FINANCIAL SETTLEMENT)  */
     /* ------------------------------------------------ */
@@ -633,36 +682,35 @@ class GameOrchestrator {
 
                     if (privateTable.settlementCompleted) {
                         console.log(`💰 [SETTLEMENT] Skipping duplicate settlement for private table ${privateTable._id}`);
-                        return;
-                    }
-                    
-                    const financialResult = await financialIntegrationService.onGameCompleted({
-                        gameId: tableId,
-                        tableId,
-                        gameType: privateTable.gameType,
-                        hostId: privateTable.hostId,
-                        buyIn: privateTable.buyIn,
-                        declaredCapacity: privateTable.declaredCapacity,
-                        actualParticipants: playersForStandings.length,
-                        participationThreshold: privateTable.participationThreshold,
-                        tierRake: privateTable.tierRake,
-                        hostUplift: privateTable.hostUplift,
-                        hostRewardPercent: privateTable.hostRewardPercent,
-                        setupFeeAmount: privateTable.setupFeeAmount,
-                        affiliateId: privateTable.affiliateId,
-                        winners
-                    });
+                    } else {
+                        const financialResult = await financialIntegrationService.onGameCompleted({
+                            gameId: tableId,
+                            tableId,
+                            gameType: privateTable.gameType,
+                            hostId: privateTable.hostId,
+                            buyIn: privateTable.buyIn,
+                            declaredCapacity: privateTable.declaredCapacity,
+                            actualParticipants: playersForStandings.length,
+                            participationThreshold: privateTable.participationThreshold,
+                            tierRake: privateTable.tierRake,
+                            hostUplift: privateTable.hostUplift,
+                            hostRewardPercent: privateTable.hostRewardPercent,
+                            setupFeeAmount: privateTable.setupFeeAmount,
+                            affiliateId: privateTable.affiliateId,
+                            winners
+                        });
 
-                    await mongoHelper.updateById(
-                        mongoHelper.COLLECTIONS.PRIVATE_TABLES,
-                        privateTable._id,
-                        {
-                            settlementCompleted: true,
-                            settlementCompletedAt: new Date(),
-                            settlementSummary: financialResult.settlement,
-                            walletResults: financialResult.walletResults
-                        }
-                    );
+                        await mongoHelper.updateById(
+                            mongoHelper.COLLECTIONS.PRIVATE_TABLES,
+                            privateTable._id,
+                            {
+                                settlementCompleted: true,
+                                settlementCompletedAt: new Date(),
+                                settlementSummary: financialResult.settlement,
+                                walletResults: financialResult.walletResults
+                            }
+                        );
+                    }
                 }
             }
             
@@ -763,7 +811,10 @@ class GameOrchestrator {
 
             if (seatedCount < 2) {
                 console.log(`🔄 Not enough players to restart`);
-                await tableManager.setStatus(tableId, 'WAITING');
+                const completed = await this.checkPrivateTableCompletion(tableId, 'INSUFFICIENT_PLAYERS_FOR_NEXT_HAND');
+                if (!completed) {
+                    await tableManager.setStatus(tableId, 'WAITING');
+                }
                 return;
             }
 
