@@ -152,10 +152,10 @@ class SNGCommissionPreviewService {
    */
   async calculateSetupFee(config) {
     const calculation = await setupFeeService.calculateSetupFee({
-      buyIn,
-      declaredCapacity,
-      hours: duration,
-      timerSeconds
+      buyIn : config.buyIn,
+      declaredCapacity: config.declaredCapacity,
+      hours: config.duration,
+      timerSeconds : config.timerSeconds
     });
 
     const { terms } = calculation.calculationDetails;
