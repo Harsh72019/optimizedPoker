@@ -63,13 +63,23 @@ class FinancialIntegrationService {
     });
 
     if (settlement.alreadySettled) {
+      const payoutPlan = winners && winners.length > 0 && settlement.settlement
+        ? await this.processWinnerPayouts(gameId, winners, settlement.settlement.remainingPrize)
+        : [];
+
+      const walletResults = await this.executeSettlementPayouts({
+        gameId,
+        sourceTableId: tableId,
+        hostId,
+        affiliateId,
+        settlement: settlement.settlement,
+        winnerPayouts: payoutPlan
+      });
+
       return {
         ...settlement,
-        payoutPlan: [],
-        walletResults: {
-          skipped: true,
-          reason: 'Settlement already exists for this game.'
-        }
+        payoutPlan,
+        walletResults
       };
     }
 

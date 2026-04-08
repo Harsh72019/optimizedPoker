@@ -404,6 +404,8 @@ const privateTableSchema = new Schema(
       default: false
     },
 
+    settlementGameId: String,
+
     settlementCompletedAt: Date,
 
     affiliateId: {

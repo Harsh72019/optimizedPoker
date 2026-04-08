@@ -677,17 +677,23 @@ class GameOrchestrator {
                 if (privateTableDoc.success && privateTableDoc.data) {
                     const privateTable = privateTableDoc.data;
 
-                    if (privateTable.settlementCompleted) {
+                    const paidEntrants = (privateTable.registeredPlayers || []).filter(player => player.buyInPaid);
+                    const actualParticipants = Math.max(paidEntrants.length, winners.length, 1);
+                    const settlementAlreadyMarkedForThisGame =
+                        privateTable.settlementCompleted && privateTable.settlementGameId === tableId;
+
+                    if (settlementAlreadyMarkedForThisGame) {
                         console.log(`💰 [SETTLEMENT] Skipping duplicate settlement for private table ${privateTable._id}`);
-                    } else {
-                        const financialResult = await financialIntegrationService.onGameCompleted({
+                    }
+
+                    const financialResult = await financialIntegrationService.onGameCompleted({
                             gameId: tableId,
                             tableId,
                             gameType: privateTable.gameType,
                             hostId: privateTable.hostId,
                             buyIn: privateTable.buyIn,
                             declaredCapacity: privateTable.declaredCapacity,
-                            actualParticipants: playersForStandings.length,
+                            actualParticipants,
                             participationThreshold: privateTable.participationThreshold,
                             tierRake: privateTable.tierRake,
                             hostUplift: privateTable.hostUplift,
@@ -697,17 +703,27 @@ class GameOrchestrator {
                             winners
                         });
 
-                        await mongoHelper.updateById(
-                            mongoHelper.COLLECTIONS.PRIVATE_TABLES,
-                            privateTable._id,
+                    if (!financialResult.settlement) {
+                        await this.queueRegularTableCompletionCashouts(tableId, playersForStandings);
+                    }
+
+                    await mongoHelper.updateById(
+                        mongoHelper.COLLECTIONS.PRIVATE_TABLES,
+                        privateTable._id,
                             {
                                 settlementCompleted: true,
-                                settlementCompletedAt: new Date(),
+                                settlementGameId: tableId,
+                                settlementCompletedAt: privateTable.settlementCompletedAt || new Date(),
                                 settlementSummary: financialResult.settlement,
-                                walletResults: financialResult.walletResults
+                                walletResults: financialResult.walletResults,
+                                winners: (financialResult.payoutPlan || []).map(payout => ({
+                                    position: payout.position,
+                                    userId: payout.userId,
+                                    prize: payout.amount,
+                                    paidAt: new Date()
+                                }))
                             }
                         );
-                    }
                 }
             } else {
                 await this.queueRegularTableCompletionCashouts(tableId, playersForStandings);

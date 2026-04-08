@@ -409,7 +409,14 @@ class PrivateTableService {
       tableId,
       {
         status: 'ACTIVE',
-        actualStartTime: new Date()
+        actualStartTime: new Date(),
+        completedAt: null,
+        settlementCompleted: false,
+        settlementGameId: gameResult?.underlyingTable?._id || null,
+        settlementCompletedAt: null,
+        settlementSummary: null,
+        walletResults: null,
+        winners: []
       }
     );
     
