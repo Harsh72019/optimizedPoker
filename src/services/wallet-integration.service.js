@@ -41,24 +41,134 @@ class WalletIntegrationService {
     return existingResult.data[0];
   }
 
+  async findAnyTransaction(type, userId, gameId, idempotencyKey) {
+    if (!idempotencyKey) {
+      return null;
+    }
+
+    const existingResult = await mongoHelper.find(mongoHelper.COLLECTIONS.TRANSACTION_LEDGER, {
+      userId,
+      type,
+      gameId,
+      'metadata.idempotencyKey': idempotencyKey
+    });
+
+    if (!existingResult.success || !existingResult.data || existingResult.data.length === 0) {
+      return null;
+    }
+
+    return existingResult.data[0];
+  }
+
+  async updateTransactionLedger(entryId, updates = {}) {
+    const currentEntry = await mongoHelper.findById(mongoHelper.COLLECTIONS.TRANSACTION_LEDGER, entryId);
+    const currentMetadata = currentEntry.success && currentEntry.data ? (currentEntry.data.metadata || {}) : {};
+    const nextMetadata = updates.metadata
+      ? { ...currentMetadata, ...updates.metadata }
+      : currentMetadata;
+
+    const balanceAfter = updates.walletAddress
+      ? await this.safeGetBalance(updates.walletAddress)
+      : (updates.balanceAfter ?? currentEntry.data?.balanceAfter ?? 0);
+
+    const updateResult = await mongoHelper.updateById(
+      mongoHelper.COLLECTIONS.TRANSACTION_LEDGER,
+      entryId,
+      {
+        ...updates,
+        metadata: nextMetadata,
+        balanceAfter
+      }
+    );
+
+    if (!updateResult.success) {
+      throw new Error(`Failed to update transaction ledger: ${updateResult.error}`);
+    }
+
+    return updateResult.data;
+  }
+
+  async safeGetBalance(walletAddress) {
+    if (!walletAddress) {
+      return 0;
+    }
+
+    try {
+      return parseFloat(await this.getPoolBalance(walletAddress));
+    } catch (error) {
+      return 0;
+    }
+  }
+
+  async createOrRecycleLedgerEntry({
+    existingTransaction = null,
+    userId,
+    type,
+    amount,
+    gameId,
+    description,
+    walletAddress,
+    metadata = {}
+  }) {
+    if (existingTransaction?.status === 'COMPLETED') {
+      return { entry: existingTransaction, duplicate: true };
+    }
+
+    if (existingTransaction?.status === 'PENDING') {
+      throw new Error(`A ${type} transaction is already in progress for ${gameId}`);
+    }
+
+    if (existingTransaction?.status === 'FAILED') {
+      const recycled = await this.updateTransactionLedger(existingTransaction._id, {
+        amount,
+        description,
+        walletAddress,
+        blockchainTxHash: null,
+        status: 'PENDING',
+        metadata: {
+          ...metadata,
+          retriedAt: new Date().toISOString()
+        }
+      });
+      return { entry: recycled, duplicate: false };
+    }
+
+    const created = await this.logTransaction({
+      userId,
+      type,
+      amount,
+      gameId,
+      description,
+      walletAddress,
+      status: 'PENDING',
+      metadata
+    });
+
+    if (!created) {
+      throw new Error(`Failed to create ${type} ledger entry`);
+    }
+
+    return { entry: created, duplicate: false };
+  }
+
   async chargeSetupFee(hostId, amount, gameId) {
     const host = await this.resolveUser(hostId, 'Host');
     const idempotencyKey = `setup_fee:${gameId}:${hostId}`;
-    const existingTransaction = await this.findExistingTransaction(
+    const existingTransaction = await this.findAnyTransaction(
       'SETUP_FEE_CHARGE',
       hostId,
       gameId,
       idempotencyKey
     );
 
-    if (existingTransaction) {
+    if (existingTransaction?.status === 'COMPLETED') {
       return {
         success: true,
         chargedAmount: Math.abs(existingTransaction.amount),
         walletAddress: host.walletAddress,
         transactionId: existingTransaction.transactionId,
         blockchainTxHash: existingTransaction.blockchainTxHash || null,
-        blockchainPending: existingTransaction.status === 'PENDING',
+        blockchainPending: false,
         duplicate: true
       };
     }
@@ -69,22 +179,49 @@ class WalletIntegrationService {
       throw new Error(`Insufficient pool balance. Required: ${amount}, Available: ${currentBalance}`);
     }
 
-    const transferResult = await this.transferSetupFeeFromPool(host.walletAddress, amount);
-    if (!transferResult.success) {
-      throw new Error(`Setup fee transfer failed: ${transferResult.error}`);
-    }
-
-    const ledger = await this.logTransaction({
+    const { entry: ledger } = await this.createOrRecycleLedgerEntry({
+      existingTransaction,
       userId: hostId,
       type: 'SETUP_FEE_CHARGE',
       amount: -amount,
       gameId,
       description: `Setup fee for game ${gameId}`,
       walletAddress: host.walletAddress,
-      blockchainTxHash: transferResult.txHash,
-      status: transferResult.pending ? 'PENDING' : 'COMPLETED',
-      metadata: { idempotencyKey }
+      metadata: {
+        idempotencyKey,
+        paymentCategory: 'PRIVATE_TABLE_SETUP_FEE',
+        transferState: 'PENDING_SUBMISSION'
+      }
     });
+
+    let transferResult;
+    try {
+      transferResult = await this.transferSetupFeeFromPool(host.walletAddress, amount);
+      if (!transferResult.success) {
+        throw new Error(transferResult.error);
+      }
+
+      await this.updateTransactionLedger(ledger._id, {
+        walletAddress: host.walletAddress,
+        blockchainTxHash: transferResult.txHash,
+        status: 'COMPLETED',
+        metadata: {
+          transferState: 'COMPLETED',
+          confirmedAt: new Date().toISOString()
+        }
+      });
+    } catch (error) {
+      await this.updateTransactionLedger(ledger._id, {
+        walletAddress: host.walletAddress,
+        status: 'FAILED',
+        metadata: {
+          transferState: 'FAILED',
+          error: error.message,
+          failedAt: new Date().toISOString()
+        }
+      });
+      throw new Error(`Setup fee transfer failed: ${error.message}`);
+    }
 
     return {
       success: true,
@@ -92,7 +229,7 @@ class WalletIntegrationService {
       walletAddress: host.walletAddress,
       transactionId: ledger?.transactionId || this.generateTransactionId('setup', gameId, hostId),
       blockchainTxHash: transferResult.txHash,
-      blockchainPending: transferResult.pending || false
+      blockchainPending: false
     };
   }
 
@@ -493,6 +630,99 @@ class WalletIntegrationService {
       transactionId: ledger?.transactionId || this.generateTransactionId('buyin', gameId, playerId),
       blockchainPending: true
     };
+  }
+
+  async chargeBuyInToTable(playerId, amount, gameId, table, options = {}) {
+    const user = await this.resolveUser(playerId, 'Player');
+    const currentBalance = await this.getPoolBalance(user.walletAddress);
+    if (parseFloat(currentBalance) < amount) {
+      throw new Error(`Insufficient balance. Required: ${amount}, Available: ${currentBalance}`);
+    }
+
+    const tableId = table?._id?.toString?.() || table?.toString?.() || gameId;
+    const paymentContext = options.paymentContext || 'TABLE_JOIN';
+    const idempotencyKey = options.idempotencyKey || `buy_in:${gameId}:${tableId}:${playerId}:${paymentContext}`;
+    const existingTransaction = await this.findAnyTransaction(
+      'BUY_IN_CHARGE',
+      playerId,
+      gameId,
+      idempotencyKey
+    );
+
+    if (existingTransaction?.status === 'COMPLETED') {
+      return {
+        success: true,
+        chargedAmount: Math.abs(existingTransaction.amount),
+        walletAddress: user.walletAddress,
+        transactionId: existingTransaction.transactionId,
+        blockchainTxHash: existingTransaction.blockchainTxHash || null,
+        blockchainPending: false,
+        duplicate: true,
+        table
+      };
+    }
+
+    const { entry: ledger } = await this.createOrRecycleLedgerEntry({
+      existingTransaction,
+      userId: playerId,
+      type: 'BUY_IN_CHARGE',
+      amount: -amount,
+      gameId,
+      description: `Buy-in charged for ${paymentContext} on game ${gameId}`,
+      walletAddress: user.walletAddress,
+      metadata: {
+        idempotencyKey,
+        paymentContext,
+        tableId,
+        transferState: 'PENDING_SUBMISSION'
+      }
+    });
+
+    let transferResult;
+    try {
+      transferResult = await blockchainService.prepareTableForJoin(
+        table,
+        amount,
+        user.walletAddress,
+        {
+          transfer: true
+        }
+      );
+
+      await this.updateTransactionLedger(ledger._id, {
+        walletAddress: user.walletAddress,
+        blockchainTxHash: transferResult.txHash || null,
+        status: 'COMPLETED',
+        metadata: {
+          tableId: transferResult.table?._id || tableId,
+          blockchainTableId: transferResult.table?.tableBlockchainId || table?.tableBlockchainId || null,
+          blockchainAddress: transferResult.table?.blockchainAddress || table?.blockchainAddress || null,
+          transferState: 'COMPLETED',
+          confirmedAt: new Date().toISOString()
+        }
+      });
+
+      return {
+        success: true,
+        chargedAmount: amount,
+        walletAddress: user.walletAddress,
+        transactionId: ledger.transactionId,
+        blockchainTxHash: transferResult.txHash || null,
+        blockchainPending: false,
+        table: transferResult.table || table
+      };
+    } catch (error) {
+      await this.updateTransactionLedger(ledger._id, {
+        walletAddress: user.walletAddress,
+        status: 'FAILED',
+        metadata: {
+          transferState: 'FAILED',
+          error: error.message,
+          failedAt: new Date().toISOString()
+        }
+      });
+      throw error;
+    }
   }
 
   async getUserBalance(userId) {

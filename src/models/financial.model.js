@@ -90,10 +90,13 @@ const setupFeeLedgerSchema = new Schema({
   
   // Transaction
   transactionId: { type: String },
+  blockchainTxHash: { type: String, default: null },
+  walletAddress: { type: String, default: null },
+  metadata: { type: Object, default: {} },
   status: { 
     type: String, 
-    enum: ['CHARGED', 'REFUNDED', 'FAILED'],
-    default: 'CHARGED'
+    enum: ['PENDING', 'CHARGED', 'REFUNDED', 'FAILED'],
+    default: 'PENDING'
   }
 }, { timestamps: true });
 
@@ -196,6 +199,8 @@ const transactionLedgerSchema = new Schema({
   gameId: { type: String, index: true },
   description: { type: String, required: true },
   balanceAfter: { type: Number, required: true },
+  walletAddress: { type: String, default: null },
+  blockchainTxHash: { type: String, default: null },
   transactionId: { type: String, unique: true },
   metadata: { type: Object, default: {} },
   status: { 

@@ -54,6 +54,24 @@ function generateNonce() {
   return '0x' + randomBytes(32).toString('hex');
 }
 
+async function waitForTransactionConfirmation(tx, meta = {}) {
+  const { type = 'transaction', context = '' } = meta;
+  pendingTransactions.set(tx.hash, {
+    type,
+    context,
+    timestamp: Date.now()
+  });
+
+  try {
+    const receipt = await tx.wait(1);
+    pendingTransactions.delete(tx.hash);
+    return receipt;
+  } catch (error) {
+    pendingTransactions.delete(tx.hash);
+    throw error;
+  }
+}
+
 // Redis health check
 async function checkRedisHealth() {
   try {
@@ -577,35 +595,23 @@ const createTableOnBlockchain = async (userAddress, rakePercentage, chipsInPlay,
 
     console.log('⚡ Initiating table creation...');
     const txCreateTable = await masterPokerTableContract.createTableViaProxy(params);
-    
+    const receipt = await waitForTransactionConfirmation(txCreateTable, {
+      type: 'tableCreation',
+      context: `user:${userAddress}`
+    });
+
     const tableId = tableIdBefore;
     const tableInfo = await masterPokerTableContract.getTable(tableId);
     const tableAddress = tableInfo.tableAddress || tableInfo[0];
 
-    console.log(`⚡ Table created: ID=${tableId}, Address=${tableAddress}, Tx=${txCreateTable.hash}`);
-
-    // Track and monitor in background
-    pendingTransactions.set(txCreateTable.hash, { type: 'tableCreation', tableId, tableAddress, timestamp: Date.now() });
-    
-    txCreateTable.wait(1).then(receipt => {
-      console.log(`✅ Table creation confirmed: ${receipt.hash}`);
-      pendingTransactions.delete(txCreateTable.hash);
-    }).catch(async err => {
-      console.error(`❌ Table creation failed: ${err.message}`);
-      pendingTransactions.delete(txCreateTable.hash);
-      if (retryCount < MAX_RETRIES) {
-        console.log(`🔄 Retrying (${retryCount + 1}/${MAX_RETRIES})...`);
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        return createTableOnBlockchain(userAddress, rakePercentage, chipsInPlay, retryCount + 1);
-      }
-    });
+    console.log(`✅ Table creation confirmed: ID=${tableId}, Address=${tableAddress}, Tx=${receipt.hash}`);
 
     return {
       success: true,
       tableId: tableId.toString(),
       tableAddress,
-      txHash: txCreateTable.hash,
-      pending: true
+      txHash: receipt.hash,
+      pending: false
     };
   } catch (error) {
     console.error('❌ Table creation error:', error.message);
@@ -653,68 +659,98 @@ const transferFromPoolToTable = async (userAddress, tableAddress, amount, retryC
     const tableBalanceBeforeFormatted = ethers.formatUnits(tableBalanceBefore, 6);
     console.log(`💰 [DEPOSIT] Table Balance BEFORE: ${tableBalanceBeforeFormatted} USDT`);
 
-    console.log(`⚡ [DEPOSIT] Initiating blockchain transfer (async)...`);
+    console.log(`⚡ [DEPOSIT] Initiating blockchain transfer...`);
     const tx = await walletFactoryContract.transferFromPoolToTable(userAddress, tableAddress, amountWei);
     console.log(`⚡ [DEPOSIT] Transaction submitted: ${tx.hash}`);
-    console.log(`⚡ [DEPOSIT] Transaction is PENDING confirmation...`);
-
-    // Track and monitor in background
-    pendingTransactions.set(tx.hash, { type: 'transfer', userAddress, tableAddress, amount, timestamp: Date.now() });
-    
-    // Monitor transaction in background with detailed logging
-    tx.wait(1).then(async receipt => {
-      console.log(`\n${'='.repeat(80)}`);
-      console.log(`✅ [DEPOSIT] Transaction CONFIRMED: ${receipt.hash}`);
-      console.log(`✅ [DEPOSIT] Block Number: ${receipt.blockNumber}`);
-      console.log(`✅ [DEPOSIT] Gas Used: ${receipt.gasUsed.toString()}`);
-      
-      // Verify table balance AFTER transfer
-      try {
-        console.log(`📊 [DEPOSIT] Verifying table balance AFTER transfer...`);
-        const tableBalanceAfter = await tokenContract.balanceOf(tableAddress);
-        const tableBalanceAfterFormatted = ethers.formatUnits(tableBalanceAfter, 6);
-        const actualIncrease = parseFloat(tableBalanceAfterFormatted) - parseFloat(tableBalanceBeforeFormatted);
-        
-        console.log(`💰 [DEPOSIT] Table Balance AFTER: ${tableBalanceAfterFormatted} USDT`);
-        console.log(`💰 [DEPOSIT] Expected Increase: ${amount} USDT`);
-        console.log(`💰 [DEPOSIT] Actual Increase: ${actualIncrease.toFixed(6)} USDT`);
-        
-        if (Math.abs(actualIncrease - parseFloat(amount)) < 0.000001) {
-          console.log(`✅ [DEPOSIT] VERIFICATION PASSED - Table balance increased correctly`);
-        } else {
-          console.error(`⚠️ [DEPOSIT] VERIFICATION WARNING - Balance increase mismatch!`);
-        }
-      } catch (verifyError) {
-        console.error(`❌ [DEPOSIT] Balance verification failed: ${verifyError.message}`);
-      }
-      
-      console.log(`${'='.repeat(80)}\n`);
-      pendingTransactions.delete(tx.hash);
-    }).catch(async err => {
-      console.log(`\n${'='.repeat(80)}`);
-      console.error(`❌ [DEPOSIT] Transaction FAILED: ${err.message}`);
-      console.error(`❌ [DEPOSIT] Transaction Hash: ${tx.hash}`);
-      console.error(`❌ [DEPOSIT] Error Details: ${err.stack}`);
-      console.log(`${'='.repeat(80)}\n`);
-      pendingTransactions.delete(tx.hash);
-      
-      if (retryCount < MAX_RETRIES) {
-        console.log(`🔄 [DEPOSIT] Retrying transfer (${retryCount + 1}/${MAX_RETRIES})...`);
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        return transferFromPoolToTable(userAddress, tableAddress, amount, retryCount + 1);
-      }
+    const receipt = await waitForTransactionConfirmation(tx, {
+      type: 'transfer',
+      context: `from:${userAddress}:to:${tableAddress}`
     });
 
-    console.log(`✅ [DEPOSIT] Transfer initiated successfully (pending confirmation)`);
-    console.log(`📝 [DEPOSIT] Monitor logs above for confirmation status\n`);
+    console.log(`\n${'='.repeat(80)}`);
+    console.log(`✅ [DEPOSIT] Transaction CONFIRMED: ${receipt.hash}`);
+    console.log(`✅ [DEPOSIT] Block Number: ${receipt.blockNumber}`);
+    console.log(`✅ [DEPOSIT] Gas Used: ${receipt.gasUsed.toString()}`);
     
-    return { success: true, txHash: tx.hash, amount, pending: true };
+    try {
+      console.log(`📊 [DEPOSIT] Verifying table balance AFTER transfer...`);
+      const tableBalanceAfter = await tokenContract.balanceOf(tableAddress);
+      const tableBalanceAfterFormatted = ethers.formatUnits(tableBalanceAfter, 6);
+      const actualIncrease = parseFloat(tableBalanceAfterFormatted) - parseFloat(tableBalanceBeforeFormatted);
+      
+      console.log(`💰 [DEPOSIT] Table Balance AFTER: ${tableBalanceAfterFormatted} USDT`);
+      console.log(`💰 [DEPOSIT] Expected Increase: ${amount} USDT`);
+      console.log(`💰 [DEPOSIT] Actual Increase: ${actualIncrease.toFixed(6)} USDT`);
+      
+      if (Math.abs(actualIncrease - parseFloat(amount)) < 0.000001) {
+        console.log(`✅ [DEPOSIT] VERIFICATION PASSED - Table balance increased correctly`);
+      } else {
+        throw new Error(`Balance verification mismatch. Expected ${amount}, actual increase ${actualIncrease.toFixed(6)}`);
+      }
+    } catch (verifyError) {
+      console.error(`❌ [DEPOSIT] Balance verification failed: ${verifyError.message}`);
+      throw verifyError;
+    } finally {
+      console.log(`${'='.repeat(80)}\n`);
+    }
+    
+    return { success: true, txHash: receipt.hash, amount, pending: false };
   } catch (error) {
     console.log(`\n${'='.repeat(80)}`);
     console.error(`❌ [DEPOSIT] Transfer error: ${error.message}`);
     console.error(`❌ [DEPOSIT] Stack: ${error.stack}`);
     console.log(`${'='.repeat(80)}\n`);
+    if (retryCount < MAX_RETRIES) {
+      console.log(`🔄 [DEPOSIT] Retrying transfer (${retryCount + 1}/${MAX_RETRIES})...`);
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      return transferFromPoolToTable(userAddress, tableAddress, amount, retryCount + 1);
+    }
     return { success: false, error: error.message };
+  }
+};
+
+const findTableOrCreateWithoutTransfer = async (playerCount, tableTypeId, chipsInPlay, userAddress, userId = null) => {
+  try {
+    console.log(`🔍 Finding/Creating table without transfer for user: ${userAddress}, chips: ${chipsInPlay}`);
+
+    const tableService = require('../services/table.service.js');
+    let table = await tableService.findTableWithVacancies(playerCount, tableTypeId, userId);
+
+    if (table) {
+      table = await ensureTableBlockchainReady(table, userAddress, chipsInPlay);
+      return {
+        table,
+        isBlockchainEnabled: true,
+        blockchainInfo: {},
+        tableData: table,
+        wasCreated: false,
+        message: 'Table ready for join'
+      };
+    }
+
+    const createResult = await createTableOnBlockchain(userAddress, rakePercent, chipsInPlay);
+    if (!createResult.success) {
+      throw new Error(`Table creation failed: ${createResult.error}`);
+    }
+
+    const newTable = await tableService.createTable(
+      playerCount,
+      tableTypeId,
+      createResult.tableId,
+      createResult.tableAddress
+    );
+
+    return {
+      table: newTable,
+      isBlockchainEnabled: true,
+      blockchainInfo: {},
+      tableData: newTable,
+      wasCreated: true,
+      message: 'Created new table and prepared blockchain state'
+    };
+  } catch (error) {
+    console.error('💥 Error in findTableOrCreateWithoutTransfer:', error);
+    throw new Error(`Table operation failed: ${error.message}`);
   }
 };
 
@@ -733,7 +769,7 @@ async function signTableCreationRequest() {
   return { nonce, signature };
 }
 
-const prepareTableForJoin = async (table, chipsInPlay, userAddress) => {
+const ensureTableBlockchainReady = async (table, userAddress, chipsInPlay = 0) => {
   try {
     console.log(`🎯 Preparing table for join: ${table._id}, blockchain ID: ${table.tableBlockchainId}`);
     
@@ -773,14 +809,35 @@ const prepareTableForJoin = async (table, chipsInPlay, userAddress) => {
         throw new Error('Failed to update table with blockchain info');
       }
     }
-    
-    // Transfer in background
-    console.log(`⚡ Starting background transfer for table ${table._id}`);
-    transferFromPoolToTable(userAddress, table.blockchainAddress, chipsInPlay).catch(err => {
-      console.error(`❌ Transfer error for table ${table._id}: ${err.message}`);
-    });
-    
-    return { success: true, table, transferPending: true };
+
+    return table;
+  } catch (error) {
+    console.error('💥 Error in prepareTableForJoin:', error);
+    throw new Error(`Failed to prepare table: ${error.message}`);
+  }
+};
+
+const prepareTableForJoin = async (table, chipsInPlay, userAddress, options = {}) => {
+  try {
+    const readyTable = await ensureTableBlockchainReady(table, userAddress, chipsInPlay);
+
+    if (!options.transfer) {
+      return { success: true, table: readyTable, transferExecuted: false, pending: false };
+    }
+
+    console.log(`⚡ Starting confirmed transfer for table ${readyTable._id}`);
+    const transferResult = await transferFromPoolToTable(userAddress, readyTable.blockchainAddress, chipsInPlay);
+    if (!transferResult.success) {
+      throw new Error(transferResult.error);
+    }
+
+    return {
+      success: true,
+      table: readyTable,
+      transferExecuted: true,
+      txHash: transferResult.txHash,
+      pending: transferResult.pending || false
+    };
   } catch (error) {
     console.error('💥 Error in prepareTableForJoin:', error);
     throw new Error(`Failed to prepare table: ${error.message}`);
@@ -817,6 +874,8 @@ module.exports = {
   transferFromPoolToTable,
   createTableOnBlockchain,
   prepareTableForJoin,
+  ensureTableBlockchainReady,
   getPendingTransactions,
-  findTableOrCreateThroughBlockchainNew
+  findTableOrCreateThroughBlockchainNew,
+  findTableOrCreateWithoutTransfer
 };

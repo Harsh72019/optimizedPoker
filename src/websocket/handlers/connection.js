@@ -244,23 +244,22 @@ class ConnectionHandler {
                 }
             );
 
+            if (!isReconnect) {
+                try {
+                    const walletIntegrationService = require('../../services/wallet-integration.service');
+                    await walletIntegrationService.chargeBuyInToTable(userId, finalBuyIn, finalTableId, table, {
+                        paymentContext: 'NORMAL_TABLE_JOIN'
+                    });
+                    console.log(`💰 [BLOCKCHAIN] Confirmed transfer for ${finalBuyIn} chips to table ${finalTableId}`);
+                } catch (paymentError) {
+                    await tableManager.removePlayer(finalTableId, userId);
+                    throw new Error(`Join payment failed: ${paymentError.message}`);
+                }
+            }
+
             this.socket.join(finalTableId);
             this.socket.tableId = finalTableId;
             this.socket.handsPlayed = 0; // Track hands played
-
-            // Get full user document for walletAddress
-            const userDoc = await mongoHelper.findById(mongoHelper.COLLECTIONS.USERS, userId);
-            const walletAddress = userDoc.success && userDoc.data ? userDoc.data.walletAddress : null;
-
-            // Transfer buy-in from player to table (async with retry) - using existing blockchain service
-            if (walletAddress) {
-                blockchainService.prepareTableForJoin(table, finalBuyIn, walletAddress).catch(err => 
-                    console.error('💰 [BLOCKCHAIN] Transfer error:', err.message)
-                );
-                console.log(`💰 [BLOCKCHAIN] Initiated transfer for ${finalBuyIn} chips (async)`);
-            } else {
-                console.warn(`⚠️ [BLOCKCHAIN] No wallet address for user ${userId}, skipping transfer`);
-            }
 
             // Sync to MongoDB TABLES.currentPlayers
             this.syncPlayerToMongoTable(finalTableId, userId, 'join').catch(err => 
@@ -394,6 +393,34 @@ class ConnectionHandler {
                 }
             );
             
+            if (!isReconnect) {
+                try {
+                    const mongoHelper = require('../../models/customdb');
+                    const underlyingTableDoc = await mongoHelper.findById(mongoHelper.COLLECTIONS.TABLES, underlyingTableId);
+                    if (!underlyingTableDoc.success || !underlyingTableDoc.data) {
+                        throw new Error('Underlying table document not found');
+                    }
+
+                    const walletIntegrationService = require('../../services/wallet-integration.service');
+                    await walletIntegrationService.chargeBuyInToTable(userId, finalBuyIn, underlyingTableId, underlyingTableDoc.data, {
+                        paymentContext: 'PRIVATE_TABLE_JOIN'
+                    });
+                    const updatedRegisteredPlayers = (privateTable.registeredPlayers || []).map(player => ({
+                        ...player,
+                        buyInPaid: player.userId?.toString() === userId.toString() ? true : !!player.buyInPaid
+                    }));
+                    await mongoHelper.updateById(
+                        mongoHelper.COLLECTIONS.PRIVATE_TABLES,
+                        privateTableId,
+                        { registeredPlayers: updatedRegisteredPlayers }
+                    );
+                    console.log(`💰 [PRIVATE BLOCKCHAIN] Confirmed transfer for ${finalBuyIn} chips to table ${underlyingTableId}`);
+                } catch (paymentError) {
+                    await tableManager.removePlayer(underlyingTableId, userId);
+                    throw new Error(`Private join payment failed: ${paymentError.message}`);
+                }
+            }
+
             this.socket.join(underlyingTableId);
             this.socket.tableId = underlyingTableId;
             this.socket.privateTableId = privateTableId;

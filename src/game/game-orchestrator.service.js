@@ -9,7 +9,6 @@ const financialIntegrationService = require('../services/financial-integration.s
 const { emitSuccess } = require('../websocket/socket-emitter.js');
 const mongoHelper = require('../models/customdb');
 const walletIntegrationService = require('../services/wallet-integration.service');
-const blockchainService = require('../services/blockchain.service');
 const privateTableGameConfigService = require('../services/private-table-game-config.service');
 
 class GameOrchestrator {
@@ -250,11 +249,9 @@ class GameOrchestrator {
             throw new Error('Table not found');
         }
 
-        await walletIntegrationService.chargeBuyIn(userId, requestedAmount, tableId);
-
-        if (user.walletAddress) {
-            await blockchainService.prepareTableForJoin(tableDoc.data, requestedAmount, user.walletAddress);
-        }
+        await walletIntegrationService.chargeBuyInToTable(userId, requestedAmount, tableId, tableDoc.data, {
+            paymentContext: 'PRIVATE_TABLE_REBUY'
+        });
 
         const tableState = await tableManager.getTable(tableId);
         const tablePlayer = tableState.players.find(player => player.userId === userId);

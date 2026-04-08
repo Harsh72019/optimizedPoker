@@ -257,7 +257,8 @@ const checkTableExistence = async (req, res) => {
       const blockchainResult = await blockchainService.prepareTableForJoin(
         selectedTable,
         finalChipsInPlay,
-        userAddress
+        userAddress,
+        { transfer: false }
       );
       
       result = {
@@ -268,7 +269,7 @@ const checkTableExistence = async (req, res) => {
       
     } else {
       // MODE 1: Auto-find/create table (existing behavior)
-      result = await blockchainService.findTableOrCreateThroughBlockchain(
+      result = await blockchainService.findTableOrCreateWithoutTransfer(
         playerCount,
         tableTypeId,
         finalChipsInPlay,
