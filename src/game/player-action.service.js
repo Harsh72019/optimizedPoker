@@ -117,7 +117,7 @@ class PlayerActionService {
             }
 
             if (gameState.phase !== 'COMPLETED' && gameState.phase !== 'SHOWDOWN' && gameState.currentPlayerId) {
-                this.timerManager.startTimer(tableId, gameState.currentPlayerId);
+                this.timerManager.startTimer(tableId, gameState.currentPlayerId, this.getTurnTimerSeconds(gameState));
             } else if (gameState.phase === 'COMPLETED') {
                 console.log(`🏁 [HAND COMPLETE] Starting cleanup`);
                 this.timerManager.clearTimer(tableId);
@@ -651,6 +651,10 @@ class PlayerActionService {
         );
 
         return active[(dealerIndex + 1) % active.length].id;
+    }
+
+    getTurnTimerSeconds(gameState) {
+        return gameState?.privateTableConfig?.timer?.turnTimer || 20;
     }
 
     formatTableData(tableState, gameState) {

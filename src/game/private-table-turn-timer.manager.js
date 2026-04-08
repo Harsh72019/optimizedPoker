@@ -138,7 +138,13 @@ class PrivateTableTurnTimerManager {
       /* ------------------------------------ */
 
       // Start warning timer
+      const timerToken = `${tableId}:${playerId}:${Date.now()}:${Math.random()}`;
       const warningTimeoutId = setTimeout(() => {
+        const activeTimer = this.timers.get(tableId);
+        if (!activeTimer || activeTimer.token !== timerToken) {
+          console.log(`[PRIVATE TIMER] Ignoring stale warning timer for ${playerId} at table ${tableId}`);
+          return;
+        }
         emitSuccess(
           this.io.to(tableId),
           'turnTimerWarning',
@@ -153,6 +159,11 @@ class PrivateTableTurnTimerManager {
 
       // Start main timer
       const timeoutId = setTimeout(async () => {
+        const activeTimer = this.timers.get(tableId);
+        if (!activeTimer || activeTimer.token !== timerToken) {
+          console.log(`[PRIVATE TIMER] Ignoring stale timer for ${playerId} at table ${tableId}`);
+          return;
+        }
         console.log(`⏰ Private table timer expired for ${playerId}`);
         clearTimeout(warningTimeoutId);
 
@@ -168,7 +179,9 @@ class PrivateTableTurnTimerManager {
         warningTimeoutId, 
         startTime: Date.now(),
         duration: timerSeconds * 1000,
-        timeBank: timeBank * 1000
+        timeBank: timeBank * 1000,
+        token: timerToken,
+        playerId
       });
 
       // Notify clients with private table timer info
@@ -339,6 +352,7 @@ class PrivateTableTurnTimerManager {
       this.timers.set(tableId, {
         ...timerInfo,
         timeoutId: timeBankTimeout,
+        token: `${tableId}:${playerId}:timebank:${Date.now()}:${Math.random()}`,
         usingTimeBank: true
       });
 

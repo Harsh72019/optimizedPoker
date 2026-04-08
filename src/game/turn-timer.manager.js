@@ -111,7 +111,13 @@ class TurnTimerManager {
       /* ⏳ NORMAL PLAYER TIMER               */
       /* ------------------------------------ */
 
+      const timerToken = `${tableId}:${playerId}:${Date.now()}:${Math.random()}`;
       const timeoutId = setTimeout(async () => {
+        const activeTimer = this.timers.get(tableId);
+        if (!activeTimer || activeTimer.token !== timerToken) {
+          console.log(`[TIMER DEBUG] Ignoring stale timer for ${playerId} at table ${tableId}`);
+          return;
+        }
         console.log(`⏰ Timer expired for ${playerId}`);
 
         try {
@@ -121,7 +127,7 @@ class TurnTimerManager {
         }
       }, seconds * 1000);
 
-      this.timers.set(tableId, timeoutId);
+      this.timers.set(tableId, { timeoutId, token: timerToken, playerId, seconds });
 
       // Notify clients
       console.log(`📡 [TIMER DEBUG] Emitting turnTimerStarted to table ${tableId} for ${seconds}s`);
@@ -145,7 +151,7 @@ class TurnTimerManager {
   clearTimer(tableId) {
     const existing = this.timers.get(tableId);
     if (existing) {
-      clearTimeout(existing);
+      clearTimeout(existing.timeoutId);
       this.timers.delete(tableId);
     }
   }
