@@ -17,7 +17,8 @@ const mongoHelper = require('../models/customdb');
 
 // Create provider and signer
 const provider = new ethers.JsonRpcProvider(RPC_URL);
-const signer = new ethers.Wallet(PRIVATE_KEY, provider);
+const baseSigner = new ethers.Wallet(PRIVATE_KEY, provider);
+const signer = new ethers.NonceManager(baseSigner);
 
 // Hash constants
 const PAYMENT_DISTRIBUTION = ethers.keccak256(ethers.toUtf8Bytes('PAYMENT_DISTRIBUTION'));
@@ -48,6 +49,7 @@ const withdrawalQueue = new Queue('withdrawals', {
 });
 
 const { findAvailableTableWithCooldown } = require('../utils/matchmakingHelper');
+let transactionSubmissionChain = Promise.resolve();
 
 // Generate unique nonce
 function generateNonce() {
@@ -70,6 +72,23 @@ async function waitForTransactionConfirmation(tx, meta = {}) {
     pendingTransactions.delete(tx.hash);
     throw error;
   }
+}
+
+async function submitBlockchainTransaction(submitFn) {
+  const runSubmission = async () => submitFn();
+  const queuedSubmission = transactionSubmissionChain.then(runSubmission, runSubmission);
+  transactionSubmissionChain = queuedSubmission.then(
+    () => undefined,
+    () => undefined
+  );
+  return queuedSubmission;
+}
+
+function isReplacementUnderpricedError(error) {
+  return error?.code === 'REPLACEMENT_UNDERPRICED'
+    || error?.shortMessage?.includes('replacement fee too low')
+    || error?.message?.includes('replacement fee too low')
+    || error?.message?.includes('replacement transaction underpriced');
 }
 
 // Redis health check
@@ -234,7 +253,9 @@ withdrawalQueue.process(async job => {
     console.log(`[BLOCKCHAIN] Params: tableId=${tableBlockchainId}, amount=${amount}, wallet=${walletAddress}`);
 
     // Submit to blockchain
-    const tx = await masterTableContract.distributePaymentsViaProxy(tableBlockchainId, distributions, nonce, signature);
+    const tx = await submitBlockchainTransaction(() =>
+      masterTableContract.distributePaymentsViaProxy(tableBlockchainId, distributions, nonce, signature)
+    );
 
     job.progress(70);
     console.log(`[BLOCKCHAIN] Transaction submitted: ${tx.hash}`);
@@ -594,7 +615,9 @@ const createTableOnBlockchain = async (userAddress, rakePercentage, chipsInPlay,
     const params = { rakePercentage, nonce, signature };
 
     console.log('⚡ Initiating table creation...');
-    const txCreateTable = await masterPokerTableContract.createTableViaProxy(params);
+    const txCreateTable = await submitBlockchainTransaction(() =>
+      masterPokerTableContract.createTableViaProxy(params)
+    );
     const receipt = await waitForTransactionConfirmation(txCreateTable, {
       type: 'tableCreation',
       context: `user:${userAddress}`
@@ -660,7 +683,9 @@ const transferFromPoolToTable = async (userAddress, tableAddress, amount, retryC
     console.log(`💰 [DEPOSIT] Table Balance BEFORE: ${tableBalanceBeforeFormatted} USDT`);
 
     console.log(`⚡ [DEPOSIT] Initiating blockchain transfer...`);
-    const tx = await walletFactoryContract.transferFromPoolToTable(userAddress, tableAddress, amountWei);
+    const tx = await submitBlockchainTransaction(() =>
+      walletFactoryContract.transferFromPoolToTable(userAddress, tableAddress, amountWei)
+    );
     console.log(`⚡ [DEPOSIT] Transaction submitted: ${tx.hash}`);
     const receipt = await waitForTransactionConfirmation(tx, {
       type: 'transfer',
@@ -682,10 +707,16 @@ const transferFromPoolToTable = async (userAddress, tableAddress, amount, retryC
       console.log(`💰 [DEPOSIT] Expected Increase: ${amount} USDT`);
       console.log(`💰 [DEPOSIT] Actual Increase: ${actualIncrease.toFixed(6)} USDT`);
       
-      if (Math.abs(actualIncrease - parseFloat(amount)) < 0.000001) {
-        console.log(`✅ [DEPOSIT] VERIFICATION PASSED - Table balance increased correctly`);
+      const expectedIncrease = parseFloat(amount);
+      const epsilon = 0.000001;
+
+      if (actualIncrease + epsilon >= expectedIncrease) {
+          console.log(`✅ [DEPOSIT] VERIFICATION PASSED - Table balance increased correctly`);
+          if (actualIncrease > expectedIncrease + epsilon) {
+            console.log(`ℹ️ [DEPOSIT] Table balance increased by more than expected, likely due to concurrent deposits`);
+          }
       } else {
-        throw new Error(`Balance verification mismatch. Expected ${amount}, actual increase ${actualIncrease.toFixed(6)}`);
+        throw new Error(`Balance verification mismatch. Expected at least ${amount}, actual increase ${actualIncrease.toFixed(6)}`);
       }
     } catch (verifyError) {
       console.error(`❌ [DEPOSIT] Balance verification failed: ${verifyError.message}`);
@@ -700,7 +731,10 @@ const transferFromPoolToTable = async (userAddress, tableAddress, amount, retryC
     console.error(`❌ [DEPOSIT] Transfer error: ${error.message}`);
     console.error(`❌ [DEPOSIT] Stack: ${error.stack}`);
     console.log(`${'='.repeat(80)}\n`);
-    if (retryCount < MAX_RETRIES) {
+    if (isReplacementUnderpricedError(error)) {
+      console.log(`🔄 [DEPOSIT] Retrying after replacement-underpriced error (${retryCount + 1}/${MAX_RETRIES})...`);
+    }
+    if (retryCount < MAX_RETRIES && !error.message?.includes('Balance verification mismatch')) {
       console.log(`🔄 [DEPOSIT] Retrying transfer (${retryCount + 1}/${MAX_RETRIES})...`);
       await new Promise(resolve => setTimeout(resolve, 2000));
       return transferFromPoolToTable(userAddress, tableAddress, amount, retryCount + 1);
