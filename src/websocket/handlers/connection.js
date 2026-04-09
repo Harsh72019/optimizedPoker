@@ -233,6 +233,17 @@ class ConnectionHandler {
                 throw new Error(`Buy-in must be between ${minBuyIn} and ${maxBuyIn}`);
             }
 
+            const currentTableState = await tableManager.getTable(finalTableId);
+            const existingPlayer = currentTableState.players.find(p => p.userId === userId);
+
+            if (!existingPlayer) {
+                    const walletIntegrationService = require('../../services/wallet-integration.service');
+                    await walletIntegrationService.chargeBuyInToTable(userId, finalBuyIn, finalTableId, table, {
+                        paymentContext: 'NORMAL_TABLE_JOIN'
+                    });
+                    console.log(`💰 [BLOCKCHAIN] Confirmed transfer for ${finalBuyIn} chips to table ${finalTableId}`);
+            }
+
             const { tableState, isReconnect } = await tableManager.seatPlayer(
                 finalTableId,
                 {
@@ -242,19 +253,6 @@ class ConnectionHandler {
                     socketId: this.socket.id
                 }
             );
-
-            if (!isReconnect) {
-                try {
-                    const walletIntegrationService = require('../../services/wallet-integration.service');
-                    await walletIntegrationService.chargeBuyInToTable(userId, finalBuyIn, finalTableId, table, {
-                        paymentContext: 'NORMAL_TABLE_JOIN'
-                    });
-                    console.log(`💰 [BLOCKCHAIN] Confirmed transfer for ${finalBuyIn} chips to table ${finalTableId}`);
-                } catch (paymentError) {
-                    await tableManager.removePlayer(finalTableId, userId);
-                    throw new Error(`Join payment failed: ${paymentError.message}`);
-                }
-            }
 
             this.socket.join(finalTableId);
             this.socket.tableId = finalTableId;
@@ -382,18 +380,10 @@ class ConnectionHandler {
             const config = privateTable.privateConfig || {};
             const finalBuyIn = config.buyInSettings?.min || privateTable.buyIn;
             
-            const { tableState, isReconnect } = await tableManager.seatPlayer(
-                underlyingTableId,
-                {
-                    userId,
-                    username: user.username,
-                    chips: finalBuyIn,
-                    socketId: this.socket.id
-                }
-            );
+            const currentUnderlyingTableState = await tableManager.getTable(underlyingTableId);
+            const existingUnderlyingPlayer = currentUnderlyingTableState.players.find(p => p.userId === userId);
             
-            if (!isReconnect) {
-                try {
+            if (!existingUnderlyingPlayer) {
                     const mongoHelper = require('../../models/customdb');
                     const underlyingTableDoc = await mongoHelper.findById(mongoHelper.COLLECTIONS.TABLES, underlyingTableId);
                     if (!underlyingTableDoc.success || !underlyingTableDoc.data) {
@@ -414,11 +404,17 @@ class ConnectionHandler {
                         { registeredPlayers: updatedRegisteredPlayers }
                     );
                     console.log(`💰 [PRIVATE BLOCKCHAIN] Confirmed transfer for ${finalBuyIn} chips to table ${underlyingTableId}`);
-                } catch (paymentError) {
-                    await tableManager.removePlayer(underlyingTableId, userId);
-                    throw new Error(`Private join payment failed: ${paymentError.message}`);
-                }
             }
+
+            const { tableState, isReconnect } = await tableManager.seatPlayer(
+                underlyingTableId,
+                {
+                    userId,
+                    username: user.username,
+                    chips: finalBuyIn,
+                    socketId: this.socket.id
+                }
+            );
 
             this.socket.join(underlyingTableId);
             this.socket.tableId = underlyingTableId;

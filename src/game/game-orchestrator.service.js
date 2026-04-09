@@ -604,6 +604,7 @@ class GameOrchestrator {
                 mongoHelper.COLLECTIONS.PRIVATE_TABLES,
                 tableDoc.privateTableId
             );
+            
 
             if (!privateTableResult.success || !privateTableResult.data) {
                 return false;

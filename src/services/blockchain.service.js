@@ -120,6 +120,28 @@ function isReplacementUnderpricedError(error) {
     || error?.message?.includes('replacement transaction underpriced');
 }
 
+function isNonceSyncError(error) {
+  return error?.code === 'NONCE_EXPIRED'
+    || error?.shortMessage?.includes('nonce has already been used')
+    || error?.message?.includes('nonce has already been used')
+    || error?.message?.includes('nonce too low');
+}
+
+async function resetSignerNonce(reason = 'unknown') {
+  try {
+    if (typeof signer.reset === 'function') {
+      signer.reset();
+    }
+
+    const pendingNonce = await provider.getTransactionCount(baseSigner.address, 'pending');
+    console.warn(`[BLOCKCHAIN] Reset signer nonce cache after ${reason}. Chain pending nonce: ${pendingNonce}`);
+    return pendingNonce;
+  } catch (error) {
+    console.error(`[BLOCKCHAIN] Failed to reset signer nonce cache after ${reason}: ${error.message}`);
+    return null;
+  }
+}
+
 // Redis health check
 async function checkRedisHealth() {
   try {
@@ -688,6 +710,9 @@ const createTableOnBlockchain = async (userAddress, rakePercentage, chipsInPlay,
     };
   } catch (error) {
     console.error('❌ Table creation error:', error.message);
+    if (isNonceSyncError(error)) {
+      await resetSignerNonce('table creation nonce sync error');
+    }
     if (retryCount < MAX_RETRIES) {
       console.log(`🔄 Retrying (${retryCount + 1}/${MAX_RETRIES})...`);
       await new Promise(resolve => setTimeout(resolve, 2000));
@@ -781,6 +806,9 @@ const transferFromPoolToTable = async (userAddress, tableAddress, amount, retryC
     console.error(`❌ [DEPOSIT] Transfer error: ${error.message}`);
     console.error(`❌ [DEPOSIT] Stack: ${error.stack}`);
     console.log(`${'='.repeat(80)}\n`);
+    if (isNonceSyncError(error)) {
+      await resetSignerNonce('pool-to-table transfer nonce sync error');
+    }
     if (isReplacementUnderpricedError(error)) {
       console.log(`🔄 [DEPOSIT] Retrying after replacement-underpriced error (${retryCount + 1}/${MAX_RETRIES})...`);
     }
