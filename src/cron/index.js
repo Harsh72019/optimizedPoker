@@ -33,38 +33,7 @@ module.exports = {
 
     cron.schedule('0 * * * *', async () => {
       try {
-        const usersResult = await mongoHelper.find(mongoHelper.COLLECTIONS.USERS, {});
-        const users = usersResult.data || [];
-        
-        for (const user of users) {
-          if (!user.cooldown || !user.cooldown.recentGames || user.cooldown.recentGames.length === 0) {
-            continue;
-          }
-          
-          const now = Date.now();
-          const validGames = user.cooldown.recentGames.filter(game => {
-            return new Date(game.expiresAt) > now;
-          });
-          
-          if (validGames.length !== user.cooldown.recentGames.length) {
-            const newCounts = {};
-            for (const game of validGames) {
-              for (const oppId of game.opponents) {
-                newCounts[oppId] = (newCounts[oppId] || 0) + 1;
-              }
-            }
-            
-            await mongoHelper.updateById(
-              mongoHelper.COLLECTIONS.USERS,
-              user._id,
-              { 
-                'cooldown.recentGames': validGames,
-                'cooldown.opponentCounts': newCounts
-              }
-            );
-            console.log(`[CRON] Cleaned cooldown for user ${user._id}`);
-          }
-        }
+        console.log('[CRON] Cooldown cleanup skipped: cooldown is enforced by games played, not wall-clock time.');
       } catch (error) {
         console.error('[CRON] Cooldown cleanup error:', error.message);
       }

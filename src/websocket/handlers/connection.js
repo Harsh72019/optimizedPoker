@@ -215,6 +215,8 @@ class ConnectionHandler {
             }
 
             const table = tableDoc.data;
+
+            await this.assertNoCooldownConflictForTable(finalTableId, userId);
             
             // Fetch SubTier to get bb and calculate buy-in range
             const subTierDoc = await mongoHelper.findById(mongoHelper.COLLECTIONS.SUB_TIERS, table.subTierId);
@@ -665,6 +667,66 @@ class ConnectionHandler {
             emitSuccess(this.socket, 'playerInfo', { player }, 'Player info');
         } catch (err) {
             emitError(this.socket, 'unableToGetPlayerInfo', err.message);
+        }
+    }
+
+    async assertNoCooldownConflictForTable(tableId, userId) {
+        const mongoHelper = require('../../models/customdb');
+        const cooldownService = require('../../services/cooldown.service');
+
+        const tableResult = await mongoHelper.findByIdWithPopulate(
+            mongoHelper.COLLECTIONS.TABLES,
+            tableId,
+            [
+                {
+                    path: 'currentPlayers',
+                    collection: mongoHelper.COLLECTIONS.PLAYERS,
+                    populate: {
+                        path: 'user',
+                        collection: mongoHelper.COLLECTIONS.USERS,
+                        select: 'username'
+                    }
+                }
+            ]
+        );
+
+        if (!tableResult.success || !tableResult.data || !tableResult.data.subTierId) {
+            return;
+        }
+
+        const table = tableResult.data;
+        const subTierResult = await mongoHelper.findByIdWithPopulate(
+            mongoHelper.COLLECTIONS.SUB_TIERS,
+            table.subTierId,
+            [{ path: 'tierId', collection: mongoHelper.COLLECTIONS.TIERS }]
+        );
+
+        if (!subTierResult.success || !subTierResult.data) {
+            return;
+        }
+
+        const seatedUserIds = (table.currentPlayers || [])
+            .filter(player => !player?.isBot && player?.user?._id)
+            .map(player => player.user._id.toString())
+            .filter(seatedUserId => seatedUserId !== userId);
+
+        if (seatedUserIds.length === 0) {
+            return;
+        }
+
+        const requesterConflict = await cooldownService.hasCooldownConflict(userId, seatedUserIds);
+        if (requesterConflict) {
+            throw new Error('Cooldown conflict: you cannot be matched with the same player for the next 3 games');
+        }
+
+        const tier = subTierResult.data.tierId;
+        if (tier?.mutualCooldownEnforced) {
+            for (const seatedUserId of seatedUserIds) {
+                const mutualConflict = await cooldownService.hasCooldownConflict(seatedUserId, [userId]);
+                if (mutualConflict) {
+                    throw new Error('Cooldown conflict: you cannot be matched with the same player for the next 3 games');
+                }
+            }
         }
     }
 

@@ -1,6 +1,12 @@
 const mongoHelper = require('../models/customdb');
 
 class CooldownService {
+  normalizeOpponentIds(opponentIds = []) {
+    return opponentIds
+      .map(opponentId => opponentId?.toString?.() || String(opponentId || ''))
+      .filter(Boolean);
+  }
+
   async updateCooldownsOnSeat(tableId, tierId, participants) {
     const tierResult = await mongoHelper.findById(mongoHelper.COLLECTIONS.TIERS, tierId);
     const tier = tierResult.data;
@@ -54,8 +60,7 @@ class CooldownService {
       player.cooldown.recentGames.push({
         tableId: tableId,
         seatedAt: new Date(),
-        opponents: others,
-        expiresAt: new Date(Date.now() + 10 * 60 * 1000)
+        opponents: others
       });
 
       // Keep only last windowSize games for reference
@@ -76,18 +81,10 @@ class CooldownService {
     
     if (!player || !player.cooldown) return false;
 
-    // Clean up expired games first
-    await this.cleanupExpiredCooldowns(playerId);
-
-    // Refresh player data after cleanup
-    const refreshedResult = await mongoHelper.findById(mongoHelper.COLLECTIONS.USERS, playerId);
-    const refreshedPlayer = refreshedResult.data;
-    console.log(refreshedPlayer , "refreshed player")
-    if (!refreshedPlayer || !refreshedPlayer.cooldown) return false;
-
-    const countsMap = refreshedPlayer.cooldown.opponentCounts || {};
+    const countsMap = player.cooldown.opponentCounts || {};
+    const normalizedOpponentIds = this.normalizeOpponentIds(opponentIds);
     console.log(countsMap , "counts map")
-    for (const oppId of opponentIds) {
+    for (const oppId of normalizedOpponentIds) {
       const count = countsMap.get ? countsMap.get(oppId.toString()) : countsMap[oppId.toString()];
       console.log(count  , "count inside the for loop")
       if (count && count > 0) {
@@ -192,8 +189,7 @@ class CooldownService {
       player.cooldown.recentGames.push({
         tableId: tableId,
         seatedAt: new Date(),
-        opponents: others,
-        expiresAt: new Date(Date.now() + 10 * 60 * 1000)
+        opponents: others
       });
 
       // Keep only last windowSize games

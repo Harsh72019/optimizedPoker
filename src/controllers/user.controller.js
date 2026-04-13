@@ -190,7 +190,7 @@ const checkTableExistence = async (req, res) => {
       return res.status(200).send({
         message: matchResult.message,
         data: matchResult.data,
-        status: true,
+        status: !!matchResult.success,
       });
     }
     
