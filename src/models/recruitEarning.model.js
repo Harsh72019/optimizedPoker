@@ -20,7 +20,7 @@ const recruitEarningSchema = new mongoose.Schema(
     },
     type: {
       type: String,
-      enum: ['deposit', 'game_win'],
+      enum: ['deposit', 'game_win', 'affiliate_commission'],
       required: true
     }
   },

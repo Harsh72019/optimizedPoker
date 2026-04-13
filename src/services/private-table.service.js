@@ -47,6 +47,15 @@ class PrivateTableService {
         ? (timeLimit || Math.max(30, Math.round((estimatedHours || 2) * 60)))
         : null;
 
+    let resolvedAffiliateId = affiliateId || null;
+
+    if (!resolvedAffiliateId) {
+      const hostResult = await mongoHelper.findById(mongoHelper.COLLECTIONS.USERS, hostId);
+      if (hostResult.success && hostResult.data?.referredBy) {
+        resolvedAffiliateId = hostResult.data.referredBy;
+      }
+    }
+
     // Map new config to legacy format for existing system compatibility
     const mappedConfig = {
       name,
@@ -65,7 +74,7 @@ class PrivateTableService {
       scheduledStartTime,
       password: invitationControl.type === 'PASSWORD' ? invitationControl.password : null,
       allowSpectators,
-      affiliateId,
+      affiliateId: resolvedAffiliateId,
       // New private table specific fields
       privateConfig: {
         stakes,

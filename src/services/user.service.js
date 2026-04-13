@@ -40,7 +40,18 @@ async function getUserProfile(id) {
     const userResult = await mongoHelper.findByIdWithPopulate(
       mongoHelper.COLLECTIONS.USERS,
       id,
-      [{ path: 'recruits', select: 'username accountType walletAddress' }]
+      [
+        {
+          path: 'recruits',
+          collection: mongoHelper.COLLECTIONS.USERS,
+          select: 'username accountType walletAddress profilePic createdAt'
+        },
+        {
+          path: 'referredBy',
+          collection: mongoHelper.COLLECTIONS.USERS,
+          select: 'username accountType referralCode profilePic'
+        }
+      ]
     );
 
     if (!userResult.success || !userResult.data) {
@@ -56,7 +67,10 @@ async function getUserProfile(id) {
 
     // Get recent 30 recruits with their earnings
     const recruitEarningsService = require('./recruitEarnings.service');
-    const recruitsWithEarnings = await recruitEarningsService.getRecruitsWithEarnings(id, 30);
+    const [recruitsWithEarnings, referralSummary] = await Promise.all([
+      recruitEarningsService.getRecruitsWithEarnings(id, 30),
+      recruitEarningsService.getReferralProfileSummary(id)
+    ]);
 
     return {
       _id: user._id,
@@ -69,11 +83,35 @@ async function getUserProfile(id) {
       chips: user.chips,
       handsFromNextTier: user.handsFromNextTier,
       reputation: user.reputation,
+      invitedBy: user.referredBy
+        ? {
+            _id: user.referredBy._id,
+            username: user.referredBy.username,
+            tier: user.referredBy.accountType,
+            referralCode: user.referredBy.referralCode,
+            profilePic: user.referredBy.profilePic || null
+          }
+        : null,
       wins: {
         totalHandsWon: stats?.totalHandsWon || 0,
+        totalHandsPlayed: stats?.totalHandsPlayed || 0,
         totalAmountWon: stats?.totalAmountWon || 0,
         winRate: stats?.winRate || 0,
         biggestWin: stats?.biggestWin || 0
+      },
+      referral: referralSummary || {
+        referralCode: user.referralCode,
+        referredBy: user.referredBy?._id || null,
+        totalRecruits: user.recruits?.length || 0,
+        recruitsByTier: { Human: 0, Rat: 0, Cat: 0, Dog: 0 },
+        commissionRate: 30,
+        totalEarnings: 0,
+        totalCommissionEvents: 0,
+        earningsByType: {
+          deposit: 0,
+          game_win: 0,
+          affiliate_commission: 0
+        }
       },
       recruits: recruitsWithEarnings,
       totalRecruits: user.recruits?.length || 0,

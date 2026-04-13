@@ -113,6 +113,17 @@ const unregisterTournament = {
   }),
 };
 
+const addReferral = {
+  body: Joi.object().keys({
+    referralCode: Joi.string()
+      .trim()
+      .uppercase()
+      .min(4)
+      .max(32)
+      .required(),
+  }),
+};
+
 module.exports = {
   updateUser,
   deleteUser,
@@ -123,4 +134,5 @@ module.exports = {
   unregisterTournament,
   checkTableExistence,
   saveTableAddress,
+  addReferral,
 };

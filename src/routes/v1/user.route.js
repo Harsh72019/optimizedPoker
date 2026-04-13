@@ -80,7 +80,12 @@ router.post(
 
 router.post('/processDistribution', userController.processDistribution);
 router.post('/setInitialTier', authController.protect, userController.setInitialTier);
-router.post('/addReferral', authController.protect, userController.addReferral);
+router.post(
+  '/addReferral',
+  authController.protect,
+  validate(userValidation.addReferral),
+  userController.addReferral
+);
 router.get(
   '/tournamentsRegistrations',
   authController.protect,

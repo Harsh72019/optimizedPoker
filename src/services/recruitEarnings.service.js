@@ -1,11 +1,19 @@
 const mongoHelper = require('../models/customdb');
 
+function floorToCents(amount) {
+  return Math.floor((Number(amount) + Number.EPSILON) * 100) / 100;
+}
+
 async function recordRecruitEarning(recruitId, recruiterId, amount, type) {
   try {
+    if (!recruitId || !recruiterId || !amount || amount <= 0) {
+      return null;
+    }
+
     const earningData = {
       recruitId,
       recruiterId,
-      amount,
+      amount: floorToCents(amount),
       type
     };
 
@@ -27,7 +35,11 @@ async function getRecruitsWithEarnings(recruiterId, limit = 30) {
     const userResult = await mongoHelper.findByIdWithPopulate(
       mongoHelper.COLLECTIONS.USERS,
       recruiterId,
-      [{ path: 'recruits', select: 'username accountType walletAddress' }]
+      [{
+        path: 'recruits',
+        collection: mongoHelper.COLLECTIONS.USERS,
+        select: 'username accountType walletAddress profilePic createdAt'
+      }]
     );
 
     if (!userResult.success || !userResult.data) {
@@ -71,6 +83,8 @@ async function getRecruitsWithEarnings(recruiterId, limit = 30) {
           username: recruit.username,
           accountType: recruit.accountType,
           walletAddress: recruit.walletAddress,
+          profilePic: recruit.profilePic || null,
+          joinedAt: recruit.createdAt || null,
           totalEarnings
         };
       })
@@ -85,10 +99,15 @@ async function getRecruitsWithEarnings(recruiterId, limit = 30) {
 
 async function addRecruit(userId, referralCode) {
   try {
+    const normalizedReferralCode = String(referralCode || '').trim().toUpperCase();
+    if (!normalizedReferralCode) {
+      return { success: false, message: 'Referral code is required' };
+    }
+
     // Find recruiter by referral code
     const recruiterResult = await mongoHelper.find(
       mongoHelper.COLLECTIONS.USERS,
-      { referralCode: referralCode }
+      { referralCode: normalizedReferralCode }
     );
 
     if (!recruiterResult.success || recruiterResult.data.length === 0) {
@@ -127,12 +146,14 @@ async function addRecruit(userId, referralCode) {
 
     if (recruiterUpdateResult.success) {
       const currentRecruits = recruiterUpdateResult.data.recruits || [];
-      await mongoHelper.updateById(
-        mongoHelper.COLLECTIONS.USERS,
-        recruiter._id,
-        { recruits: [...currentRecruits, userId] },
-        mongoHelper.MODELS.USER
-      );
+      if (!currentRecruits.includes(userId)) {
+        await mongoHelper.updateById(
+          mongoHelper.COLLECTIONS.USERS,
+          recruiter._id,
+          { recruits: [...currentRecruits, userId] },
+          mongoHelper.MODELS.USER
+        );
+      }
     }
 
     return { success: true, message: 'Referral added successfully', recruiter: recruiter.username };
@@ -142,8 +163,102 @@ async function addRecruit(userId, referralCode) {
   }
 }
 
+async function getRecruiterForUser(userId) {
+  try {
+    const userResult = await mongoHelper.findById(mongoHelper.COLLECTIONS.USERS, userId);
+    if (!userResult.success || !userResult.data?.referredBy) {
+      return null;
+    }
+
+    const recruiterResult = await mongoHelper.findById(
+      mongoHelper.COLLECTIONS.USERS,
+      userResult.data.referredBy
+    );
+
+    return recruiterResult.success ? recruiterResult.data : null;
+  } catch (error) {
+    console.error('Error getting recruiter for user:', error);
+    return null;
+  }
+}
+
+async function getReferralProfileSummary(userId) {
+  try {
+    const [userResult, earningsResult] = await Promise.all([
+      mongoHelper.findByIdWithPopulate(
+        mongoHelper.COLLECTIONS.USERS,
+        userId,
+        [{
+          path: 'recruits',
+          collection: mongoHelper.COLLECTIONS.USERS,
+          select: 'username accountType walletAddress profilePic createdAt'
+        }]
+      ),
+      mongoHelper.aggregate(mongoHelper.COLLECTIONS.RECRUIT_EARNINGS, [
+        {
+          $match: {
+            recruiterId: userId
+          }
+        },
+        {
+          $group: {
+            _id: '$type',
+            totalAmount: { $sum: '$amount' },
+            count: { $sum: 1 }
+          }
+        }
+      ])
+    ]);
+
+    if (!userResult.success || !userResult.data) {
+      return null;
+    }
+
+    const recruits = userResult.data.recruits || [];
+    const recruitsByTier = { Human: 0, Rat: 0, Cat: 0, Dog: 0 };
+
+    recruits.forEach(recruit => {
+      const tier = recruit.accountType || 'Human';
+      recruitsByTier[tier] = (recruitsByTier[tier] || 0) + 1;
+    });
+
+    const earningsByType = {
+      deposit: 0,
+      game_win: 0,
+      affiliate_commission: 0
+    };
+
+    let totalEarnings = 0;
+    let totalCommissionEvents = 0;
+
+    if (earningsResult.success && Array.isArray(earningsResult.data)) {
+      earningsResult.data.forEach(entry => {
+        earningsByType[entry._id] = floorToCents(entry.totalAmount || 0);
+        totalEarnings += Number(entry.totalAmount || 0);
+        totalCommissionEvents += Number(entry.count || 0);
+      });
+    }
+
+    return {
+      referralCode: userResult.data.referralCode,
+      referredBy: userResult.data.referredBy || null,
+      totalRecruits: recruits.length,
+      recruitsByTier,
+      commissionRate: 30,
+      totalEarnings: floorToCents(totalEarnings),
+      totalCommissionEvents,
+      earningsByType
+    };
+  } catch (error) {
+    console.error('Error getting referral profile summary:', error);
+    return null;
+  }
+}
+
 module.exports = {
   recordRecruitEarning,
   getRecruitsWithEarnings,
-  addRecruit
+  addRecruit,
+  getRecruiterForUser,
+  getReferralProfileSummary
 };

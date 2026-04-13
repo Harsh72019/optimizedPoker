@@ -508,6 +508,7 @@ class WalletIntegrationService {
 
   async payAffiliateCommission(affiliateId, amount, gameId, referredUserId, options = {}) {
     const affiliate = await this.resolveUser(affiliateId, 'Affiliate');
+    const recruitEarningsService = require('./recruitEarnings.service');
     const idempotencyKey = options.idempotencyKey || `affiliate:${gameId}:${affiliateId}`;
     const existingTransaction = await this.findExistingTransaction(
       'AFFILIATE_COMMISSION',
@@ -555,6 +556,15 @@ class WalletIntegrationService {
       status: 'PENDING',
       metadata: { referredUserId, sourceTableId: options.sourceTableId, queueResult: payoutResult.queueResult, idempotencyKey }
     });
+
+    if (referredUserId) {
+      await recruitEarningsService.recordRecruitEarning(
+        referredUserId,
+        affiliateId,
+        amount,
+        'affiliate_commission'
+      );
+    }
 
     return {
       success: true,
