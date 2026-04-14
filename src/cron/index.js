@@ -3,6 +3,7 @@ const {userService, tournamentService} = require('../services');
 const {deleteInactiveTables} = require('../services/table.service');
 const queueMatcher = require('../services/queueMatcher.service');
 const mongoHelper = require('../models/customdb');
+const transactionReconciliationService = require('../services/transaction-reconciliation.service');
 
 let io = null;
 
@@ -36,6 +37,17 @@ module.exports = {
         console.log('[CRON] Cooldown cleanup skipped: cooldown is enforced by games played, not wall-clock time.');
       } catch (error) {
         console.error('[CRON] Cooldown cleanup error:', error.message);
+      }
+    });
+
+    cron.schedule('*/30 * * * * *', async () => {
+      try {
+        const summary = await transactionReconciliationService.reconcilePendingBuyIns();
+        if (summary.scanned > 0 || summary.errors.length > 0) {
+          console.log('[CRON] Buy-in reconciliation summary:', summary);
+        }
+      } catch (error) {
+        console.error('[CRON] Buy-in reconciliation error:', error.message);
       }
     });
   }
