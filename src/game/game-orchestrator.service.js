@@ -136,7 +136,7 @@ class GameOrchestrator {
                 return;
             }
 
-            const seconds = 30;
+            const seconds = 120;
             const minAmount = privateConfig.gameConfig.buyIn.min;
             const maxAmount = privateConfig.gameConfig.buyIn.max;
 
@@ -195,7 +195,7 @@ class GameOrchestrator {
                         secondsRemaining: seconds,
                         canLeave: true,
                     },
-                    'Rebuy or leave within 30 seconds to meet the next-hand minimum'
+                    'Rebuy or leave within 2 minutes to meet the next-hand minimum'
                 );
             }
 
@@ -249,9 +249,27 @@ class GameOrchestrator {
             throw new Error('Table not found');
         }
 
-        await walletIntegrationService.chargeBuyInToTable(userId, requestedAmount, tableId, tableDoc.data, {
-            paymentContext: 'PRIVATE_TABLE_REBUY'
-        });
+        pendingPlayer.status = 'processing';
+
+        emitSuccess(
+            this.io.to(tableId),
+            'playerRebuyInProgress',
+            {
+                playerId: userId,
+                username: user.username,
+                amount: requestedAmount,
+            },
+            `${user.username} is rebuying. Please wait.`
+        );
+
+        try {
+            await walletIntegrationService.chargeBuyInToTable(userId, requestedAmount, tableId, tableDoc.data, {
+                paymentContext: 'PRIVATE_TABLE_REBUY'
+            });
+        } catch (error) {
+            pendingPlayer.status = 'pending';
+            throw error;
+        }
 
         const tableState = await tableManager.getTable(tableId);
         const tablePlayer = tableState.players.find(player => player.userId === userId);
