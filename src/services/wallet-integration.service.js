@@ -2,6 +2,10 @@ const mongoHelper = require('../models/customdb');
 const blockchainService = require('./blockchain.service');
 
 class WalletIntegrationService {
+  constructor() {
+    this.stalePendingMs = 5 * 60 * 1000;
+  }
+
   generateTransactionId(prefix, gameId, userId = 'system') {
     return `${prefix}_${gameId || 'na'}_${userId}_${Date.now()}`;
   }
@@ -60,6 +64,43 @@ class WalletIntegrationService {
     return existingResult.data[0];
   }
 
+  async findLatestTableBuyInTransaction(userId, gameId, tableId, paymentContext) {
+    const existingResult = await mongoHelper.find(mongoHelper.COLLECTIONS.TRANSACTION_LEDGER, {
+      userId,
+      type: 'BUY_IN_CHARGE',
+      gameId,
+      'metadata.tableId': tableId,
+      'metadata.paymentContext': paymentContext,
+      status: { $in: ['PENDING', 'COMPLETED', 'FAILED'] }
+    });
+
+    if (!existingResult.success || !Array.isArray(existingResult.data) || existingResult.data.length === 0) {
+      return null;
+    }
+
+    return existingResult.data.sort((a, b) => {
+      const aTime = new Date(a.updatedAt || a.updated_at || a.createdAt || 0).getTime();
+      const bTime = new Date(b.updatedAt || b.updated_at || b.createdAt || 0).getTime();
+      return bTime - aTime;
+    })[0];
+  }
+
+  isPendingTransactionStale(transaction) {
+    if (!transaction || transaction.status !== 'PENDING') {
+      return false;
+    }
+
+    const referenceTime = new Date(
+      transaction.updatedAt || transaction.updated_at || transaction.createdAt || Date.now()
+    ).getTime();
+
+    if (!Number.isFinite(referenceTime)) {
+      return false;
+    }
+
+    return (Date.now() - referenceTime) > this.stalePendingMs;
+  }
+
   async updateTransactionLedger(entryId, updates = {}) {
     const currentEntry = await mongoHelper.findById(mongoHelper.COLLECTIONS.TRANSACTION_LEDGER, entryId);
     const currentMetadata = currentEntry.success && currentEntry.data ? (currentEntry.data.metadata || {}) : {};
@@ -115,6 +156,23 @@ class WalletIntegrationService {
     }
 
     if (existingTransaction?.status === 'PENDING') {
+      if (this.isPendingTransactionStale(existingTransaction)) {
+        const recycled = await this.updateTransactionLedger(existingTransaction._id, {
+          amount,
+          description,
+          walletAddress,
+          blockchainTxHash: null,
+          status: 'PENDING',
+          metadata: {
+            ...metadata,
+            previousPendingTransactionId: existingTransaction.transactionId || existingTransaction._id,
+            previousPendingMarkedStaleAt: new Date().toISOString(),
+            retriedAt: new Date().toISOString()
+          }
+        });
+        return { entry: recycled, duplicate: false };
+      }
+
       throw new Error(`A ${type} transaction is already in progress for ${gameId}`);
     }
 
@@ -759,12 +817,21 @@ class WalletIntegrationService {
     const tableId = table?._id?.toString?.() || table?.toString?.() || gameId;
     const paymentContext = options.paymentContext || 'TABLE_JOIN';
     const idempotencyKey = options.idempotencyKey || `buy_in:${gameId}:${tableId}:${playerId}:${paymentContext}`;
-    const existingTransaction = await this.findAnyTransaction(
+    let existingTransaction = await this.findAnyTransaction(
       'BUY_IN_CHARGE',
       playerId,
       gameId,
       idempotencyKey
     );
+
+    if (!existingTransaction) {
+      existingTransaction = await this.findLatestTableBuyInTransaction(
+        playerId,
+        gameId,
+        tableId,
+        paymentContext
+      );
+    }
 
     if (existingTransaction?.status === 'COMPLETED') {
       return {
@@ -774,6 +841,19 @@ class WalletIntegrationService {
         transactionId: existingTransaction.transactionId,
         blockchainTxHash: existingTransaction.blockchainTxHash || null,
         blockchainPending: false,
+        duplicate: true,
+        table
+      };
+    }
+
+    if (existingTransaction?.status === 'PENDING') {
+      return {
+        success: true,
+        chargedAmount: Math.abs(existingTransaction.amount),
+        walletAddress: user.walletAddress,
+        transactionId: existingTransaction.transactionId,
+        blockchainTxHash: existingTransaction.blockchainTxHash || null,
+        blockchainPending: true,
         duplicate: true,
         table
       };
