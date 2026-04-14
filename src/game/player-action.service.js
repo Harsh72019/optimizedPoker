@@ -14,6 +14,16 @@ class PlayerActionService {
         this.orchestrator = orchestrator;
     }
 
+    normalizeAmount(value) {
+        const amount = Number(value || 0);
+        if (!Number.isFinite(amount)) {
+            return 0;
+        }
+
+        const normalized = Math.round((amount + Number.EPSILON) * 100) / 100;
+        return Math.abs(normalized) < 0.000001 ? 0 : normalized;
+    }
+
     async forceEndHand(tableId) {
         const gameState = await gameStateManager.getGame(tableId);
 
@@ -60,8 +70,8 @@ class PlayerActionService {
             this.validateActionRequest(action, amount, actionPolicy);
 
             const actionAmount = action === 'all-in'
-                ? player.chips
-                : (action === 'call' ? actionPolicy.callAmount || 0 : amount);
+                ? this.normalizeAmount(player.chips)
+                : this.normalizeAmount(action === 'call' ? actionPolicy.callAmount || 0 : amount);
 
             this.applyAction(gameState, player, action, amount, actionPolicy);
             console.log(`✅ [ACTION APPLIED] ${action} by ${playerId}`);
@@ -150,7 +160,7 @@ class PlayerActionService {
     }
 
     applyAction(gameState, player, action, amount, policy) {
-        const callAmount = policy.callAmount || 0;
+        const callAmount = this.normalizeAmount(policy.callAmount || 0);
 
         switch (action) {
             case 'fold':
@@ -166,7 +176,7 @@ class PlayerActionService {
 
             case 'raise':
             case 'bet':
-                this.applyBet(gameState, player, amount);
+                this.applyBet(gameState, player, this.normalizeAmount(amount));
                 // gameState.currentBet = player.chipsInPot;
 
                 gameState.players.forEach(p => {
@@ -177,29 +187,34 @@ class PlayerActionService {
                 break;
 
             case 'all-in':
-                this.applyBet(gameState, player, player.chips);
+                this.applyBet(gameState, player, this.normalizeAmount(player.chips));
                 player.status = 'ALL_IN';
                 break;
+        }
+
+        if (player.status === 'ACTIVE' && this.normalizeAmount(player.chips) === 0) {
+            player.status = 'ALL_IN';
         }
 
         player.hasActed = true;
     }
 
     applyBet(gameState, player, amount) {
-        const actual = Math.min(amount, player.chips);
+        const actual = this.normalizeAmount(Math.min(amount, player.chips));
 
-        player.chips -= actual;
+        player.chips = this.normalizeAmount(player.chips - actual);
 
-        gameState.streetBets[player.id] += actual;
-        gameState.totalContributions[player.id] += actual;
+        gameState.streetBets[player.id] = this.normalizeAmount((gameState.streetBets[player.id] || 0) + actual);
+        gameState.totalContributions[player.id] = this.normalizeAmount((gameState.totalContributions[player.id] || 0) + actual);
 
         // If raise
-        if (gameState.streetBets[player.id] > gameState.currentBet) {
-            const raiseSize =
-                gameState.streetBets[player.id] - gameState.currentBet;
+        if (this.normalizeAmount(gameState.streetBets[player.id]) > this.normalizeAmount(gameState.currentBet)) {
+            const raiseSize = this.normalizeAmount(
+                gameState.streetBets[player.id] - gameState.currentBet
+            );
 
             gameState.lastRaiseAmount = raiseSize;
-            gameState.currentBet = gameState.streetBets[player.id];
+            gameState.currentBet = this.normalizeAmount(gameState.streetBets[player.id]);
 
             // Reset others' hasActed
             gameState.players.forEach(p => {
@@ -214,7 +229,7 @@ class PlayerActionService {
         const active = gameState.players
             .filter(p =>
                 p.status === 'ACTIVE' &&
-                p.chips > 0
+                this.normalizeAmount(p.chips) > 0
             )
             .sort((a, b) => a.seatPosition - b.seatPosition);
 
@@ -297,7 +312,7 @@ class PlayerActionService {
         if (gameState.phase === 'COMPLETED') return;
 
         for (const id in gameState.streetBets) {
-            gameState.pot += gameState.streetBets[id];
+            gameState.pot = this.normalizeAmount(gameState.pot + gameState.streetBets[id]);
             gameState.streetBets[id] = 0;
         }
 
@@ -306,8 +321,8 @@ class PlayerActionService {
         if (activePlayers.length === 1) {
             console.log(`🏆 [WINNER] ${activePlayers[0].id} wins by fold`);
             const winner = activePlayers[0];
-            const winAmount = gameState.pot;
-            winner.chips += winAmount;
+            const winAmount = this.normalizeAmount(gameState.pot);
+            winner.chips = this.normalizeAmount(winner.chips + winAmount);
             gameState.pot = 0;
             gameState.currentPlayerId = null;
             gameState.phase = 'COMPLETED';
@@ -552,15 +567,17 @@ class PlayerActionService {
         }
 
         if ((action === 'raise' || action === 'bet') && policy.minRaiseAmount != null) {
+            const normalizedAmount = this.normalizeAmount(amount);
+
             if (typeof amount !== 'number' || Number.isNaN(amount)) {
                 throw new Error('Raise amount is required');
             }
 
-            if (amount < policy.minRaiseAmount) {
+            if (normalizedAmount < this.normalizeAmount(policy.minRaiseAmount)) {
                 throw new Error(`Raise must be at least ${policy.minRaiseAmount}`);
             }
 
-            if (policy.maxRaiseAmount != null && amount > policy.maxRaiseAmount) {
+            if (policy.maxRaiseAmount != null && normalizedAmount > this.normalizeAmount(policy.maxRaiseAmount)) {
                 throw new Error(`Raise cannot exceed ${policy.maxRaiseAmount}`);
             }
         }
@@ -568,7 +585,7 @@ class PlayerActionService {
 
     async handleShowdown(gameState) {
         for (const id in gameState.streetBets) {
-            gameState.pot += gameState.streetBets[id];
+            gameState.pot = this.normalizeAmount(gameState.pot + gameState.streetBets[id]);
             gameState.streetBets[id] = 0;
         }
 
@@ -580,7 +597,7 @@ class PlayerActionService {
 
         results.forEach(r => {
             const winner = gameState.players.find(p => p.id === r.playerId);
-            winner.chips += r.amount;
+            winner.chips = this.normalizeAmount(winner.chips + r.amount);
             console.log(`💵 Player ${r.playerId} wins ${r.amount} with ${r.handName || 'High Card'}`);
         });
 
@@ -664,12 +681,12 @@ class PlayerActionService {
             return {
                 _id: player.userId,
                 username: player.username,
-                chips: player.chips,
+                chips: this.normalizeAmount(player.chips),
                 seatPosition: player.seatPosition,
                 status: gamePlayer?.status || 'waiting',
                 socketId: player.socketId,
                 isAway: player.isAway || false,
-                currentRoundBet: gameState ? (gameState.streetBets[player.userId] || 0) : 0
+                currentRoundBet: gameState ? this.normalizeAmount(gameState.streetBets[player.userId] || 0) : 0
             };
         });
 
@@ -677,10 +694,10 @@ class PlayerActionService {
             maxPlayers: tableState.maxPlayers || 9,
             currentPlayers: formattedPlayers,
             gameState: gameState ? {
-                pot: gameState.pot || 0,
+                pot: this.normalizeAmount(gameState.pot || 0),
                 phase: gameState.phase,
                 currentPlayerId: gameState.currentPlayerId,
-                currentBet: gameState.currentBet || 0,
+                currentBet: this.normalizeAmount(gameState.currentBet || 0),
                 boardCards: gameState.boardCards || [],
                 dealerPosition: gameState.dealerPosition,
                 smallBlindPosition: gameState.smallBlindPosition,

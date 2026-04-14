@@ -38,6 +38,25 @@ class GameOrchestrator {
         this.privateRebuyWindows = new Map(); // tableId -> rebuy window metadata
     }
 
+    async emitRoomLeftToConnectedPlayers(tableId, reason = 'TABLE_CLOSED', message = 'Table closed') {
+        try {
+            const sockets = await this.io.in(tableId).fetchSockets();
+            for (const socket of sockets) {
+                emitSuccess(
+                    socket,
+                    'roomLeft',
+                    {
+                        tableId,
+                        reason
+                    },
+                    message
+                );
+            }
+        } catch (error) {
+            console.error(`❌ [ROOM LEFT] Failed to emit roomLeft for ${tableId}:`, error.message);
+        }
+    }
+
     async getPrivateRebuyCandidates(tableId) {
         const tableState = await tableManager.getTable(tableId);
         const gameState = await gameStateManager.getGame(tableId);
@@ -806,6 +825,12 @@ class GameOrchestrator {
             const tableTimerService = require('../services/table-timer.service');
             this.clearPrivateRebuyWindow(tableId);
 
+            await this.emitRoomLeftToConnectedPlayers(
+                tableId,
+                'GAME_COMPLETED',
+                'Game completed. Returning to home screen.'
+            );
+
             // Delete game state
             await gameStateManager.deleteGame(tableId);
 
@@ -877,6 +902,11 @@ class GameOrchestrator {
                 console.log(`🔄 Not enough players to restart`);
                 const completed = await this.checkPrivateTableCompletion(tableId, 'INSUFFICIENT_PLAYERS_FOR_NEXT_HAND');
                 if (!completed) {
+                    await this.emitRoomLeftToConnectedPlayers(
+                        tableId,
+                        'INSUFFICIENT_PLAYERS',
+                        'Not enough players remain to continue. Returning to home screen.'
+                    );
                     await tableManager.setStatus(tableId, 'WAITING');
                 }
                 return;

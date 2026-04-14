@@ -1,6 +1,15 @@
 // src/engine/state-machine.js
 
 class GameStateMachine {
+  static normalizeAmount(value) {
+    const amount = Number(value || 0);
+    if (!Number.isFinite(amount)) {
+      return 0;
+    }
+
+    const normalized = Math.round((amount + Number.EPSILON) * 100) / 100;
+    return Math.abs(normalized) < 0.000001 ? 0 : normalized;
+  }
 
   static nextPhase(currentPhase) {
     switch (currentPhase) {
@@ -21,7 +30,7 @@ class GameStateMachine {
     if (nonFoldedPlayers.length <= 1) return true;
 
     const actionablePlayers = nonFoldedPlayers.filter(
-      p => p.status === 'ACTIVE' && p.chips > 0
+      p => p.status === 'ACTIVE' && this.normalizeAmount(p.chips) > 0
     );
 
     // Nobody can act anymore, so betting is over and the board can run out.
@@ -29,8 +38,9 @@ class GameStateMachine {
 
     // Remaining active players must have acted and matched the current bet.
     return actionablePlayers.every(p => {
-      const playerBet = gameState.streetBets[p.id] || 0;
-      return p.hasActed && playerBet === gameState.currentBet;
+      const playerBet = this.normalizeAmount(gameState.streetBets[p.id] || 0);
+      const currentBet = this.normalizeAmount(gameState.currentBet || 0);
+      return p.hasActed && playerBet === currentBet;
     });
   }
 
@@ -42,7 +52,7 @@ class GameStateMachine {
     if (nonFolded.length <= 1) return false;
 
     const activeNonAllIn = nonFolded.filter(
-      p => p.status === 'ACTIVE' && p.chips > 0
+      p => p.status === 'ACTIVE' && this.normalizeAmount(p.chips) > 0
     );
 
     // If nobody left can bet, we should proceed to showdown.

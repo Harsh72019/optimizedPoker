@@ -11,6 +11,16 @@ class StartGameService {
         this.timerManager = timerManager;
     }
 
+    normalizeAmount(value) {
+        const amount = Number(value || 0);
+        if (!Number.isFinite(amount)) {
+            return 0;
+        }
+
+        const normalized = Math.round((amount + Number.EPSILON) * 100) / 100;
+        return Math.abs(normalized) < 0.000001 ? 0 : normalized;
+    }
+
     getFirstPlayerAfterBigBlind(gameState) {
         const active = gameState.players
             .filter(p => p.status === 'ACTIVE')
@@ -120,13 +130,16 @@ class StartGameService {
                 gameState.antes = antesResult.antes;
                 gameState.anteValue = antesResult.anteAmount || 0;
                 gameState.totalAntes = antesResult.totalAntes || 0;
-                gameState.pot = (gameState.pot || 0) + gameState.totalAntes;
+                gameState.pot = this.normalizeAmount((gameState.pot || 0) + gameState.totalAntes);
 
                 gameState.players.forEach(p => {
                     const anteAmount = antesResult.antes[p.id] || 0;
                     if (anteAmount > 0) {
-                        p.chips -= anteAmount;
-                        gameState.totalContributions[p.id] += anteAmount;
+                        p.chips = this.normalizeAmount(p.chips - anteAmount);
+                        gameState.totalContributions[p.id] = this.normalizeAmount((gameState.totalContributions[p.id] || 0) + anteAmount);
+                        if (p.chips === 0) {
+                            p.status = 'ALL_IN';
+                        }
                     }
                 });
 
@@ -137,20 +150,26 @@ class StartGameService {
             gameState.players.forEach(p => {
                 if (p.seatPosition === gameState.smallBlindPosition) {
                     const amount = Math.min(smallBlindAmount, p.chips);
-                    p.chips -= amount;
+                    p.chips = this.normalizeAmount(p.chips - amount);
 
-                    gameState.streetBets[p.id] += amount;
-                    gameState.totalContributions[p.id] += amount;
+                    gameState.streetBets[p.id] = this.normalizeAmount((gameState.streetBets[p.id] || 0) + amount);
+                    gameState.totalContributions[p.id] = this.normalizeAmount((gameState.totalContributions[p.id] || 0) + amount);
+                    if (p.chips === 0) {
+                        p.status = 'ALL_IN';
+                    }
                 }
 
                 if (p.seatPosition === gameState.bigBlindPosition) {
                     const amount = Math.min(bigBlindAmount, p.chips);
-                    p.chips -= amount;
+                    p.chips = this.normalizeAmount(p.chips - amount);
 
-                    gameState.streetBets[p.id] += amount;
-                    gameState.totalContributions[p.id] += amount;
+                    gameState.streetBets[p.id] = this.normalizeAmount((gameState.streetBets[p.id] || 0) + amount);
+                    gameState.totalContributions[p.id] = this.normalizeAmount((gameState.totalContributions[p.id] || 0) + amount);
 
-                    gameState.currentBet = amount;
+                    gameState.currentBet = this.normalizeAmount(amount);
+                    if (p.chips === 0) {
+                        p.status = 'ALL_IN';
+                    }
                 }
             });
 
