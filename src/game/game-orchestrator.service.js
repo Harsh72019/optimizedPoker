@@ -465,13 +465,14 @@ class GameOrchestrator {
                 return;
             }
 
-            console.log(`⏳ Starting 30s waiting for table ${tableId}`);
+            const waitSeconds = 8;
+            console.log(`⏳ Starting ${waitSeconds}s waiting for table ${tableId}`);
 
-            emitSuccess(this.io.to(tableId), 'waitingCountdown', { seconds: 30 }, 'Waiting countdown');
+            emitSuccess(this.io.to(tableId), 'waitingCountdown', { seconds: waitSeconds }, 'Waiting countdown');
 
             const timeout = setTimeout(async () => {
                 await this.startHand(tableId);
-            }, 25000);
+            }, waitSeconds * 1000);
             this.clearRestartTimer(tableId);
             this.clearWaitingTimer(tableId);
             this.waitingTimers.set(tableId, timeout);
