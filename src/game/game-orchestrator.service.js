@@ -731,9 +731,8 @@ class GameOrchestrator {
                 if (privateTableDoc.success && privateTableDoc.data) {
                     const privateTable = privateTableDoc.data;
 
-                    const paidEntrants = (privateTable.registeredPlayers || []).filter(player => player.buyInPaid);
-                    const participantUserIds = paidEntrants.map(player => player.userId?.toString?.() || player.userId).filter(Boolean);
-                    const actualParticipants = Math.max(paidEntrants.length, winners.length, 1);
+                    const participantUserIds = await this.getPrivateSngParticipantUserIds(tableId, privateTable);
+                    const actualParticipants = Math.max(participantUserIds.length, 1);
                     const totalWagered = await this.getPrivateSngTotalWagered(tableId, privateTable);
                     const settlementAlreadyMarkedForThisGame =
                         privateTable.settlementCompleted && privateTable.settlementGameId === tableId;
@@ -834,12 +833,55 @@ class GameOrchestrator {
                 return this.floorToCents(totalFromLedger);
             }
 
-            const paidEntrants = ((privateTable?.registeredPlayers) || []).filter(player => player.buyInPaid);
-            return this.floorToCents(Math.max(paidEntrants.length, 1) * Number(privateTable?.buyIn || 0));
+            const participantUserIds = await this.getPrivateSngParticipantUserIds(tableId, privateTable);
+            return this.floorToCents(Math.max(participantUserIds.length, 1) * Number(privateTable?.buyIn || 0));
         } catch (error) {
             console.error(`❌ [SETTLEMENT] Failed to derive total wagered for private SNG ${tableId}:`, error.message);
-            const paidEntrants = ((privateTable?.registeredPlayers) || []).filter(player => player.buyInPaid);
-            return this.floorToCents(Math.max(paidEntrants.length, 1) * Number(privateTable?.buyIn || 0));
+            const participantUserIds = await this.getPrivateSngParticipantUserIds(tableId, privateTable);
+            return this.floorToCents(Math.max(participantUserIds.length, 1) * Number(privateTable?.buyIn || 0));
+        }
+    }
+
+    async getPrivateSngParticipantUserIds(tableId, privateTable = null) {
+        try {
+            const ledgerResult = await mongoHelper.find(mongoHelper.COLLECTIONS.TRANSACTION_LEDGER, {
+                type: 'BUY_IN_CHARGE',
+                gameId: tableId,
+                status: 'COMPLETED'
+            });
+
+            const transactions = ledgerResult.success && Array.isArray(ledgerResult.data)
+                ? ledgerResult.data
+                : [];
+
+            const participantUserIds = [
+                ...new Set(
+                    transactions
+                        .filter(entry => {
+                            const paymentContext = entry?.metadata?.paymentContext;
+                            const sourceTableId = entry?.metadata?.tableId;
+                            return sourceTableId?.toString?.() === tableId.toString()
+                                && paymentContext === 'PRIVATE_TABLE_JOIN';
+                        })
+                        .map(entry => entry.userId?.toString?.() || entry.userId)
+                        .filter(Boolean)
+                )
+            ];
+
+            if (participantUserIds.length > 0) {
+                return participantUserIds;
+            }
+
+            return ((privateTable?.registeredPlayers) || [])
+                .filter(player => player.buyInPaid)
+                .map(player => player.userId?.toString?.() || player.userId)
+                .filter(Boolean);
+        } catch (error) {
+            console.error(`âŒ [SETTLEMENT] Failed to derive participant ids for private SNG ${tableId}:`, error.message);
+            return ((privateTable?.registeredPlayers) || [])
+                .filter(player => player.buyInPaid)
+                .map(player => player.userId?.toString?.() || player.userId)
+                .filter(Boolean);
         }
     }
 
