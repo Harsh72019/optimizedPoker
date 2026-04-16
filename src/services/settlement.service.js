@@ -71,7 +71,11 @@ class SettlementService {
     const prizePool = this.floorToCents(prizePoolRaw);
     const effectiveRake = tierRake + hostUplift;
 
-    settlementSteps.push(`Step 1: TotalBuyIns = ${actualParticipants} x ${buyIn} = ${totalBuyIns}`);
+    settlementSteps.push(
+      Number.isFinite(Number(totalWagered))
+        ? `Step 1: TotalBuyIns = totalWagered ${this.floorToCents(totalWagered)}`
+        : `Step 1: TotalBuyIns = ${actualParticipants} x ${buyIn} = ${totalBuyIns}`
+    );
     settlementSteps.push(`Step 2: CompanyBaseRake = ${tierRake}% x ${totalBuyIns} = ${companyShareBeforeAff}`);
     settlementSteps.push(`Step 3: HostUpliftCollected = ${hostUplift}% x ${totalBuyIns} = ${hostUpliftCollected}`);
     settlementSteps.push(`Step 4: TotalRake = ${companyShareBeforeAff} + ${hostUpliftCollected} = ${totalRake}`);

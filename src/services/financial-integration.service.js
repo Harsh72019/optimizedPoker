@@ -45,7 +45,9 @@ class FinancialIntegrationService {
       hostRewardPercent,
       setupFeeAmount,
       affiliateId,
-      winners
+      winners,
+      totalWagered,
+      participantUserIds = []
     } = gameData;
 
     const settlement = await financialService.settleGame(gameId, {
@@ -59,7 +61,8 @@ class FinancialIntegrationService {
       hostUplift,
       hostRewardPercent,
       setupFeeAmount,
-      affiliateId
+      affiliateId,
+      totalWagered
     });
 
     if (settlement.alreadySettled) {
@@ -83,6 +86,20 @@ class FinancialIntegrationService {
       };
     }
 
+    if (!settlement.settlement) {
+      const walletResults = await this.executeRefundPayouts({
+        gameId,
+        participantUserIds,
+        buyIn
+      });
+
+      return {
+        ...settlement,
+        payoutPlan: [],
+        walletResults
+      };
+    }
+
     const payoutPlan = winners && winners.length > 0 && settlement.settlement
       ? await this.processWinnerPayouts(gameId, winners, settlement.settlement.remainingPrize)
       : [];
@@ -100,6 +117,36 @@ class FinancialIntegrationService {
       ...settlement,
       payoutPlan,
       walletResults
+    };
+  }
+
+  async executeRefundPayouts({ gameId, participantUserIds, buyIn }) {
+    const uniqueParticipants = [...new Set((participantUserIds || []).filter(Boolean))];
+
+    if (uniqueParticipants.length === 0 || !(Number(buyIn) > 0)) {
+      return {
+        refunds: [],
+        winners: [],
+        host: null,
+        hostUplift: null,
+        affiliate: null,
+        platform: null
+      };
+    }
+
+    const refunds = await walletIntegrationService.refundBuyIns(
+      uniqueParticipants,
+      Number(buyIn),
+      gameId
+    );
+
+    return {
+      refunds,
+      winners: [],
+      host: null,
+      hostUplift: null,
+      affiliate: null,
+      platform: null
     };
   }
 

@@ -732,6 +732,7 @@ class GameOrchestrator {
                     const privateTable = privateTableDoc.data;
 
                     const paidEntrants = (privateTable.registeredPlayers || []).filter(player => player.buyInPaid);
+                    const participantUserIds = paidEntrants.map(player => player.userId?.toString?.() || player.userId).filter(Boolean);
                     const actualParticipants = Math.max(paidEntrants.length, winners.length, 1);
                     const totalWagered = await this.getPrivateSngTotalWagered(tableId, privateTable);
                     const settlementAlreadyMarkedForThisGame =
@@ -756,15 +757,14 @@ class GameOrchestrator {
                             hostRewardPercent: privateTable.hostRewardPercent,
                             setupFeeAmount: privateTable.setupFeeAmount,
                             affiliateId: privateTable.affiliateId,
+                            participantUserIds,
                             winners
                         });
 
-                    if (!financialResult.settlement) {
-                        await this.queueRegularTableCompletionCashouts(tableId, playersForStandings);
-                    }
-
                     const completionStats = await this.getPrivateTableCompletionStats(tableId, privateTable, actualParticipants);
-                    const persistedWinners = this.getPersistedPrivateTableWinners(financialResult.payoutPlan, finalStandings);
+                    const persistedWinners = financialResult.settlement
+                        ? this.getPersistedPrivateTableWinners(financialResult.payoutPlan, finalStandings)
+                        : [];
 
                     await mongoHelper.updateById(
                         mongoHelper.COLLECTIONS.PRIVATE_TABLES,
@@ -776,7 +776,7 @@ class GameOrchestrator {
                                 settlementGameId: tableId,
                                 settlementCompletedAt: privateTable.settlementCompletedAt || new Date(),
                                 settlementSummary: {
-                                    ...financialResult.settlement,
+                                    ...(financialResult.settlement || {}),
                                     totalWagered,
                                 },
                                 walletResults: financialResult.walletResults,

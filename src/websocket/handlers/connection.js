@@ -306,7 +306,7 @@ class ConnectionHandler {
 
             // Send mid-game state if game is active
             if (gameState && gameState.phase !== 'COMPLETED') {
-                const player = gameState.players.find(p => p.id === userId);
+                let player = gameState.players.find(p => p.id === userId);
                 
                 // Send player's hole cards if they're in the game
                 if (player && player.cards) {
@@ -474,7 +474,7 @@ class ConnectionHandler {
             
             // Send mid-game state if needed
             if (gameState && gameState.phase !== 'COMPLETED') {
-                const player = gameState.players.find(p => p.id === userId);
+                let player = gameState.players.find(p => p.id === userId);
                 
                 if (player && player.cards) {
                     emitSuccess(this.socket, 'receiveHand', {playerId : player.id, hand: player.cards }, 'Your cards');
@@ -511,8 +511,20 @@ class ConnectionHandler {
             }
 
             const userId = user._id.toString();
+            const mongoHelper = require('../../models/customdb');
+            const gameStateManager = require('../../state/game-state');
+            const tableDoc = await mongoHelper.findById(mongoHelper.COLLECTIONS.TABLES, tableId);
+            let isPrivateSng = false;
 
-            const gameState = await require('../../state/game-state').getGame(tableId);
+            if (tableDoc.success && tableDoc.data?.privateTableId) {
+                const privateTableDoc = await mongoHelper.findById(
+                    mongoHelper.COLLECTIONS.PRIVATE_TABLES,
+                    tableDoc.data.privateTableId
+                );
+                isPrivateSng = privateTableDoc.success && privateTableDoc.data?.gameType === 'PRIVATE_SNG';
+            }
+
+            let gameState = await gameStateManager.getGame(tableId);
 
             if (gameState) {
                 const player = gameState.players.find(p => p.id === userId);
@@ -521,6 +533,21 @@ class ConnectionHandler {
                     const PlayerActionService = require('../../game/player-action.service');
                     const actionService = new PlayerActionService(this.io, this.orchestrator.timerManager, this.orchestrator);
                     await actionService.handle(tableId, userId, 'fold');
+                    gameState = await gameStateManager.getGame(tableId);
+                    player = gameState?.players?.find(p => p.id === userId);
+                }
+
+                if (isPrivateSng && player) {
+                    player.status = 'folded';
+                    player.disconnected = true;
+                    player.chips = 0;
+
+                    if (gameState.currentPlayerId === userId) {
+                        gameState.currentPlayerId = null;
+                    }
+
+                    await gameStateManager.updateGame(tableId, gameState);
+                    await tableManager.syncFromGameState(tableId, gameState);
                 }
             }
 
@@ -533,19 +560,8 @@ class ConnectionHandler {
             await this.orchestrator.markPrivateTablePlayerLeaving(tableId, userId);
 
             // Get full user document for walletAddress
-            const mongoHelper = require('../../models/customdb');
             const userDoc = await mongoHelper.findById(mongoHelper.COLLECTIONS.USERS, userId);
             const walletAddress = userDoc.success && userDoc.data ? userDoc.data.walletAddress : null;
-            const tableDoc = await mongoHelper.findById(mongoHelper.COLLECTIONS.TABLES, tableId);
-            let isPrivateSng = false;
-
-            if (tableDoc.success && tableDoc.data?.privateTableId) {
-                const privateTableDoc = await mongoHelper.findById(
-                    mongoHelper.COLLECTIONS.PRIVATE_TABLES,
-                    tableDoc.data.privateTableId
-                );
-                isPrivateSng = privateTableDoc.success && privateTableDoc.data?.gameType === 'PRIVATE_SNG';
-            }
             
             if (isPrivateSng) {
                 console.log(`🔒 [PRIVATE SNG] Skipping leave cashout for ${userId} on table ${tableId}; chips remain in tournament settlement flow`);
@@ -593,6 +609,7 @@ class ConnectionHandler {
             
             this.socket.leave(tableId);
             this.socket.tableId = null;
+            this.socket.privateTableId = null;
             this.socket.handsPlayed = 0;
 
             emitSuccess(this.socket, 'roomLeft', { tableId }, 'Left table successfully');

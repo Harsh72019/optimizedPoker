@@ -85,6 +85,10 @@ class FinancialService {
    * Handle insufficient participation (below threshold)
    */
   async handleInsufficientParticipation(gameId, gameData) {
+    const totalWagered = Number.isFinite(Number(gameData.totalWagered))
+      ? Number(gameData.totalWagered)
+      : gameData.actualParticipants * gameData.buyIn;
+
     // Create financial record showing refund
     const gameFinancialsData = {
       gameId,
@@ -97,7 +101,7 @@ class FinancialService {
       tierRake: gameData.tierRake,
       hostUplift: gameData.hostUplift || 0,
       effectiveRake: gameData.tierRake + (gameData.hostUplift || 0),
-      totalBuyIns: 0,
+      totalBuyIns: totalWagered,
       totalRake: 0,
       prizePool: 0,
       hostReward: 0,
@@ -121,7 +125,9 @@ class FinancialService {
     
     return {
       gameFinancials: gameFinancialsResult.data,
-      refundAmount: gameData.actualParticipants * gameData.buyIn,
+      settlement: null,
+      refundAmount: totalWagered,
+      refundedParticipants: gameData.actualParticipants,
       setupFeeKept: gameData.setupFeeAmount
     };
   }
