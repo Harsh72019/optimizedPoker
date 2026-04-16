@@ -701,22 +701,8 @@ class GameOrchestrator {
                     chips: Number(player.chips || 0),
                 }))
                 .sort((a, b) => b.chips - a.chips);
-            const finalStandings = playersForStandings.map((player, index) => ({
-                userId: player.userId || player.id,
-                username: player.username,
-                finalChips: Number(player.chips || 0),
-                position: index + 1
-            }));
-             
-            // Determine winners
-            const winners = playersForStandings
-                .filter(p => p.chips > 0)
-                .sort((a, b) => b.chips - a.chips)
-                .map((player, index) => ({
-                    playerId: player.userId || player.id,
-                    position: index + 1,
-                    percentage: index === 0 ? 100 : 0 // Winner takes all for SNG
-                }));
+            const finalStandings = this.buildFinalStandings(playersForStandings);
+            const winners = this.determinePrivateSngWinners(playersForStandings, options.reason);
             
             // 🆕 Execute financial settlement if this is a private table
             if (tableDoc.success && tableDoc.data && tableDoc.data.privateTableId) {
@@ -887,6 +873,58 @@ class GameOrchestrator {
 
     floorToCents(amount) {
         return Math.floor((Number(amount) + Number.EPSILON) * 100) / 100;
+    }
+
+    buildFinalStandings(playersForStandings = []) {
+        let lastChipCount = null;
+        let currentPosition = 0;
+
+        return playersForStandings.map((player, index) => {
+            const chipCount = Number(player.chips || 0);
+            if (lastChipCount === null || chipCount !== lastChipCount) {
+                currentPosition = index + 1;
+                lastChipCount = chipCount;
+            }
+
+            return {
+                userId: player.userId || player.id,
+                username: player.username,
+                finalChips: chipCount,
+                position: currentPosition
+            };
+        });
+    }
+
+    determinePrivateSngWinners(playersForStandings = [], reason = 'NORMAL_COMPLETION') {
+        const rankedPlayers = playersForStandings
+            .filter(player => Number(player.chips || 0) > 0)
+            .sort((a, b) => Number(b.chips || 0) - Number(a.chips || 0));
+
+        if (rankedPlayers.length === 0) {
+            return [];
+        }
+
+        const topChipCount = Number(rankedPlayers[0].chips || 0);
+        const topPlayers = rankedPlayers.filter(player => Number(player.chips || 0) === topChipCount);
+        const isTimedTie = reason === 'TIME_LIMIT' && topPlayers.length > 1;
+
+        if (isTimedTie) {
+            const splitPercentage = 100 / topPlayers.length;
+            return topPlayers.map((player, index) => ({
+                playerId: player.userId || player.id,
+                position: 1,
+                percentage: splitPercentage,
+                tie: true,
+                tieGroupSize: topPlayers.length,
+                tieReason: 'TIME_LIMIT_EQUAL_CHIPS'
+            }));
+        }
+
+        return rankedPlayers.map((player, index) => ({
+            playerId: player.userId || player.id,
+            position: index + 1,
+            percentage: index === 0 ? 100 : 0
+        }));
     }
 
     async getPrivateTableCompletionStats(tableId, privateTable, actualParticipants) {

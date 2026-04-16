@@ -44,7 +44,7 @@ class PrivateTableService {
     
     const normalizedTimeLimit =
       tableDuration === 'TIMED'
-        ? (timeLimit || Math.max(30, Math.round((estimatedHours || 2) * 60)))
+        ? (timeLimit || Math.max(1, Math.round((estimatedHours || 2) * 60)))
         : null;
 
     let resolvedAffiliateId = affiliateId || null;
