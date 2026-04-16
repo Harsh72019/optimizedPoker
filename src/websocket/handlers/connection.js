@@ -527,7 +527,7 @@ class ConnectionHandler {
             let gameState = await gameStateManager.getGame(tableId);
 
             if (gameState) {
-                const player = gameState.players.find(p => p.id === userId);
+                let player = gameState.players.find(p => p.id === userId);
                 if (player && gameState.currentPlayerId === userId) {
                     console.log(`🚪 Player ${userId} leaving on their turn - auto folding`);
                     const PlayerActionService = require('../../game/player-action.service');
