@@ -634,6 +634,74 @@ class WalletIntegrationService {
     };
   }
 
+  async recordPlatformRevenue(amount, gameId, options = {}) {
+    const normalizedAmount = Math.floor((Number(amount) + Number.EPSILON) * 100) / 100;
+
+    if (!Number.isFinite(normalizedAmount) || normalizedAmount <= 0) {
+      return {
+        success: true,
+        recordedAmount: 0,
+        skipped: true,
+        reason: 'No positive platform revenue to record'
+      };
+    }
+
+    const idempotencyKey = options.idempotencyKey || `platform_revenue:${gameId}:${options.revenueType || 'company_net'}`;
+    const existingTransactionResult = await mongoHelper.find(mongoHelper.COLLECTIONS.TRANSACTION_LEDGER, {
+      type: 'PLATFORM_REVENUE',
+      gameId,
+      'metadata.idempotencyKey': idempotencyKey,
+      status: { $in: ['PENDING', 'COMPLETED'] }
+    });
+
+    const existingTransaction = existingTransactionResult.success && existingTransactionResult.data?.[0]
+      ? existingTransactionResult.data[0]
+      : null;
+
+    if (existingTransaction) {
+      return {
+        success: true,
+        recordedAmount: existingTransaction.amount,
+        transactionId: existingTransaction.transactionId,
+        walletAddress: existingTransaction.walletAddress || null,
+        duplicate: true,
+        sourceTableId: options.sourceTableId
+      };
+    }
+
+    const config = require('../config/config');
+    const ledger = await this.logTransaction({
+      userId: null,
+      type: 'PLATFORM_REVENUE',
+      amount: normalizedAmount,
+      gameId,
+      description: options.description || `Platform revenue retained for game ${gameId}`,
+      walletAddress: config.MASTER_POKER_TABLE_CONTRACT,
+      status: 'COMPLETED',
+      metadata: {
+        idempotencyKey,
+        revenueType: options.revenueType || 'company_net',
+        sourceTableId: options.sourceTableId || null,
+        gameType: options.gameType || null,
+        companyNet: options.companyNet ?? normalizedAmount,
+        platformRevenue: options.platformRevenue ?? normalizedAmount,
+        note: 'Recorded as retained platform commission in the master platform contract'
+      }
+    });
+
+    if (!ledger) {
+      throw new Error(`Failed to record platform revenue for game ${gameId}`);
+    }
+
+    return {
+      success: true,
+      recordedAmount: normalizedAmount,
+      transactionId: ledger.transactionId,
+      walletAddress: ledger.walletAddress,
+      sourceTableId: options.sourceTableId
+    };
+  }
+
   async distributePrizePool(winners, gameId, options = {}) {
     const results = [];
 

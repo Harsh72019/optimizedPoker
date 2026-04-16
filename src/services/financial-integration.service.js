@@ -133,14 +133,15 @@ class FinancialIntegrationService {
 
   async executeSettlementPayouts({ gameId, sourceTableId, hostId, affiliateId, settlement, winnerPayouts }) {
     if (!settlement) {
-      return { winners: [], host: null, hostUplift: null, affiliate: null };
+      return { winners: [], host: null, hostUplift: null, affiliate: null, platform: null };
     }
 
     const results = {
       winners: [],
       host: null,
       hostUplift: null,
-      affiliate: null
+      affiliate: null,
+      platform: null
     };
 
     if (winnerPayouts && winnerPayouts.length > 0) {
@@ -179,6 +180,24 @@ class FinancialIntegrationService {
         );
       } catch (error) {
         results.affiliate = { success: false, error: error.message };
+      }
+    }
+
+    if (settlement.companyNet > 0) {
+      try {
+        results.platform = await walletIntegrationService.recordPlatformRevenue(
+          settlement.companyNet,
+          gameId,
+          {
+            sourceTableId,
+            revenueType: 'company_net',
+            companyNet: settlement.companyNet,
+            platformRevenue: settlement.platformRevenue,
+            description: `Platform commission retained for game ${gameId}`
+          }
+        );
+      } catch (error) {
+        results.platform = { success: false, error: error.message };
       }
     }
 

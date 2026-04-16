@@ -189,10 +189,10 @@ const roundingPoolLedgerSchema = new Schema({
 
 // Transaction Ledger
 const transactionLedgerSchema = new Schema({
-  userId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+  userId: { type: Schema.Types.ObjectId, ref: 'User', required: false, default: null },
   type: { 
     type: String, 
-    enum: ['SETUP_FEE_CHARGE', 'HOST_REWARD', 'AFFILIATE_COMMISSION', 'PRIZE_PAYOUT', 'BUY_IN_CHARGE', 'BUY_IN_REFUND', 'ADMIN_CREDIT', 'TABLE_CASHOUT'],
+    enum: ['SETUP_FEE_CHARGE', 'HOST_REWARD', 'AFFILIATE_COMMISSION', 'PRIZE_PAYOUT', 'BUY_IN_CHARGE', 'BUY_IN_REFUND', 'ADMIN_CREDIT', 'TABLE_CASHOUT', 'PLATFORM_REVENUE'],
     required: true 
   },
   amount: { type: Number, required: true },

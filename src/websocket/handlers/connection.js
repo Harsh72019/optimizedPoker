@@ -536,8 +536,20 @@ class ConnectionHandler {
             const mongoHelper = require('../../models/customdb');
             const userDoc = await mongoHelper.findById(mongoHelper.COLLECTIONS.USERS, userId);
             const walletAddress = userDoc.success && userDoc.data ? userDoc.data.walletAddress : null;
+            const tableDoc = await mongoHelper.findById(mongoHelper.COLLECTIONS.TABLES, tableId);
+            let isPrivateSng = false;
+
+            if (tableDoc.success && tableDoc.data?.privateTableId) {
+                const privateTableDoc = await mongoHelper.findById(
+                    mongoHelper.COLLECTIONS.PRIVATE_TABLES,
+                    tableDoc.data.privateTableId
+                );
+                isPrivateSng = privateTableDoc.success && privateTableDoc.data?.gameType === 'PRIVATE_SNG';
+            }
             
-            if (finalChips > 0 && walletAddress) {
+            if (isPrivateSng) {
+                console.log(`🔒 [PRIVATE SNG] Skipping leave cashout for ${userId} on table ${tableId}; chips remain in tournament settlement flow`);
+            } else if (finalChips > 0 && walletAddress) {
                 const walletIntegrationService = require('../../services/wallet-integration.service');
                 walletIntegrationService.queuePlayerTableCashout(
                     userId,

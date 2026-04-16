@@ -51,11 +51,14 @@ class SettlementService {
       hostUplift = 0,
       hostRewardPercent = 0,
       setupFeeAmount = 0,
-      affiliateId = null
+      affiliateId = null,
+      totalWagered = null
     } = gameData;
 
     const settlementSteps = [];
-    const totalBuyInsRaw = actualParticipants * buyIn;
+    const totalBuyInsRaw = Number.isFinite(Number(totalWagered))
+      ? Number(totalWagered)
+      : actualParticipants * buyIn;
     const companyShareBeforeAffRaw = (tierRake / 100) * totalBuyInsRaw;
     const hostUpliftCollectedRaw = (hostUplift / 100) * totalBuyInsRaw;
     const totalRakeRaw = companyShareBeforeAffRaw + hostUpliftCollectedRaw;
