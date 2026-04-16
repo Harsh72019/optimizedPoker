@@ -473,7 +473,22 @@ async function aggregate(collection, pipeline) {
       pipeline: pipeline,
     };
 
-    const response = await axios.post(`${BASE_URL}/aggregate`, payload, { headers });
+    let response;
+
+    try {
+      response = await axios.post(`${BASE_URL}/aggregate`, payload, { headers });
+    } catch (error) {
+      const status = error.response?.status;
+
+      // Some deployed customDb instances expose aggregation under `/aggregation`
+      // instead of `/aggregate`, so we gracefully retry there on 404.
+      if (status !== 404) {
+        throw error;
+      }
+
+      response = await axios.post(`${BASE_URL}/aggregation`, payload, { headers });
+    }
+
     return {
       success: true,
       data: response.data.data,

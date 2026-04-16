@@ -7,6 +7,7 @@ const ApiError = require('../utils/ApiError');
  * Middleware function that validates user requests against a Joi schema
  */
 const validate = schema => async (req, res, next) => {
+  const requestBody = req.body || {};
   // Check if request content type is JSON
   const isJsonContentType = req.is('application/json');
 
@@ -14,7 +15,7 @@ const validate = schema => async (req, res, next) => {
   const isFormDataContentType = req.is('multipart/form-data');
 
   // Reject requests with unsupported content types
-  if (Object.keys(req.body).length !== 0 && !isJsonContentType && !isFormDataContentType) {
+  if (Object.keys(requestBody).length !== 0 && !isJsonContentType && !isFormDataContentType) {
     return next(
       new ApiError(
         httpStatus.UNSUPPORTED_MEDIA_TYPE,
@@ -33,6 +34,7 @@ const validate = schema => async (req, res, next) => {
     .validate(object);
 
   console.log('🚀 ~ validate ~ error:', req.body, req.files, error);
+  console.log(requestBody, req.files, error);
   // If validation fails, throw 400 Bad Request error
   if (error) {
     // cleanup files buffer if exist upon validation failing
@@ -48,7 +50,7 @@ const validate = schema => async (req, res, next) => {
         })
       );
     }
-    console.log(req.body);
+    console.log(requestBody);
     const errorMessage = error.details.map(details => details.message).join(', ');
     return next(new ApiError(httpStatus.BAD_REQUEST, errorMessage));
   }

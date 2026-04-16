@@ -2,6 +2,7 @@ const express = require('express');
 const validate = require('../../middlewares/validate');
 const financialValidation = require('../../validations/financial.validation');
 const financialController = require('../../controllers/financial.controller');
+const { authController } = require('../../controllers');
 
 const router = express.Router();
 
@@ -67,7 +68,16 @@ router
 // Wallet endpoints
 router
   .route('/wallet/balance')
-  .get(financialController.getUserBalance);
+  .get(authController.protect, authController.checkEmailExistence, financialController.getUserBalance);
+
+router
+  .route('/wallet/transactions')
+  .get(
+    authController.protect,
+    authController.checkEmailExistence,
+    validate(financialValidation.getUserTransactions),
+    financialController.getUserTransactions
+  );
 
 // Official Tournament endpoints (public)
 router

@@ -5,6 +5,9 @@ const commissionPreviewService = require('./commission-preview.service');
 const mongoHelper = require('../models/customdb');
 
 class FinancialService {
+  floorToCents(amount) {
+    return Math.floor((Number(amount) + Number.EPSILON) * 100) / 100;
+  }
   
   /**
    * Create a new private table with financial setup
@@ -212,6 +215,117 @@ class FinancialService {
         tier: gameFinancials.tierRake,
         uplift: gameFinancials.hostUplift,
         effective: gameFinancials.effectiveRake
+      }
+    };
+  }
+
+  async getUserTransactionHistory(userId, options = {}) {
+    const page = Math.max(1, Number(options.page || 1));
+    const limit = Math.min(100, Math.max(1, Number(options.limit || 20)));
+    const skip = (page - 1) * limit;
+
+    const matchStage = {
+      userId
+    };
+
+    if (options.type) {
+      matchStage.type = options.type;
+    }
+
+    if (options.status) {
+      matchStage.status = options.status;
+    }
+
+    if (options.gameId) {
+      matchStage.gameId = options.gameId;
+    }
+
+    if (options.startDate || options.endDate) {
+      matchStage.createdAt = {};
+      if (options.startDate) {
+        matchStage.createdAt.$gte = new Date(options.startDate);
+      }
+      if (options.endDate) {
+        matchStage.createdAt.$lte = new Date(options.endDate);
+      }
+    }
+
+    const transactionsResult = await mongoHelper.find(
+      mongoHelper.COLLECTIONS.TRANSACTION_LEDGER,
+      matchStage
+    );
+
+    if (!transactionsResult.success) {
+      throw new Error(transactionsResult.error || 'Failed to fetch transaction history');
+    }
+
+    const allTransactions = Array.isArray(transactionsResult.data) ? transactionsResult.data : [];
+    const sortedTransactions = allTransactions.sort((a, b) => {
+      const aTime = new Date(a.createdAt || a.created_at || 0).getTime();
+      const bTime = new Date(b.createdAt || b.created_at || 0).getTime();
+
+      if (bTime !== aTime) {
+        return bTime - aTime;
+      }
+
+      const aId = String(a._id || '');
+      const bId = String(b._id || '');
+      return bId.localeCompare(aId);
+    });
+
+    const transactions = sortedTransactions.slice(skip, skip + limit);
+    const totalCount = allTransactions.length;
+    const summary = allTransactions.reduce((acc, transaction) => {
+      const amount = Number(transaction.amount || 0);
+
+      if (amount > 0) {
+        acc.totalCredits += amount;
+      } else if (amount < 0) {
+        acc.totalDebits += Math.abs(amount);
+      }
+
+      if (transaction.status === 'PENDING') {
+        acc.pendingCount += 1;
+      }
+
+      if (transaction.status === 'FAILED') {
+        acc.failedCount += 1;
+      }
+
+      return acc;
+    }, {
+      totalCredits: 0,
+      totalDebits: 0,
+      pendingCount: 0,
+      failedCount: 0
+    });
+
+    return {
+      transactions: transactions.map(transaction => ({
+        ...transaction,
+        direction: Number(transaction.amount || 0) >= 0 ? 'CREDIT' : 'DEBIT',
+        amountAbsolute: Math.abs(Number(transaction.amount || 0))
+      })),
+      pagination: {
+        page,
+        limit,
+        totalCount,
+        totalPages: totalCount > 0 ? Math.ceil(totalCount / limit) : 0,
+        hasNextPage: skip + transactions.length < totalCount,
+        hasPreviousPage: page > 1
+      },
+      summary: {
+        totalCredits: this.floorToCents(summary.totalCredits || 0),
+        totalDebits: this.floorToCents(summary.totalDebits || 0),
+        pendingCount: Number(summary.pendingCount || 0),
+        failedCount: Number(summary.failedCount || 0)
+      },
+      filters: {
+        type: options.type || null,
+        status: options.status || null,
+        gameId: options.gameId || null,
+        startDate: options.startDate || null,
+        endDate: options.endDate || null
       }
     };
   }

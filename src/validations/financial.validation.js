@@ -210,6 +210,30 @@ const validateHostUplift = {
   })
 };
 
+const getUserTransactions = {
+  query: Joi.object().keys({
+    page: Joi.number().integer().min(1).default(1),
+    limit: Joi.number().integer().min(1).max(100).default(20),
+    type: Joi.string()
+      .valid(
+        'SETUP_FEE_CHARGE',
+        'HOST_REWARD',
+        'AFFILIATE_COMMISSION',
+        'PRIZE_PAYOUT',
+        'BUY_IN_CHARGE',
+        'BUY_IN_REFUND',
+        'ADMIN_CREDIT',
+        'TABLE_CASHOUT',
+        'PLATFORM_REVENUE'
+      )
+      .optional(),
+    status: Joi.string().valid('PENDING', 'COMPLETED', 'FAILED').optional(),
+    gameId: Joi.string().optional(),
+    startDate: Joi.date().iso().optional(),
+    endDate: Joi.date().iso().min(Joi.ref('startDate')).optional()
+  })
+};
+
 module.exports = {
   generatePreview,
   createPrivateTable,
@@ -223,5 +247,6 @@ module.exports = {
   getAdminConfig,
   updateAdminConfig,
   updateRakeTiers,
-  validateHostUplift
+  validateHostUplift,
+  getUserTransactions
 };

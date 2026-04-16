@@ -441,6 +441,19 @@ const getUserBalance = catchAsync(async (req, res) => {
 });
 
 /**
+ * Get user transaction history
+ */
+const getUserTransactions = catchAsync(async (req, res) => {
+  const userId = req.user.id;
+  const result = await financialService.getUserTransactionHistory(userId, req.query);
+
+  res.status(httpStatus.OK).json({
+    success: true,
+    data: result
+  });
+});
+
+/**
  * Add funds to user (admin only)
  */
 const addFunds = catchAsync(async (req, res) => {
@@ -486,5 +499,6 @@ module.exports = {
   getAllOfficialTournaments,
   // Wallet
   getUserBalance,
+  getUserTransactions,
   addFunds
 };
