@@ -1,6 +1,7 @@
 const mongoHelper = require('../models/customdb');
 const cooldownService = require('../services/cooldown.service');
 const reputationService = require('../services/reputation.service');
+const userService = require('../services/user.service');
 
 
 // ✅ INITIAL STATE: Ensure each sub-tier begins with three open tables
@@ -219,10 +220,18 @@ async function findAvailableTableWithCooldown(userId, subTierId, tableTypeId) {
 
 
     console.log('checking cooldown conflicts ', availableTable.currentPlayers);
-    // Check cooldown conflicts
     const otherPlayerIds = availableTable.currentPlayers
-      .map(p => p.toString())
+      .map(p => p?.user?._id?.toString?.() || p?.user?.toString?.() || p?.toString?.() || String(p || ''))
+      .filter(Boolean)
       .filter(id => id !== userId);
+
+    const hasBlockedConflict = await userService.hasBlockedUserConflict(userId, otherPlayerIds);
+    if (hasBlockedConflict) {
+      console.log(`🚫 Blocked user conflict for user ${userId}`);
+      return null;
+    }
+
+    // Check cooldown conflicts
     if (otherPlayerIds.length > 0) {
       // const hasConflict = await cooldownService.hasCooldownConflict(userId, otherPlayerIds);
       // if (hasConflict) {

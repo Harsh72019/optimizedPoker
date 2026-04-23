@@ -145,6 +145,14 @@ const userSchema = new mongoose.Schema(
       type: String,
       ref: 'User'
     }],
+    friends: [{
+      type: String,
+      ref: 'User'
+    }],
+    blockedUsers: [{
+      type: String,
+      ref: 'User'
+    }],
     
     // Financial fields
     balance: {
@@ -209,6 +217,8 @@ const userSchema = new mongoose.Schema(
 userSchema.index({ accountType: 1, chips: 1 });
 userSchema.index({ accountType: 1, 'reputation.score': 1 });
 userSchema.index({ isBlocked: 1, accountType: 1 });
+userSchema.index({ friends: 1 });
+userSchema.index({ blockedUsers: 1 });
 userSchema.index({ chips: 1, 'reputation.score': 1 });
 // Index for reputation-based queries
 userSchema.index({ 

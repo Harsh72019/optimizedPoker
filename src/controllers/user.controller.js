@@ -121,6 +121,70 @@ const getUserProfile = async (req, res) => {
   }
 };
 
+const addFriend = async (req, res) => {
+  try {
+    const friend = await userService.addFriend(req.user._id, req.body.userId);
+    res.status(200).send({
+      data: friend,
+      status: true,
+      message: 'Friend added successfully',
+    });
+  } catch (error) {
+    res.status(error.statusCode || 500).send({
+      error: error.message,
+      status: false,
+    });
+  }
+};
+
+const blockFriend = async (req, res) => {
+  try {
+    const friend = await userService.blockFriend(req.user._id, req.body.userId);
+    res.status(200).send({
+      data: friend,
+      status: true,
+      message: 'User blocked successfully',
+    });
+  } catch (error) {
+    res.status(error.statusCode || 500).send({
+      error: error.message,
+      status: false,
+    });
+  }
+};
+
+const unblockFriend = async (req, res) => {
+  try {
+    const friend = await userService.unblockFriend(req.user._id, req.body.userId);
+    res.status(200).send({
+      data: friend,
+      status: true,
+      message: 'User unblocked successfully',
+    });
+  } catch (error) {
+    res.status(error.statusCode || 500).send({
+      error: error.message,
+      status: false,
+    });
+  }
+};
+
+const getFriends = async (req, res) => {
+  try {
+    const friends = await userService.getFriends(req.user._id);
+    res.status(200).send({
+      data: friends,
+      status: true,
+      message: 'Friends fetched successfully',
+    });
+  } catch (error) {
+    res.status(error.statusCode || 500).send({
+      error: error.message,
+      status: false,
+    });
+  }
+};
+
 const listTournaments = catchAsync(async (req, res) => {
   const tournaments = await tournamentService.listAvailableTournaments(req.query);
   res.status(httpStatus.OK).json({
@@ -384,6 +448,10 @@ module.exports = {
   getTables,
   userDetails,
   getUserProfile,
+  addFriend,
+  blockFriend,
+  unblockFriend,
+  getFriends,
   updateUserDetails,
   listTournaments,
   registerForTournament,

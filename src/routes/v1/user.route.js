@@ -18,6 +18,32 @@ router.get('/userDetails', authController.protect, authController.checkEmailExis
 
 router.get('/profile', authController.protect, authController.checkEmailExistence, userController.getUserProfile);
 
+router.get('/friends', authController.protect, authController.checkEmailExistence, userController.getFriends);
+
+router.post(
+  '/addFriend',
+  authController.protect,
+  authController.checkEmailExistence,
+  validate(userValidation.friendUser),
+  userController.addFriend
+);
+
+router.post(
+  '/blockFriend',
+  authController.protect,
+  authController.checkEmailExistence,
+  validate(userValidation.friendUser),
+  userController.blockFriend
+);
+
+router.post(
+  '/unblockFriend',
+  authController.protect,
+  authController.checkEmailExistence,
+  validate(userValidation.friendUser),
+  userController.unblockFriend
+);
+
 router.patch(
   '/',
   authController.protect,

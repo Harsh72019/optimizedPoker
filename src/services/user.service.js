@@ -9,6 +9,71 @@ const { sendWelcomeEmail } = require('./email.service');
 
 //blockchain part
 
+function normalizeId(value) {
+  if (!value) return null;
+  if (typeof value === 'object' && value._id) return value._id.toString();
+  return value.toString();
+}
+
+function uniqueIds(values = []) {
+  return [...new Set(values.map(normalizeId).filter(Boolean))];
+}
+
+function getDisplayName(user) {
+  return user?.name || user?.username || '';
+}
+
+function getNetWorth(user) {
+  const explicitNetWorth = user?.netWorth ?? user?.networth;
+  if (explicitNetWorth !== undefined && explicitNetWorth !== null) {
+    return Number(explicitNetWorth) || 0;
+  }
+
+  return (Number(user?.balance) || 0) + (Number(user?.chips) || 0);
+}
+
+function formatSmallUserSummary(user, invitedBy = null, isBlocked = false) {
+  return {
+    userId: user._id,
+    name: getDisplayName(user),
+    username: user.username || '',
+    profilePic: user.profilePic || null,
+    invitedBy: invitedBy
+      ? {
+          userId: invitedBy._id,
+          name: getDisplayName(invitedBy),
+          username: invitedBy.username || '',
+        }
+      : null,
+    rank: user.accountType || 'Human',
+    netWorth: getNetWorth(user),
+    isBlocked,
+  };
+}
+
+async function buildSmallUserSummary(userId, isBlocked = false) {
+  const user = await findUserOrThrow(normalizeId(userId));
+  let invitedBy = null;
+  const referredById = normalizeId(user.referredBy);
+
+  if (referredById) {
+    const invitedByResult = await mongoHelper.findById(mongoHelper.COLLECTIONS.USERS, referredById);
+    invitedBy = invitedByResult.success ? invitedByResult.data : null;
+  }
+
+  return formatSmallUserSummary(user, invitedBy, isBlocked);
+}
+
+async function findUserOrThrow(userId, message = 'User not found') {
+  const userResult = await mongoHelper.findById(mongoHelper.COLLECTIONS.USERS, userId);
+
+  if (!userResult.success || !userResult.data) {
+    throw new ApiError(httpStatus.NOT_FOUND, message);
+  }
+
+  return userResult.data;
+}
+
 async function getUserById(id) {
   try {
     // Get the user from the API
@@ -121,6 +186,173 @@ async function getUserProfile(id) {
     console.error('Error in getUserProfile:', error);
     throw error;
   }
+}
+
+async function addFriend(userId, friendUserId) {
+  const currentUserId = normalizeId(userId);
+  const targetUserId = normalizeId(friendUserId);
+
+  if (!targetUserId) {
+    throw new ApiError(httpStatus.BAD_REQUEST, 'Friend userId is required.');
+  }
+
+  if (currentUserId === targetUserId) {
+    throw new ApiError(httpStatus.BAD_REQUEST, 'You cannot add yourself as a friend.');
+  }
+
+  const [user, friend] = await Promise.all([
+    findUserOrThrow(currentUserId),
+    findUserOrThrow(targetUserId, 'Friend user not found'),
+  ]);
+
+  if (friend.isBlocked) {
+    throw new ApiError(httpStatus.FORBIDDEN, 'This user account is blocked.');
+  }
+
+  const blockedUsers = uniqueIds(user.blockedUsers);
+  if (blockedUsers.includes(targetUserId)) {
+    throw new ApiError(httpStatus.BAD_REQUEST, 'Unblock this user before adding them as a friend.');
+  }
+
+  const friends = uniqueIds(user.friends);
+  if (!friends.includes(targetUserId)) {
+    friends.push(targetUserId);
+  }
+
+  const updateResult = await mongoHelper.updateById(
+    mongoHelper.COLLECTIONS.USERS,
+    currentUserId,
+    { friends },
+    mongoHelper.MODELS.USER
+  );
+
+  if (!updateResult.success) {
+    throw new Error(updateResult.error);
+  }
+
+  return buildSmallUserSummary(friend._id, false);
+}
+
+async function blockFriend(userId, blockedUserId) {
+  const currentUserId = normalizeId(userId);
+  const targetUserId = normalizeId(blockedUserId);
+
+  if (!targetUserId) {
+    throw new ApiError(httpStatus.BAD_REQUEST, 'Blocked userId is required.');
+  }
+
+  if (currentUserId === targetUserId) {
+    throw new ApiError(httpStatus.BAD_REQUEST, 'You cannot block yourself.');
+  }
+
+  const [user, blockedUser] = await Promise.all([
+    findUserOrThrow(currentUserId),
+    findUserOrThrow(targetUserId, 'User to block not found'),
+  ]);
+
+  const blockedUsers = uniqueIds(user.blockedUsers);
+
+  if (!blockedUsers.includes(targetUserId)) {
+    blockedUsers.push(targetUserId);
+  }
+
+  const updateResult = await mongoHelper.updateById(
+    mongoHelper.COLLECTIONS.USERS,
+    currentUserId,
+    { blockedUsers },
+    mongoHelper.MODELS.USER
+  );
+
+  if (!updateResult.success) {
+    throw new Error(updateResult.error);
+  }
+
+  return buildSmallUserSummary(blockedUser._id, true);
+}
+
+async function hasBlockedUserConflict(userId, otherUserIds = []) {
+  const currentUserId = normalizeId(userId);
+  const normalizedOtherIds = uniqueIds(otherUserIds).filter(id => id !== currentUserId);
+
+  if (!currentUserId || normalizedOtherIds.length === 0) {
+    return false;
+  }
+
+  const user = await findUserOrThrow(currentUserId);
+  const blockedSet = new Set(uniqueIds(user.blockedUsers));
+
+  for (const otherUserId of normalizedOtherIds) {
+    if (blockedSet.has(otherUserId)) {
+      return true;
+    }
+
+    const otherUser = await findUserOrThrow(otherUserId, 'Blocked relationship user not found');
+    const otherBlockedSet = new Set(uniqueIds(otherUser.blockedUsers));
+    if (otherBlockedSet.has(currentUserId)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+async function unblockFriend(userId, blockedUserId) {
+  const currentUserId = normalizeId(userId);
+  const targetUserId = normalizeId(blockedUserId);
+
+  if (!targetUserId) {
+    throw new ApiError(httpStatus.BAD_REQUEST, 'Blocked userId is required.');
+  }
+
+  const [user, unblockedUser] = await Promise.all([
+    findUserOrThrow(currentUserId),
+    findUserOrThrow(targetUserId, 'User to unblock not found'),
+  ]);
+
+  const blockedUsers = uniqueIds(user.blockedUsers).filter(id => id !== targetUserId);
+
+  const updateResult = await mongoHelper.updateById(
+    mongoHelper.COLLECTIONS.USERS,
+    currentUserId,
+    { blockedUsers },
+    mongoHelper.MODELS.USER
+  );
+
+  if (!updateResult.success) {
+    throw new Error(updateResult.error);
+  }
+
+  return buildSmallUserSummary(unblockedUser._id, false);
+}
+
+async function getFriends(userId) {
+  const user = await findUserOrThrow(normalizeId(userId));
+  const friendIds = uniqueIds(user.friends);
+  const blockedSet = new Set(uniqueIds(user.blockedUsers));
+
+  const friends = [];
+  for (const friendId of friendIds) {
+    const friendResult = await mongoHelper.findById(mongoHelper.COLLECTIONS.USERS, friendId);
+    if (!friendResult.success || !friendResult.data) {
+      continue;
+    }
+
+    const friend = friendResult.data;
+    let invitedBy = null;
+    const referredById = normalizeId(friend.referredBy);
+    if (referredById) {
+      const invitedByResult = await mongoHelper.findById(mongoHelper.COLLECTIONS.USERS, referredById);
+      invitedBy = invitedByResult.success ? invitedByResult.data : null;
+    }
+
+    friends.push(formatSmallUserSummary(friend, invitedBy, blockedSet.has(friendId)));
+  }
+
+  return friends;
+}
+
+async function getSmallUserData(userId) {
+  return buildSmallUserSummary(userId, false);
 }
 
 const updateUserDetails = async (username, userId) => {
@@ -280,4 +512,10 @@ module.exports = {
   updatePreferencesById,
   getUserByIdFromJwt,
   updateUserDetails,
+  addFriend,
+  blockFriend,
+  unblockFriend,
+  hasBlockedUserConflict,
+  getFriends,
+  getSmallUserData,
 };

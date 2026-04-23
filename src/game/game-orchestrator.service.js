@@ -695,11 +695,23 @@ class GameOrchestrator {
             const gameState = await gameStateManager.getGame(tableId);
             const tableState = await tableManager.getTable(tableId);
             const tableDoc = await mongoHelper.findById(mongoHelper.COLLECTIONS.TABLES, tableId);
+            const seatedPlayerIds = new Set(
+                (tableState.players || [])
+                    .map(player => player.userId?.toString?.() || player.id?.toString?.() || player.userId || player.id)
+                    .filter(Boolean)
+            );
+
             const playersForStandings = (gameState?.players || tableState.players || [])
-                .map(player => ({
-                    ...player,
-                    chips: Number(player.chips || 0),
-                }))
+                .map(player => {
+                    const playerId = player.userId?.toString?.() || player.id?.toString?.() || player.userId || player.id;
+                    const isStillSeated = seatedPlayerIds.has(playerId);
+
+                    return {
+                        ...player,
+                        disconnected: !isStillSeated ? true : !!player.disconnected,
+                        chips: !isStillSeated ? 0 : Number(player.chips || 0),
+                    };
+                })
                 .sort((a, b) => b.chips - a.chips);
             const finalStandings = this.buildFinalStandings(playersForStandings);
             const winners = this.determinePrivateSngWinners(playersForStandings, options.reason);

@@ -22,6 +22,8 @@ class ConnectionHandler {
         this.socket.on('setBack', async (data) => this.handleBack(data));
         this.socket.on('getTableInfo', async (data) => this.handleGetTableInfo(data));
         this.socket.on('getPlayerInfo', async (data) => this.handleGetPlayerInfo(data));
+        this.socket.on('getFriendUserInfo', async (data) => this.handleGetFriendUserInfo(data));
+        this.socket.on('getFriendSummary', async (data) => this.handleGetFriendUserInfo(data));
         this.socket.on('privateTableRebuy', this.handlePrivateTableRebuy.bind(this));
         this.socket.on('privateTableLeave', this.handlePrivateTableLeave.bind(this));
     }
@@ -696,6 +698,28 @@ class ConnectionHandler {
             emitSuccess(this.socket, 'playerInfo', { player }, 'Player info');
         } catch (err) {
             emitError(this.socket, 'unableToGetPlayerInfo', err.message);
+        }
+    }
+
+    async handleGetFriendUserInfo(data) {
+        try {
+            const { token } = data || {};
+            await verifyEventToken(token, this.socket);
+
+            const userId = data?.userId || data?.params?.userId || data?.query?.userId;
+            if (!userId) {
+                emitError(this.socket, 'getFriendUserInfoError', 'userId is required');
+                return;
+            }
+
+            const userService = require('../../services/user.service');
+            const userInfo = await userService.getSmallUserData(userId);
+
+            emitSuccess(this.socket, 'friendUserInfo', userInfo, 'User info fetched successfully');
+            emitSuccess(this.socket, 'friendSummary', userInfo, 'Friend summary fetched successfully');
+        } catch (err) {
+            emitError(this.socket, 'getFriendUserInfoError', err.message);
+            emitError(this.socket, 'getFriendSummaryError', err.message);
         }
     }
 

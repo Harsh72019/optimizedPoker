@@ -5,6 +5,7 @@ const queueService = require('./queue.service');
 const fundingService = require('./funding.service');
 const blockchainService = require('./blockchain.service');
 const ApiError = require('../utils/ApiError');
+const userService = require('./user.service');
 
 class QueueMatcherService {
   constructor() {
@@ -155,6 +156,12 @@ class QueueMatcherService {
       }
 
       console.log(`👥 Seated user IDs (excluding requester): ${seatedUserIds.length}`, seatedUserIds);
+
+      const hasBlockedConflict = await userService.hasBlockedUserConflict(playerId, seatedUserIds);
+      if (hasBlockedConflict) {
+        console.log(`❌ Table ${table._id} has blocked user conflict`);
+        continue;
+      }
 
       // Check cooldown conflicts
       const hasConflict = await cooldownService.hasCooldownConflict(playerId, seatedUserIds);
