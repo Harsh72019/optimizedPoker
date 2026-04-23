@@ -127,7 +127,7 @@ const addReferral = {
 const friendUser = {
   body: Joi.object().keys({
     userId: Joi.string()
-      .custom(objectId)
+      .trim()
       .required(),
   }),
 };
