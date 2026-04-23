@@ -23,7 +23,7 @@ function getDisplayName(user) {
   return user?.name || user?.username || '';
 }
 
-function getNetWorth(user) {
+function getFallbackNetWorth(user) {
   const explicitNetWorth = user?.netWorth ?? user?.networth;
   if (explicitNetWorth !== undefined && explicitNetWorth !== null) {
     return Number(explicitNetWorth) || 0;
@@ -32,7 +32,21 @@ function getNetWorth(user) {
   return (Number(user?.balance) || 0) + (Number(user?.chips) || 0);
 }
 
-function formatSmallUserSummary(user, invitedBy = null, isBlocked = false) {
+async function getNetWorth(user) {
+  try {
+    const walletIntegrationService = require('./wallet-integration.service');
+    const balance = await walletIntegrationService.getUserBalance(user._id);
+    if (balance && Number.isFinite(Number(balance.poolBalance))) {
+      return Number(balance.poolBalance);
+    }
+  } catch (error) {
+    console.error(`Failed to fetch proxy wallet balance for user ${user?._id}:`, error.message);
+  }
+
+  return getFallbackNetWorth(user);
+}
+
+async function formatSmallUserSummary(user, invitedBy = null, isBlocked = false) {
   return {
     userId: user._id,
     name: getDisplayName(user),
@@ -46,7 +60,7 @@ function formatSmallUserSummary(user, invitedBy = null, isBlocked = false) {
         }
       : null,
     rank: user.accountType || 'Human',
-    netWorth: getNetWorth(user),
+    netWorth: await getNetWorth(user),
     isBlocked,
   };
 }
@@ -345,7 +359,7 @@ async function getFriends(userId) {
       invitedBy = invitedByResult.success ? invitedByResult.data : null;
     }
 
-    friends.push(formatSmallUserSummary(friend, invitedBy, blockedSet.has(friendId)));
+    friends.push(await formatSmallUserSummary(friend, invitedBy, blockedSet.has(friendId)));
   }
 
   return friends;
