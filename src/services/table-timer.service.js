@@ -56,11 +56,27 @@ class TableTimerService {
           this.io.to(tableId),
           'tableTimerStarted',
           {
+            tableId,
             timeLimit,
+            startedAt: startTime,
             endTime,
+            durationType: 'TIMED',
             message: `Table will end in ${timeLimit} minutes`
           },
           `Table timer started: ${timeLimit} minutes`
+        );
+
+        emitSuccess(
+          this.io.to(tableId),
+          'privateTableTimerStarted',
+          {
+            tableId,
+            timeLimit,
+            startedAt: startTime,
+            endTime,
+            durationType: 'TIMED'
+          },
+          'Private table timer started'
         );
       }
     } catch (error) {
@@ -129,10 +145,24 @@ class TableTimerService {
             this.io.to(tableId),
             'timeExpired',
             {
+              tableId,
               message: 'Time limit reached! Game will end after this hand.',
-              finalRound: true
+              finalRound: true,
+              gameWillEndAfterCurrentHand: true
             },
             'Time limit reached - final round!'
+          );
+
+          emitSuccess(
+            this.io.to(tableId),
+            'privateTableTimerFinished',
+            {
+              tableId,
+              reason: 'TIME_LIMIT',
+              finalHand: true,
+              message: 'Time finished. This is the last hand.'
+            },
+            'Time finished. This is the last hand.'
           );
         }
       } else {
@@ -149,10 +179,24 @@ class TableTimerService {
             this.io.to(tableId),
             'gameEndedByTime',
             {
+              tableId,
               reason: 'TIME_LIMIT',
               message: 'Game ended due to time limit'
             },
             'Game ended by time limit'
+          );
+
+          emitSuccess(
+            this.io.to(tableId),
+            'privateTableTimerFinished',
+            {
+              tableId,
+              reason: 'TIME_LIMIT',
+              finalHand: false,
+              gameEnded: true,
+              message: 'Time finished. Game is ending now.'
+            },
+            'Time finished. Game is ending now.'
           );
         }
       }
@@ -181,6 +225,7 @@ class TableTimerService {
             this.io.to(tableId),
             'finalRound',
             {
+              tableId,
               message: 'This is the final round! Game will end after this hand.',
               timeRemaining: 'Less than 1 minute'
             },

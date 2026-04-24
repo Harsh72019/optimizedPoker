@@ -695,6 +695,7 @@ class GameOrchestrator {
             const gameState = await gameStateManager.getGame(tableId);
             const tableState = await tableManager.getTable(tableId);
             const tableDoc = await mongoHelper.findById(mongoHelper.COLLECTIONS.TABLES, tableId);
+            const completionReason = options.reason || 'NORMAL_COMPLETION';
             const seatedPlayerIds = new Set(
                 (tableState.players || [])
                     .map(player => player.userId?.toString?.() || player.id?.toString?.() || player.userId || player.id)
@@ -714,7 +715,28 @@ class GameOrchestrator {
                 })
                 .sort((a, b) => b.chips - a.chips);
             const finalStandings = this.buildFinalStandings(playersForStandings);
-            const winners = this.determinePrivateSngWinners(playersForStandings, options.reason);
+            const winners = this.determinePrivateSngWinners(playersForStandings, completionReason);
+
+            this.emitGameLifecycleEvent(
+                tableId,
+                'payoutsProcessing',
+                {
+                    reason: completionReason,
+                    status: 'PROCESSING',
+                    finalStandings,
+                },
+                'Please wait. Payouts are being registered.'
+            );
+
+            this.emitGameLifecycleEvent(
+                tableId,
+                'gameCompletionProcessing',
+                {
+                    reason: completionReason,
+                    status: 'PROCESSING_PAYOUTS',
+                },
+                'Please wait. Payouts are being registered.'
+            );
             
             // 🆕 Execute financial settlement if this is a private table
             if (tableDoc.success && tableDoc.data && tableDoc.data.privateTableId) {
@@ -790,9 +812,20 @@ class GameOrchestrator {
             // Emit game completion
             emitSuccess(this.io.to(tableId), 'gameCompleted', {
                 winners,
-                reason: options.reason || 'NORMAL_COMPLETION',
+                reason: completionReason,
                 finalStandings
             }, 'Game completed!');
+
+            this.emitGameLifecycleEvent(
+                tableId,
+                'payoutsProcessing',
+                {
+                    reason: completionReason,
+                    status: 'COMPLETED',
+                    winners,
+                },
+                'Payout registration completed.'
+            );
             
             // Clean up
             await new Promise(resolve => setTimeout(resolve, 250));
@@ -1046,6 +1079,16 @@ class GameOrchestrator {
             const tableTimerService = require('../services/table-timer.service');
             this.clearPrivateRebuyWindow(tableId);
 
+            this.emitGameLifecycleEvent(
+                tableId,
+                'gameCompletionProcessing',
+                {
+                    reason: options.reason || 'GAME_COMPLETED',
+                    status: 'RETURNING_HOME',
+                },
+                'Payouts registered. Returning to home screen.'
+            );
+
             await this.emitRoomLeftToConnectedPlayers(
                 tableId,
                 options.reason || 'GAME_COMPLETED',
@@ -1161,6 +1204,22 @@ class GameOrchestrator {
         if (t) {
             clearTimeout(t);
             this.restartTimers.delete(tableId);
+        }
+    }
+
+    emitGameLifecycleEvent(tableId, eventName, data = {}, message = '') {
+        try {
+            emitSuccess(
+                this.io.to(tableId),
+                eventName,
+                {
+                    tableId,
+                    ...data,
+                },
+                message
+            );
+        } catch (error) {
+            console.error(`❌ [LIFECYCLE] Failed to emit ${eventName} for ${tableId}:`, error.message);
         }
     }
 
