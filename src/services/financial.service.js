@@ -3,10 +3,53 @@ const settlementService = require('./settlement.service');
 const rakeTierService = require('./rake-tier.service');
 const commissionPreviewService = require('./commission-preview.service');
 const mongoHelper = require('../models/customdb');
+const ApiError = require('../utils/ApiError');
+const httpStatus = require('http-status');
 
 class FinancialService {
   floorToCents(amount) {
     return Math.floor((Number(amount) + Number.EPSILON) * 100) / 100;
+  }
+
+  parseTransactionDateRange(startDate, endDate) {
+    const parsed = {
+      startDate: null,
+      endDate: null,
+    };
+
+    if (startDate) {
+      parsed.startDate = new Date(startDate);
+      if (Number.isNaN(parsed.startDate.getTime())) {
+        throw new ApiError(httpStatus.BAD_REQUEST, 'startDate must be a valid ISO date');
+      }
+    }
+
+    if (endDate) {
+      parsed.endDate = new Date(endDate);
+      if (Number.isNaN(parsed.endDate.getTime())) {
+        throw new ApiError(httpStatus.BAD_REQUEST, 'endDate must be a valid ISO date');
+      }
+
+      if (typeof endDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(endDate)) {
+        parsed.endDate.setUTCHours(23, 59, 59, 999);
+      }
+    }
+
+    if (parsed.startDate && parsed.endDate && parsed.endDate < parsed.startDate) {
+      throw new ApiError(httpStatus.BAD_REQUEST, 'endDate must be greater than or equal to startDate');
+    }
+
+    return parsed;
+  }
+
+  getTransactionCreatedAt(transaction) {
+    const rawDate = transaction.createdAt || transaction.created_at;
+    if (!rawDate) {
+      return null;
+    }
+
+    const createdAt = new Date(rawDate);
+    return Number.isNaN(createdAt.getTime()) ? null : createdAt;
   }
   
   /**
@@ -223,6 +266,7 @@ class FinancialService {
     const page = Math.max(1, Number(options.page || 1));
     const limit = Math.min(100, Math.max(1, Number(options.limit || 20)));
     const skip = (page - 1) * limit;
+    const dateRange = this.parseTransactionDateRange(options.startDate, options.endDate);
 
     const matchStage = {
       userId
@@ -240,16 +284,6 @@ class FinancialService {
       matchStage.gameId = options.gameId;
     }
 
-    if (options.startDate || options.endDate) {
-      matchStage.createdAt = {};
-      if (options.startDate) {
-        matchStage.createdAt.$gte = new Date(options.startDate);
-      }
-      if (options.endDate) {
-        matchStage.createdAt.$lte = new Date(options.endDate);
-      }
-    }
-
     const transactionsResult = await mongoHelper.find(
       mongoHelper.COLLECTIONS.TRANSACTION_LEDGER,
       matchStage
@@ -259,7 +293,27 @@ class FinancialService {
       throw new Error(transactionsResult.error || 'Failed to fetch transaction history');
     }
 
-    const allTransactions = Array.isArray(transactionsResult.data) ? transactionsResult.data : [];
+    const allTransactions = (Array.isArray(transactionsResult.data) ? transactionsResult.data : [])
+      .filter(transaction => {
+        if (!dateRange.startDate && !dateRange.endDate) {
+          return true;
+        }
+
+        const createdAt = this.getTransactionCreatedAt(transaction);
+        if (!createdAt) {
+          return false;
+        }
+
+        if (dateRange.startDate && createdAt < dateRange.startDate) {
+          return false;
+        }
+
+        if (dateRange.endDate && createdAt > dateRange.endDate) {
+          return false;
+        }
+
+        return true;
+      });
     const sortedTransactions = allTransactions.sort((a, b) => {
       const aTime = new Date(a.createdAt || a.created_at || 0).getTime();
       const bTime = new Date(b.createdAt || b.created_at || 0).getTime();
