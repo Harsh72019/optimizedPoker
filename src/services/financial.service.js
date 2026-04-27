@@ -15,6 +15,10 @@ class FinancialService {
     return Math.round((Number(amount || 0) + Number.EPSILON) * 100) / 100;
   }
 
+  toCents(amount) {
+    return Math.round((Number(amount || 0) + Number.EPSILON) * 100);
+  }
+
   parseTransactionDateRange(startDate, endDate) {
     const parsed = {
       startDate: null,
@@ -334,12 +338,12 @@ class FinancialService {
     const transactions = sortedTransactions.slice(skip, skip + limit);
     const totalCount = allTransactions.length;
     const summary = allTransactions.reduce((acc, transaction) => {
-      const amount = this.roundToCents(transaction.amount || 0);
+      const amountCents = this.toCents(transaction.amount || 0);
 
-      if (amount > 0) {
-        acc.totalCreditsCents += Math.round(amount * 100);
-      } else if (amount < 0) {
-        acc.totalDebitsCents += Math.round(Math.abs(amount) * 100);
+      if (amountCents > 0) {
+        acc.totalCreditsCents += amountCents;
+      } else if (amountCents < 0) {
+        acc.totalDebitsCents += Math.abs(amountCents);
       }
 
       if (transaction.status === 'PENDING') {
@@ -357,14 +361,28 @@ class FinancialService {
       pendingCount: 0,
       failedCount: 0
     });
+    const pageTotalAmountCents = transactions.reduce(
+      (total, transaction) => total + this.toCents(transaction.amount || 0),
+      0
+    );
+    const totalAmountCents = summary.totalCreditsCents - summary.totalDebitsCents;
 
     return {
-      transactions: transactions.map(transaction => ({
-        ...transaction,
-        direction: Number(transaction.amount || 0) >= 0 ? 'CREDIT' : 'DEBIT',
-        amount: this.roundToCents(transaction.amount || 0),
-        amountAbsolute: this.roundToCents(Math.abs(Number(transaction.amount || 0)))
-      })),
+      transactions: transactions.map(transaction => {
+        const amountCents = this.toCents(transaction.amount || 0);
+        const amount = this.roundToCents(amountCents / 100);
+
+        return {
+          ...transaction,
+          direction: amountCents >= 0 ? 'CREDIT' : 'DEBIT',
+          amount,
+          amountCents,
+          amountDisplay: amount.toFixed(2),
+          amountAbsolute: this.roundToCents(Math.abs(amountCents) / 100),
+          amountAbsoluteCents: Math.abs(amountCents),
+          amountAbsoluteDisplay: this.roundToCents(Math.abs(amountCents) / 100).toFixed(2)
+        };
+      }),
       pagination: {
         page,
         limit,
@@ -375,8 +393,15 @@ class FinancialService {
       },
       summary: {
         totalCredits: this.roundToCents(summary.totalCreditsCents / 100),
+        totalCreditsCents: summary.totalCreditsCents,
         totalDebits: this.roundToCents(summary.totalDebitsCents / 100),
-        netAmount: this.roundToCents((summary.totalCreditsCents - summary.totalDebitsCents) / 100),
+        totalDebitsCents: summary.totalDebitsCents,
+        netAmount: this.roundToCents(totalAmountCents / 100),
+        netAmountCents: totalAmountCents,
+        totalAmount: this.roundToCents(totalAmountCents / 100),
+        totalAmountCents,
+        pageTotalAmount: this.roundToCents(pageTotalAmountCents / 100),
+        pageTotalAmountCents,
         pendingCount: Number(summary.pendingCount || 0),
         failedCount: Number(summary.failedCount || 0)
       },
