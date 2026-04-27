@@ -1,5 +1,5 @@
 const cron = require('node-cron');
-const {userService, tournamentService} = require('../services');
+const {tournamentGameService} = require('../services');
 const {deleteInactiveTables} = require('../services/table.service');
 const queueMatcher = require('../services/queueMatcher.service');
 const mongoHelper = require('../models/customdb');
@@ -13,7 +13,7 @@ module.exports = {
 
     cron.schedule('* * * * *', async () => {
       await deleteInactiveTables();
-      await tournamentService.commencePendingTournaments();
+      await tournamentGameService.commencePendingTournaments(io);
     });
 
     cron.schedule('*/5 * * * * *', async () => {
@@ -46,8 +46,13 @@ module.exports = {
         if (summary.scanned > 0 || summary.errors.length > 0) {
           console.log('[CRON] Buy-in reconciliation summary:', summary);
         }
+
+        const payoutSummary = await transactionReconciliationService.reconcilePendingPayouts();
+        if (payoutSummary.scanned > 0 || payoutSummary.errors.length > 0) {
+          console.log('[CRON] Payout reconciliation summary:', payoutSummary);
+        }
       } catch (error) {
-        console.error('[CRON] Buy-in reconciliation error:', error.message);
+        console.error('[CRON] Transaction reconciliation error:', error.message);
       }
     });
   }

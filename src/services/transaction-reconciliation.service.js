@@ -4,6 +4,7 @@ const mongoHelper = require('../models/customdb');
 const tableManager = require('../table/table-manager.service');
 const gameStateManager = require('../state/game-state');
 const walletIntegrationService = require('./wallet-integration.service');
+const blockchainService = require('./blockchain.service');
 
 class TransactionReconciliationService {
   constructor() {
@@ -38,6 +39,26 @@ class TransactionReconciliationService {
     }
 
     return result.data;
+  }
+
+  async getPendingPayoutTransactions() {
+    const payoutTypes = ['TABLE_CASHOUT', 'HOST_REWARD', 'AFFILIATE_COMMISSION', 'PRIZE_PAYOUT'];
+    const result = await mongoHelper.find(mongoHelper.COLLECTIONS.TRANSACTION_LEDGER, {
+      status: 'PENDING',
+      type: { $in: payoutTypes }
+    });
+
+    if (!result.success || !Array.isArray(result.data)) {
+      return [];
+    }
+
+    return result.data;
+  }
+
+  getWithdrawalJobId(transaction) {
+    return transaction?.metadata?.queueResult?.jobId
+      || transaction?.metadata?.withdrawalJobId
+      || (String(transaction?.blockchainTxHash || '').startsWith('withdrawal-') ? transaction.blockchainTxHash : null);
   }
 
   async shouldAutoRefundCompletedBuyIn(transaction) {
@@ -219,6 +240,99 @@ class TransactionReconciliationService {
 
         if (result.action?.startsWith('confirmed')) {
           summary.confirmed += 1;
+          continue;
+        }
+
+        if (result.action?.startsWith('marked_failed')) {
+          summary.failed += 1;
+          continue;
+        }
+
+        summary.skipped += 1;
+      } catch (error) {
+        summary.errors.push({
+          transactionId: transaction.transactionId || transaction._id,
+          error: error.message
+        });
+      }
+    }
+
+    return summary;
+  }
+
+  async reconcilePendingPayout(transaction) {
+    const amount = Number(transaction.amount || 0);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      await walletIntegrationService.updateTransactionLedger(transaction._id, {
+        walletAddress: transaction.walletAddress,
+        status: 'COMPLETED',
+        metadata: {
+          reconciliationReason: 'zero_amount_payout',
+          reconciledAt: new Date().toISOString()
+        }
+      });
+      return { action: 'marked_completed_zero_amount' };
+    }
+
+    const jobId = this.getWithdrawalJobId(transaction);
+    if (!jobId) {
+      return { action: 'skipped_missing_withdrawal_job_id' };
+    }
+
+    const job = await blockchainService.withdrawalQueue.getJob(jobId);
+    if (!job) {
+      return { action: 'skipped_withdrawal_job_not_found', jobId };
+    }
+
+    const state = await job.getState();
+    if (state === 'completed') {
+      const returnValue = job.returnvalue || {};
+      await walletIntegrationService.updateTransactionLedger(transaction._id, {
+        walletAddress: transaction.walletAddress,
+        blockchainTxHash: returnValue.transactionHash || transaction.blockchainTxHash || null,
+        status: 'COMPLETED',
+        metadata: {
+          withdrawalJobId: jobId,
+          reconciliationReason: 'withdrawal_job_completed',
+          reconciledAt: new Date().toISOString()
+        }
+      });
+      return { action: 'marked_completed_from_withdrawal_job', jobId };
+    }
+
+    if (state === 'failed') {
+      await walletIntegrationService.updateTransactionLedger(transaction._id, {
+        walletAddress: transaction.walletAddress,
+        status: 'FAILED',
+        metadata: {
+          withdrawalJobId: jobId,
+          reconciliationReason: 'withdrawal_job_failed',
+          withdrawalFailureReason: job.failedReason || null,
+          reconciledAt: new Date().toISOString()
+        }
+      });
+      return { action: 'marked_failed_from_withdrawal_job', jobId };
+    }
+
+    return { action: `skipped_withdrawal_job_${state}`, jobId };
+  }
+
+  async reconcilePendingPayouts() {
+    const pendingTransactions = await this.getPendingPayoutTransactions();
+    const summary = {
+      scanned: pendingTransactions.length,
+      completed: 0,
+      failed: 0,
+      skipped: 0,
+      errors: []
+    };
+
+    for (const transaction of pendingTransactions) {
+      try {
+        const result = await this.reconcilePendingPayout(transaction);
+
+        if (result.action?.startsWith('marked_completed')) {
+          summary.completed += 1;
           continue;
         }
 

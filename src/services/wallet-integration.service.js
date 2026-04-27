@@ -367,7 +367,7 @@ class WalletIntegrationService {
     return tableResult.data;
   }
 
-  async queueTablePayout(user, amount, sourceTableId) {
+  async queueTablePayout(user, amount, sourceTableId, options = {}) {
     const payoutTable = await this.getPayoutSourceTable(sourceTableId);
 
     if (!payoutTable || !payoutTable.tableBlockchainId) {
@@ -384,7 +384,11 @@ class WalletIntegrationService {
       amount,
       user.walletAddress,
       user.email || 'no-reply@system.local',
-      user.username || user.name || 'Player'
+      user.username || user.name || 'Player',
+      {
+        ledgerEntryId: options.ledgerEntryId || null,
+        payoutContext: options.payoutContext || null
+      }
     );
 
     return {
@@ -507,7 +511,7 @@ class WalletIntegrationService {
   async payHostReward(hostId, amount, gameId, options = {}) {
     const host = await this.resolveUser(hostId, 'Host');
     const idempotencyKey = options.idempotencyKey || `host_reward:${gameId}:${hostId}`;
-    const existingTransaction = await this.findExistingTransaction(
+    const existingTransaction = await this.findAnyTransaction(
       'HOST_REWARD',
       hostId,
       gameId,
@@ -526,49 +530,58 @@ class WalletIntegrationService {
       };
     }
 
-    const payoutResult = await this.queueTablePayout(host, amount, options.sourceTableId);
-
-    if (!payoutResult.success) {
-      await this.logTransaction({
-        userId: hostId,
-        type: 'HOST_REWARD',
-        amount,
-        gameId,
-        description: `Failed host reward for game ${gameId}`,
-        walletAddress: host.walletAddress,
-        status: 'FAILED',
-        metadata: { error: payoutResult.error, sourceTableId: options.sourceTableId, idempotencyKey }
-      });
-      throw new Error(payoutResult.error);
-    }
-
-    const ledger = await this.logTransaction({
+    const { entry: ledger } = await this.createOrRecycleLedgerEntry({
+      existingTransaction,
       userId: hostId,
       type: 'HOST_REWARD',
       amount,
       gameId,
       description: `Host reward for game ${gameId}`,
       walletAddress: host.walletAddress,
-      blockchainTxHash: payoutResult.txHash,
-      status: 'PENDING',
-      metadata: { sourceTableId: options.sourceTableId, queueResult: payoutResult.queueResult, idempotencyKey }
+      metadata: { sourceTableId: options.sourceTableId, idempotencyKey }
     });
 
-    return {
-      success: true,
-      paidAmount: amount,
-      walletAddress: host.walletAddress,
-      transactionId: ledger?.transactionId || this.generateTransactionId('host_reward', gameId, hostId),
-      blockchainPending: true,
-      sourceTableId: options.sourceTableId
-    };
+    try {
+      const payoutResult = await this.queueTablePayout(host, amount, options.sourceTableId, {
+        ledgerEntryId: ledger._id,
+        payoutContext: 'HOST_REWARD'
+      });
+
+      await this.updateTransactionLedger(ledger._id, {
+        walletAddress: host.walletAddress,
+        blockchainTxHash: payoutResult.txHash,
+        status: 'PENDING',
+        metadata: {
+          sourceTableId: options.sourceTableId,
+          queueResult: payoutResult.queueResult,
+          idempotencyKey,
+          queuedAt: new Date().toISOString()
+        }
+      });
+
+      return {
+        success: true,
+        paidAmount: amount,
+        walletAddress: host.walletAddress,
+        transactionId: ledger?.transactionId || this.generateTransactionId('host_reward', gameId, hostId),
+        blockchainPending: true,
+        sourceTableId: options.sourceTableId
+      };
+    } catch (error) {
+      await this.updateTransactionLedger(ledger._id, {
+        walletAddress: host.walletAddress,
+        status: 'FAILED',
+        metadata: { error: error.message, sourceTableId: options.sourceTableId, idempotencyKey }
+      });
+      throw error;
+    }
   }
 
   async payAffiliateCommission(affiliateId, amount, gameId, referredUserId, options = {}) {
     const affiliate = await this.resolveUser(affiliateId, 'Affiliate');
     const recruitEarningsService = require('./recruitEarnings.service');
     const idempotencyKey = options.idempotencyKey || `affiliate:${gameId}:${affiliateId}`;
-    const existingTransaction = await this.findExistingTransaction(
+    const existingTransaction = await this.findAnyTransaction(
       'AFFILIATE_COMMISSION',
       affiliateId,
       gameId,
@@ -587,51 +600,61 @@ class WalletIntegrationService {
       };
     }
 
-    const payoutResult = await this.queueTablePayout(affiliate, amount, options.sourceTableId);
-
-    if (!payoutResult.success) {
-      await this.logTransaction({
-        userId: affiliateId,
-        type: 'AFFILIATE_COMMISSION',
-        amount,
-        gameId,
-        description: `Failed affiliate commission for game ${gameId}`,
-        walletAddress: affiliate.walletAddress,
-        status: 'FAILED',
-        metadata: { referredUserId, error: payoutResult.error, sourceTableId: options.sourceTableId, idempotencyKey }
-      });
-      throw new Error(payoutResult.error);
-    }
-
-    const ledger = await this.logTransaction({
+    const { entry: ledger } = await this.createOrRecycleLedgerEntry({
+      existingTransaction,
       userId: affiliateId,
       type: 'AFFILIATE_COMMISSION',
       amount,
       gameId,
       description: `Affiliate commission for game ${gameId}`,
       walletAddress: affiliate.walletAddress,
-      blockchainTxHash: payoutResult.txHash,
-      status: 'PENDING',
-      metadata: { referredUserId, sourceTableId: options.sourceTableId, queueResult: payoutResult.queueResult, idempotencyKey }
+      metadata: { referredUserId, sourceTableId: options.sourceTableId, idempotencyKey }
     });
 
-    if (referredUserId) {
-      await recruitEarningsService.recordRecruitEarning(
-        referredUserId,
-        affiliateId,
-        amount,
-        'affiliate_commission'
-      );
-    }
+    try {
+      const payoutResult = await this.queueTablePayout(affiliate, amount, options.sourceTableId, {
+        ledgerEntryId: ledger._id,
+        payoutContext: 'AFFILIATE_COMMISSION'
+      });
 
-    return {
-      success: true,
-      paidAmount: amount,
-      walletAddress: affiliate.walletAddress,
-      transactionId: ledger?.transactionId || this.generateTransactionId('affiliate', gameId, affiliateId),
-      blockchainPending: true,
-      sourceTableId: options.sourceTableId
-    };
+      await this.updateTransactionLedger(ledger._id, {
+        walletAddress: affiliate.walletAddress,
+        blockchainTxHash: payoutResult.txHash,
+        status: 'PENDING',
+        metadata: {
+          referredUserId,
+          sourceTableId: options.sourceTableId,
+          queueResult: payoutResult.queueResult,
+          idempotencyKey,
+          queuedAt: new Date().toISOString()
+        }
+      });
+
+      if (referredUserId) {
+        await recruitEarningsService.recordRecruitEarning(
+          referredUserId,
+          affiliateId,
+          amount,
+          'affiliate_commission'
+        );
+      }
+
+      return {
+        success: true,
+        paidAmount: amount,
+        walletAddress: affiliate.walletAddress,
+        transactionId: ledger?.transactionId || this.generateTransactionId('affiliate', gameId, affiliateId),
+        blockchainPending: true,
+        sourceTableId: options.sourceTableId
+      };
+    } catch (error) {
+      await this.updateTransactionLedger(ledger._id, {
+        walletAddress: affiliate.walletAddress,
+        status: 'FAILED',
+        metadata: { referredUserId, error: error.message, sourceTableId: options.sourceTableId, idempotencyKey }
+      });
+      throw error;
+    }
   }
 
   async recordPlatformRevenue(amount, gameId, options = {}) {
@@ -710,7 +733,7 @@ class WalletIntegrationService {
       try {
         const user = await this.resolveUser(userId, 'Winner');
         const idempotencyKey = `prize:${gameId}:${userId}:${position}`;
-        const existingTransaction = await this.findExistingTransaction(
+        const existingTransaction = await this.findAnyTransaction(
           'PRIZE_PAYOUT',
           userId,
           gameId,
@@ -731,43 +754,84 @@ class WalletIntegrationService {
           continue;
         }
 
-        const payoutResult = await this.queueTablePayout(user, amount, options.sourceTableId);
-
-        if (!payoutResult.success) {
-          await this.logTransaction({
+        if (Number(amount || 0) <= 0) {
+          const ledger = await this.logTransaction({
             userId,
             type: 'PRIZE_PAYOUT',
-            amount,
+            amount: 0,
             gameId,
-            description: `Failed prize payout for game ${gameId}`,
+            description: `Prize payout skipped for position ${position} in game ${gameId}`,
             walletAddress: user.walletAddress,
-            status: 'FAILED',
-            metadata: { position, sourceTableId: options.sourceTableId, error: payoutResult.error, idempotencyKey }
+            status: 'COMPLETED',
+            metadata: {
+              position,
+              sourceTableId: options.sourceTableId,
+              idempotencyKey,
+              skipped: true,
+              reason: 'ZERO_AMOUNT'
+            }
           });
-          throw new Error(payoutResult.error);
+
+          results.push({
+            userId,
+            position,
+            amount: 0,
+            success: true,
+            walletAddress: user.walletAddress,
+            transactionId: ledger?.transactionId || this.generateTransactionId('prize', gameId, userId),
+            blockchainPending: false,
+            skipped: true
+          });
+          continue;
         }
 
-        const ledger = await this.logTransaction({
+        const { entry: ledger } = await this.createOrRecycleLedgerEntry({
+          existingTransaction,
           userId,
           type: 'PRIZE_PAYOUT',
           amount,
           gameId,
           description: `Prize payout for position ${position} in game ${gameId}`,
           walletAddress: user.walletAddress,
-          blockchainTxHash: payoutResult.txHash,
-          status: 'PENDING',
-          metadata: { position, sourceTableId: options.sourceTableId, queueResult: payoutResult.queueResult, idempotencyKey }
+          metadata: { position, sourceTableId: options.sourceTableId, idempotencyKey }
         });
 
-        results.push({
-          userId,
-          position,
-          amount,
-          success: true,
-          walletAddress: user.walletAddress,
-          transactionId: ledger?.transactionId || this.generateTransactionId('prize', gameId, userId),
-          blockchainPending: true
-        });
+        try {
+          const payoutResult = await this.queueTablePayout(user, amount, options.sourceTableId, {
+            ledgerEntryId: ledger._id,
+            payoutContext: 'PRIZE_PAYOUT'
+          });
+
+          await this.updateTransactionLedger(ledger._id, {
+            walletAddress: user.walletAddress,
+            blockchainTxHash: payoutResult.txHash,
+            status: 'PENDING',
+            metadata: {
+              position,
+              sourceTableId: options.sourceTableId,
+              queueResult: payoutResult.queueResult,
+              idempotencyKey,
+              queuedAt: new Date().toISOString()
+            }
+          });
+
+          results.push({
+            userId,
+            position,
+            amount,
+            success: true,
+            walletAddress: user.walletAddress,
+            transactionId: ledger?.transactionId || this.generateTransactionId('prize', gameId, userId),
+            blockchainPending: true
+          });
+        } catch (error) {
+          await this.updateTransactionLedger(ledger._id, {
+            walletAddress: user.walletAddress,
+            status: 'FAILED',
+            metadata: { position, sourceTableId: options.sourceTableId, error: error.message, idempotencyKey }
+          });
+          throw error;
+        }
       } catch (error) {
         results.push({ userId, position, amount, success: false, error: error.message });
       }
