@@ -431,7 +431,7 @@ const getAllOfficialTournaments = catchAsync(async (req, res) => {
  * Get user balance
  */
 const getUserBalance = catchAsync(async (req, res) => {
-  const userId = req.user.id;
+  const userId = req.user._id?.toString?.() || req.user.id;
   const balance = await walletIntegrationService.getUserBalance(userId);
   
   res.status(httpStatus.OK).json({
@@ -444,7 +444,7 @@ const getUserBalance = catchAsync(async (req, res) => {
  * Get user transaction history
  */
 const getUserTransactions = catchAsync(async (req, res) => {
-  const userId = req.user.id;
+  const userId = req.user._id?.toString?.() || req.user.id;
   const result = await financialService.getUserTransactionHistory(userId, req.query);
 
   res.status(httpStatus.OK).json({
