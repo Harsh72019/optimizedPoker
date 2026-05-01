@@ -577,6 +577,27 @@ class GameOrchestrator {
                 }
             });
 
+            const tableDoc = await mongoHelper.findById(mongoHelper.COLLECTIONS.TABLES, tableId);
+            if (tableDoc.success && tableDoc.data?.isTournament) {
+                const tournamentGameService = require('../services/tournament-game.service');
+                const tournamentResult = await tournamentGameService.onTournamentHandCompleted(tableId, this);
+
+                if (tournamentResult.completed || tournamentResult.tableClosed || !tournamentResult.continueTable) {
+                    await gameStateManager.deleteGame(tableId);
+                    await tableManager.setStatus(tableId, tournamentResult.completed ? 'COMPLETED' : 'IDLE');
+                    return;
+                }
+
+                const timeout = setTimeout(async () => {
+                    emitSuccess(this.io.to(tableId), 'newRoundStarting', { seconds: 8 }, 'New tournament hand starting');
+                    await this.prepareNextHand(tableId);
+                }, 8000);
+
+                await tableManager.setStatus(tableId, 'WAITING');
+                this.restartTimers.set(tableId, timeout);
+                return;
+            }
+
             const tableTimerService = require('../services/table-timer.service');
             if (await tableTimerService.shouldEndAfterHand(tableId)) {
                 await this.handleGameCompletion(tableId);

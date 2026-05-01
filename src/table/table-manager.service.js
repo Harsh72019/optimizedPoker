@@ -16,18 +16,19 @@ class TableManagerService {
             const tableDoc = await mongoHelper.findById(mongoHelper.COLLECTIONS.TABLES, tableId);
             
             // ✅ CRITICAL: Don't add bots to private tables
-            const isPrivateTable = tableDoc.success && tableDoc.data && 
-                                 (tableDoc.data.isPrivate || tableDoc.data.privateTableId);
+            const isManagedGameTable = tableDoc.success && tableDoc.data && 
+                                 (tableDoc.data.isPrivate || tableDoc.data.privateTableId || tableDoc.data.isTournament);
             
             let table;
             
-            if (isPrivateTable) {
+            if (isManagedGameTable) {
                 // Private table - no bot, empty players array
                 console.log(`🔒 [TABLE MANAGER] Private table detected: ${tableId} - no bot added`);
                 table = {
                     players: [],
                     dealerPosition: null,
                     status: 'IDLE',
+                    maxPlayers: tableDoc?.data?.maxPlayers || 9,
                     tableBlockchainId: tableDoc?.data?.tableBlockchainId
                 };
             } else {
@@ -81,7 +82,7 @@ class TableManagerService {
             const table = findResult.data;
             
             // ✅ CRITICAL: Don't sync bots to private tables
-            const isPrivateTable = table.isPrivate || table.privateTableId;
+            const isPrivateTable = table.isPrivate || table.privateTableId || table.isTournament;
             if (isPrivateTable) {
                 console.log(`🔒 [TABLE MANAGER] Skipping bot sync for private table: ${tableId}`);
                 return;

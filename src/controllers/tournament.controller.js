@@ -1,141 +1,88 @@
-const catchAsync = require('../utils/catchAsync');
-const {tournamentService} = require('../services');
 const httpStatus = require('http-status');
-const {getPaginateConfig} = require('../utils/queryPHandler');
+const catchAsync = require('../utils/catchAsync');
+const tournamentGameService = require('../services/tournament-game.service');
 
 const createTournament = catchAsync(async (req, res) => {
-  try {
-    const tournamentData = {
-      ...req.body,
-      timeZone: req.body.timeZone || 'UTC', // Default to UTC if not specified
-    };
+  const adminId = req.admin?._id || req.user?._id || null;
+  const tournament = await tournamentGameService.createTournament(req.body, adminId);
 
-    if (!tournamentData.levelDuration) {
-      tournamentData.levelDuration = 15; // Default 15 minutes per level
-    }
-
-    if (!tournamentData.tournamentDuration) {
-      tournamentData.tournamentDuration = 0; // 0 means no fixed duration
-    }
-
-    const tournament = await tournamentService.createTournament(tournamentData);
-
-    res.status(httpStatus.CREATED).json({
-      status: true,
-      message: 'Tournament created successfully',
-      data: tournament,
-    });
-  } catch (error) {
-    res.status(error.statusCode || httpStatus.BAD_REQUEST).json({
-      status: false,
-      message: error.message,
-    });
-  }
+  res.status(httpStatus.CREATED).json({
+    status: true,
+    message: 'Tournament created successfully',
+    data: tournament,
+  });
 });
 
 const listTournaments = catchAsync(async (req, res) => {
-  try {
-    const {status, startDate, endDate, ...otherOptions} = req.query;
-    const {options} = getPaginateConfig(otherOptions);
+  const tournaments = await tournamentGameService.listTournaments(req.query);
 
-    // Build filter object
-    const filter = {};
-    if (status) {
-      filter.status = status;
-    }
-    if (startDate || endDate) {
-      filter.startTime = {};
-      if (startDate) filter.startTime.$gte = new Date(startDate);
-      if (endDate) filter.startTime.$lte = new Date(endDate);
-    }
-
-    const tournaments = await tournamentService.listTournaments(filter, options);
-
-    res.status(httpStatus.OK).json({
-      status: true,
-      message: 'Tournaments fetched successfully',
-      data: tournaments,
-    });
-  } catch (error) {
-    res.status(error.statusCode || httpStatus.BAD_REQUEST).json({
-      status: false,
-      message: error.message,
-    });
-  }
+  res.status(httpStatus.OK).json({
+    status: true,
+    message: 'Tournaments fetched successfully',
+    data: tournaments,
+  });
 });
 
 const getTournamentById = catchAsync(async (req, res) => {
-  try {
-    const tournament = await tournamentService.getTournamentById(req.params.id);
+  const tournament = await tournamentGameService.getTournament(req.params.id);
 
-    res.status(httpStatus.OK).json({
-      status: true,
-      message: 'Tournament fetched successfully',
-      data: tournament,
-    });
-  } catch (error) {
-    res.status(error.statusCode || httpStatus.BAD_REQUEST).json({
-      status: false,
-      message: error.message,
-    });
-  }
+  res.status(httpStatus.OK).json({
+    status: true,
+    message: 'Tournament fetched successfully',
+    data: tournament,
+  });
 });
 
-const previewTournamentProgression = catchAsync(async (req, res) => {
-  try {
-    const tournament = await tournamentService.calculateTournamentProgression(req.body);
+const registerTournament = catchAsync(async (req, res) => {
+  const registration = await tournamentGameService.registerPlayer(req.params.id, req.user._id.toString());
 
-    res.status(httpStatus.OK).json({
-      status: true,
-      message: 'Preview details fetched successfully',
-      data: tournament,
-    });
-  } catch (error) {
-    res.status(error.statusCode || httpStatus.BAD_REQUEST).json({
-      status: false,
-      message: error.message,
-    });
-  }
+  res.status(httpStatus.OK).json({
+    status: true,
+    message: 'Successfully registered for tournament',
+    data: registration,
+  });
 });
 
-const updateTournament = catchAsync(async (req, res) => {
-  try {
-    const tournament = await tournamentService.updateTournament(req.params.id, req.body);
+const startTournament = catchAsync(async (req, res) => {
+  const adminId = req.admin?._id || req.user?._id || null;
+  const result = await tournamentGameService.startTournament(req.params.id, null, adminId);
 
-    res.status(httpStatus.OK).json({
-      status: true,
-      message: 'Tournament updated successfully',
-      data: tournament,
-    });
-  } catch (error) {
-    res.status(error.statusCode || httpStatus.BAD_REQUEST).json({
-      status: false,
-      message: error.message,
-    });
-  }
+  res.status(httpStatus.OK).json({
+    status: true,
+    message: 'Tournament started successfully',
+    data: result,
+  });
 });
 
-const deleteTournament = catchAsync(async (req, res) => {
-  try {
-    await tournamentService.deleteTournament(req.params.id);
+const unregisterTournament = catchAsync(async (req, res) => {
+  const result = await tournamentGameService.unregisterPlayer(req.params.id, req.user._id.toString());
 
-    res.status(httpStatus.OK).json({
-      status: true,
-      message: 'Tournament deleted successfully',
-    });
-  } catch (error) {
-    res.status(error.statusCode || httpStatus.BAD_REQUEST).json({
-      status: false,
-      message: error.message,
-    });
-  }
+  res.status(httpStatus.OK).json({
+    status: true,
+    message: 'Successfully unregistered from tournament',
+    data: result,
+  });
+});
+
+const getMyTableAssignment = catchAsync(async (req, res) => {
+  const assignment = await tournamentGameService.getPlayerTableAssignment(
+    req.params.id,
+    req.user._id.toString()
+  );
+
+  res.status(httpStatus.OK).json({
+    status: true,
+    message: 'Tournament table assignment fetched successfully',
+    data: assignment,
+  });
 });
 
 module.exports = {
   createTournament,
   listTournaments,
   getTournamentById,
-  updateTournament,
-  deleteTournament,
-  previewTournamentProgression,
+  registerTournament,
+  unregisterTournament,
+  startTournament,
+  getMyTableAssignment,
 };

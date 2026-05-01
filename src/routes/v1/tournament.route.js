@@ -1,21 +1,19 @@
 const express = require('express');
-const {tournamentController} = require('../../controllers');
-const {tournamentValidation} = require('../../validations');
+const { tournamentController } = require('../../controllers');
+const { tournamentValidation } = require('../../validations');
 const validate = require('../../middlewares/validate');
-const {protect} = require('../../controllers/admin.controller');
+const { protect: protectUser, checkEmailExistence } = require('../../controllers/auth.controller');
+const { protect: protectAdmin } = require('../../controllers/admin.controller');
+
 const router = express.Router();
 
-// Admin routes (protected)
-router.use(protect); // Middleware to ensure admin authentication
-router.post('/create', validate(tournamentValidation.createTournament), tournamentController.createTournament);
-router.post(
-  '/previewTournamentProgression',
-  validate(tournamentValidation.previewTournamentProgression),
-  tournamentController.previewTournamentProgression
-);
-router.get('/list', tournamentController.listTournaments);
-router.get('/:id', tournamentController.getTournamentById);
-router.patch('/:id', validate(tournamentValidation.updateTournament), tournamentController.updateTournament);
-router.delete('/:id', validate(tournamentValidation.deleteTournament), tournamentController.deleteTournament);
+router.get('/list', protectUser, checkEmailExistence, tournamentController.listTournaments);
+router.get('/:id', protectUser, checkEmailExistence, validate(tournamentValidation.getTournamentById), tournamentController.getTournamentById);
+router.post('/:id/register', protectUser, checkEmailExistence, validate(tournamentValidation.registerTournament), tournamentController.registerTournament);
+router.delete('/:id/register', protectUser, checkEmailExistence, validate(tournamentValidation.registerTournament), tournamentController.unregisterTournament);
+router.get('/:id/my-table', protectUser, checkEmailExistence, validate(tournamentValidation.getMyTableAssignment), tournamentController.getMyTableAssignment);
+
+router.post('/create', protectAdmin, validate(tournamentValidation.createTournament), tournamentController.createTournament);
+router.post('/:id/start', protectAdmin, validate(tournamentValidation.startTournament), tournamentController.startTournament);
 
 module.exports = router;

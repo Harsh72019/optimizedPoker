@@ -99,10 +99,10 @@ const registerTournament = {
       .required(),
   }),
   body: Joi.object().keys({
-    transactionId: Joi.string().required(),
-    email: Joi.string().required(),
-    name: Joi.string().required(),
-  }),
+    transactionId: Joi.string(),
+    email: Joi.string(),
+    name: Joi.string(),
+  }).unknown(true),
 };
 
 const unregisterTournament = {

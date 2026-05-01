@@ -671,7 +671,7 @@ class PlayerActionService {
     }
 
     getTurnTimerSeconds(gameState) {
-        return gameState?.privateTableConfig?.timer?.turnTimer || 20;
+        return gameState?.privateTableConfig?.timer?.turnTimer || gameState?.tournamentConfig?.turnTimer || 20;
     }
 
     formatTableData(tableState, gameState) {

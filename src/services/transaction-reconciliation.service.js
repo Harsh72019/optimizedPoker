@@ -5,12 +5,24 @@ const tableManager = require('../table/table-manager.service');
 const gameStateManager = require('../state/game-state');
 const walletIntegrationService = require('./wallet-integration.service');
 const blockchainService = require('./blockchain.service');
+const MasterTableAbi = require('../blockchain/masterpokertable.json').abi;
 
 class TransactionReconciliationService {
   constructor() {
     this.provider = new ethers.JsonRpcProvider(config.POLYGON_URL);
+    this.masterTableContract = new ethers.Contract(
+      config.MASTER_POKER_TABLE_CONTRACT,
+      MasterTableAbi,
+      this.provider
+    );
+    this.usdtInterface = new ethers.Interface([
+      'event Transfer(address indexed from, address indexed to, uint256 value)'
+    ]);
     this.noHashFailureMs = 2 * 60 * 1000;
     this.hashPendingGraceMs = 10 * 60 * 1000;
+    this.legacyPayoutLookupRetryMs = 6 * 60 * 60 * 1000;
+    this.legacyPayoutLookupMaxBlocks = 120000;
+    this.legacyPayoutLookupChunkSize = 2000;
   }
 
   getTransactionAgeMs(transaction) {
@@ -22,6 +34,13 @@ class TransactionReconciliationService {
 
   getTableId(transaction) {
     return transaction?.metadata?.tableId || transaction?.gameId || null;
+  }
+
+  getTransactionCreatedAt(transaction) {
+    const rawDate = transaction.createdAt || transaction.created_at || transaction.updatedAt || transaction.updated_at;
+    if (!rawDate) return null;
+    const createdAt = new Date(rawDate);
+    return Number.isNaN(createdAt.getTime()) ? null : createdAt;
   }
 
   isBlockchainHash(value) {
@@ -59,6 +78,126 @@ class TransactionReconciliationService {
     return transaction?.metadata?.queueResult?.jobId
       || transaction?.metadata?.withdrawalJobId
       || (String(transaction?.blockchainTxHash || '').startsWith('withdrawal-') ? transaction.blockchainTxHash : null);
+  }
+
+  shouldAttemptLegacyPayoutLookup(transaction) {
+    const lastAttemptAt = transaction?.metadata?.legacyPayoutLookupAttemptedAt;
+    if (!lastAttemptAt) {
+      return true;
+    }
+
+    const lastAttemptTime = new Date(lastAttemptAt).getTime();
+    if (!Number.isFinite(lastAttemptTime)) {
+      return true;
+    }
+
+    return Date.now() - lastAttemptTime >= this.legacyPayoutLookupRetryMs;
+  }
+
+  async getPayoutSourceTable(transaction) {
+    const sourceTableId = transaction?.metadata?.sourceTableId || transaction?.metadata?.tableId || transaction?.gameId;
+    if (!sourceTableId) {
+      return null;
+    }
+
+    const tableResult = await mongoHelper.findById(mongoHelper.COLLECTIONS.TABLES, sourceTableId);
+    return tableResult.success && tableResult.data ? tableResult.data : null;
+  }
+
+  async getPayoutSourceTableAddress(table) {
+    if (!table) {
+      return null;
+    }
+
+    if (table.blockchainAddress && ethers.isAddress(table.blockchainAddress)) {
+      return table.blockchainAddress;
+    }
+
+    if (!table.tableBlockchainId) {
+      return null;
+    }
+
+    const tableInfo = await this.masterTableContract.getTable(table.tableBlockchainId);
+    const tableAddress = tableInfo.tableAddress || tableInfo[0];
+    return tableAddress && ethers.isAddress(tableAddress) ? tableAddress : null;
+  }
+
+  async estimateLookupBlockRange(transaction) {
+    const latestBlock = await this.provider.getBlock('latest');
+    const createdAt = this.getTransactionCreatedAt(transaction);
+    const lookupStart = createdAt
+      ? Math.floor(createdAt.getTime() / 1000) - (6 * 60 * 60)
+      : latestBlock.timestamp - (24 * 60 * 60);
+    const secondsBack = Math.max(0, latestBlock.timestamp - lookupStart);
+    const estimatedBlocksBack = Math.ceil(secondsBack / 2) + 5000;
+    const cappedBlocksBack = Math.min(estimatedBlocksBack, this.legacyPayoutLookupMaxBlocks);
+
+    return {
+      fromBlock: Math.max(0, latestBlock.number - cappedBlocksBack),
+      toBlock: latestBlock.number
+    };
+  }
+
+  async findLegacyPayoutTransfer(transaction) {
+    if (!transaction.walletAddress || !ethers.isAddress(transaction.walletAddress)) {
+      return null;
+    }
+
+    const amount = Number(transaction.amount || 0);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return null;
+    }
+
+    const table = await this.getPayoutSourceTable(transaction);
+    const tableAddress = await this.getPayoutSourceTableAddress(table);
+    if (!tableAddress) {
+      return null;
+    }
+
+    const expectedAmount = ethers.parseUnits(amount.toFixed(2), 6);
+    const { fromBlock, toBlock } = await this.estimateLookupBlockRange(transaction);
+    const transferTopic = this.usdtInterface.getEvent('Transfer').topicHash;
+    const fromTopic = ethers.zeroPadValue(tableAddress, 32);
+    const toTopic = ethers.zeroPadValue(transaction.walletAddress, 32);
+
+    for (let start = fromBlock; start <= toBlock; start += this.legacyPayoutLookupChunkSize) {
+      const end = Math.min(toBlock, start + this.legacyPayoutLookupChunkSize - 1);
+      const logs = await this.provider.getLogs({
+        address: config.USDT_TOKEN,
+        fromBlock: start,
+        toBlock: end,
+        topics: [transferTopic, fromTopic, toTopic]
+      });
+
+      for (const log of logs) {
+        const parsed = this.usdtInterface.parseLog(log);
+        if (parsed.args.value === expectedAmount) {
+          const receipt = await this.provider.getTransactionReceipt(log.transactionHash).catch(() => null);
+          if (!receipt || receipt.status === 1) {
+            return {
+              txHash: log.transactionHash,
+              blockNumber: log.blockNumber,
+              sourceTableId: table._id,
+              tableBlockchainId: table.tableBlockchainId || null,
+              tableAddress
+            };
+          }
+        }
+      }
+    }
+
+    return null;
+  }
+
+  async markLegacyPayoutLookupAttempt(transaction, resultMetadata = {}) {
+    await walletIntegrationService.updateTransactionLedger(transaction._id, {
+      walletAddress: transaction.walletAddress,
+      metadata: {
+        legacyPayoutLookupAttemptedAt: new Date().toISOString(),
+        legacyPayoutLookupAttempts: Number(transaction?.metadata?.legacyPayoutLookupAttempts || 0) + 1,
+        ...resultMetadata
+      }
+    });
   }
 
   async shouldAutoRefundCompletedBuyIn(transaction) {
@@ -276,12 +415,12 @@ class TransactionReconciliationService {
 
     const jobId = this.getWithdrawalJobId(transaction);
     if (!jobId) {
-      return { action: 'skipped_missing_withdrawal_job_id' };
+      return this.reconcileLegacyPendingPayout(transaction, 'missing_withdrawal_job_id');
     }
 
     const job = await blockchainService.withdrawalQueue.getJob(jobId);
     if (!job) {
-      return { action: 'skipped_withdrawal_job_not_found', jobId };
+      return this.reconcileLegacyPendingPayout(transaction, 'withdrawal_job_not_found', { jobId });
     }
 
     const state = await job.getState();
@@ -315,6 +454,43 @@ class TransactionReconciliationService {
     }
 
     return { action: `skipped_withdrawal_job_${state}`, jobId };
+  }
+
+  async reconcileLegacyPendingPayout(transaction, reason, extraMetadata = {}) {
+    if (!this.shouldAttemptLegacyPayoutLookup(transaction)) {
+      return { action: 'skipped_recent_legacy_payout_lookup', reason, ...extraMetadata };
+    }
+
+    const legacyTransfer = await this.findLegacyPayoutTransfer(transaction);
+    if (legacyTransfer) {
+      await walletIntegrationService.updateTransactionLedger(transaction._id, {
+        walletAddress: transaction.walletAddress,
+        blockchainTxHash: legacyTransfer.txHash,
+        status: 'COMPLETED',
+        metadata: {
+          ...extraMetadata,
+          reconciliationReason: 'legacy_onchain_transfer_found',
+          legacyLookupReason: reason,
+          legacyTransfer,
+          reconciledAt: new Date().toISOString()
+        }
+      });
+
+      return {
+        action: 'marked_completed_from_legacy_onchain_transfer',
+        reason,
+        txHash: legacyTransfer.txHash,
+        ...extraMetadata
+      };
+    }
+
+    await this.markLegacyPayoutLookupAttempt(transaction, {
+      ...extraMetadata,
+      legacyLookupReason: reason,
+      legacyPayoutLookupResult: 'not_found'
+    });
+
+    return { action: 'skipped_legacy_onchain_transfer_not_found', reason, ...extraMetadata };
   }
 
   async reconcilePendingPayouts() {

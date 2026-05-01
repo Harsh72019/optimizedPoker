@@ -6,6 +6,7 @@ const ConnectionHandler = require('./handlers/connection.js');
 const PrivateTableGameOrchestrator = require('../game/private-table-game-orchestrator.js');
 const GameActionHandler = require('./handlers/game-actions.js');
 const PrivateTableHandler = require('./handlers/private-table.handler.js');
+const TournamentHandler = require('./handlers/tournament.handler.js');
 const TurnTimerManager = require('../game/turn-timer.manager.js');
 const PlayerActionService = require('../game/player-action.service.js');
 const GameOrchestrator = require('../game/game-orchestrator.service');
@@ -37,6 +38,7 @@ class SocketServer {
             new ConnectionHandler(this.io, socket , this.orchestrator);
             new GameActionHandler(this.io, socket, this.timerManager, this.actionService);
             new PrivateTableHandler(this.io, socket, this.privateOrchestrator);
+            new TournamentHandler(this.io, socket);
 
             socket.on('disconnect', () => {
                 console.log(`❌ Client disconnected: ${socket.id}`);

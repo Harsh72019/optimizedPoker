@@ -20,6 +20,32 @@ const generateNonceMessage = walletAddress => `
   Nonce: ${randomstring.generate(12)}
 `;
 
+const SECP256K1_N = BigInt('0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141');
+const SECP256K1_HALF_N = SECP256K1_N / 2n;
+
+function normalizeLoginSignature(signature) {
+  const parsedSignature = ethers.Signature.from(signature);
+
+  try {
+    return parsedSignature.serialized;
+  } catch (error) {
+    const rawS = BigInt(parsedSignature._s);
+
+    if (rawS <= SECP256K1_HALF_N) {
+      throw error;
+    }
+
+    const canonicalS = ethers.toBeHex(SECP256K1_N - rawS, 32);
+    const yParity = parsedSignature.yParity === 0 ? 1 : 0;
+
+    return ethers.Signature.from({
+      r: parsedSignature.r,
+      s: canonicalS,
+      yParity,
+    }).serialized;
+  }
+}
+
 const loginUser = catchAsync(async (req, res) => {
   try {
     const { walletAddress, signature, consent } = req.body;
@@ -38,16 +64,22 @@ const loginUser = catchAsync(async (req, res) => {
       return res.status(403).send({ status: false, error: 'Your account has been blocked. Please contact admin' });
     }
 
-    // Normalize signature to handle non-canonical s values
-    let normalizedSignature = signature;
+    let normalizedSignature;
     try {
-      const sig = ethers.Signature.from(signature);
-      normalizedSignature = sig.serialized;
+      normalizedSignature = normalizeLoginSignature(signature);
     } catch (sigError) {
-      console.log('Signature normalization not needed or failed:', sigError.message);
+      console.log('Signature normalization failed:', sigError.message);
+      return res.status(401).send({ status: false, error: 'Invalid wallet signature' });
     }
 
-    const signerAddr = ethers.verifyMessage(user.nonce_message, normalizedSignature);
+    let signerAddr;
+    try {
+      signerAddr = ethers.verifyMessage(user.nonce_message, normalizedSignature);
+    } catch (verifyError) {
+      console.log('Signature verification failed:', verifyError.message);
+      return res.status(401).send({ status: false, error: 'Invalid wallet signature' });
+    }
+
     if (signerAddr.toLowerCase() !== walletAddress.toLowerCase()) {
       const message = generateNonceMessage(walletAddress);
 

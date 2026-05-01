@@ -52,8 +52,28 @@ class StartGameService {
             
             let bigBlindAmount, smallBlindAmount;
             
-            // Check if this is a private table
-            if (matchmakingTable.data.isPrivate && matchmakingTable.data.privateTableId) {
+            // Check if this is a tournament table
+            if (matchmakingTable.data.isTournament && matchmakingTable.data.tournamentId) {
+                console.log(`ðŸ† [TOURNAMENT] Using tournament blind level`);
+
+                const tournamentResult = await mongoHelper.findById(
+                    mongoHelper.COLLECTIONS.TOURNAMENTS,
+                    matchmakingTable.data.tournamentId
+                );
+
+                if (!tournamentResult.success || !tournamentResult.data) {
+                    throw new Error('Tournament configuration not found');
+                }
+
+                const currentLevel = tournamentResult.data.currentLevel || matchmakingTable.data.tournamentConfig?.currentLevel;
+                if (!currentLevel?.smallBlind || !currentLevel?.bigBlind) {
+                    throw new Error('Tournament blind level not configured');
+                }
+
+                smallBlindAmount = Number(currentLevel.smallBlind);
+                bigBlindAmount = Number(currentLevel.bigBlind);
+                console.log(`ðŸŽ´ [TOURNAMENT BLINDS] SB: ${smallBlindAmount}, BB: ${bigBlindAmount}, Ante: ${currentLevel.ante || 0}`);
+            } else if (matchmakingTable.data.isPrivate && matchmakingTable.data.privateTableId) {
                 console.log(`🔒 [PRIVATE TABLE] Using private table configuration`);
                 
                 // Get private table configuration
@@ -113,6 +133,18 @@ class StartGameService {
                 if (privateConfig) {
                     gameState.privateTableConfig = privateConfig.gameConfig;
                 }
+            } else if (matchmakingTable.data.isTournament && matchmakingTable.data.tournamentId) {
+                const tournamentResult = await mongoHelper.findById(
+                    mongoHelper.COLLECTIONS.TOURNAMENTS,
+                    matchmakingTable.data.tournamentId
+                );
+                const currentLevel = tournamentResult.data.currentLevel || matchmakingTable.data.tournamentConfig?.currentLevel;
+                gameState.tournamentConfig = {
+                    tournamentId: matchmakingTable.data.tournamentId,
+                    tournamentTableId: matchmakingTable.data.tournamentTableId,
+                    currentLevel,
+                    turnTimer: matchmakingTable.data.tournamentConfig?.turnTimer || 20
+                };
             }
 
             gameState.lastRaiseAmount = bigBlindAmount;
@@ -123,7 +155,35 @@ class StartGameService {
                 gameState.totalContributions[p.id] = 0;
             });
 
-            if (gameState.privateTableConfig?.features?.antesEnabled) {
+            if (gameState.tournamentConfig?.currentLevel?.ante > 0) {
+                const anteAmount = Number(gameState.tournamentConfig.currentLevel.ante || 0);
+                gameState.antes = {};
+                gameState.anteValue = anteAmount;
+                gameState.totalAntes = 0;
+
+                gameState.players.forEach(p => {
+                    if (p.status !== 'ACTIVE' || p.chips <= 0) {
+                        return;
+                    }
+
+                    const postedAnte = this.normalizeAmount(Math.min(anteAmount, p.chips));
+                    if (postedAnte <= 0) {
+                        return;
+                    }
+
+                    p.chips = this.normalizeAmount(p.chips - postedAnte);
+                    gameState.antes[p.id] = postedAnte;
+                    gameState.totalAntes = this.normalizeAmount((gameState.totalAntes || 0) + postedAnte);
+                    gameState.totalContributions[p.id] = this.normalizeAmount((gameState.totalContributions[p.id] || 0) + postedAnte);
+
+                    if (p.chips === 0) {
+                        p.status = 'ALL_IN';
+                    }
+                });
+
+                gameState.pot = this.normalizeAmount((gameState.pot || 0) + gameState.totalAntes);
+                console.log(`ðŸ† [TOURNAMENT ANTES] Posted ${gameState.totalAntes} in antes (${anteAmount} each where possible)`);
+            } else if (gameState.privateTableConfig?.features?.antesEnabled) {
                 const privateTableGameConfig = require('../services/private-table-game-config.service');
                 const antesResult = privateTableGameConfig.calculateAntes(gameState.privateTableConfig, gameState.players);
 
@@ -291,7 +351,11 @@ class StartGameService {
                 tableId
             );
             
-            if (tableResult?.data?.isPrivate && tableResult?.data?.privateTableId) {
+            if (tableResult?.data?.isTournament && tableResult?.data?.tournamentId) {
+                const customTimer = gameState.tournamentConfig?.turnTimer || tableResult.data.tournamentConfig?.turnTimer || 20;
+                console.log(`â±ï¸ [TOURNAMENT TIMER] Using timer: ${customTimer}s`);
+                await this.timerManager.startTimer(tableId, gameState.currentPlayerId, customTimer);
+            } else if (tableResult?.data?.isPrivate && tableResult?.data?.privateTableId) {
                 const privateTableGameConfig = require('../services/private-table-game-config.service');
                 const privateConfig = await privateTableGameConfig.getPrivateTableGameConfig(tableId);
                 

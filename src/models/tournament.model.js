@@ -71,7 +71,6 @@ const tournamentSchema = new Schema(
     templateId: {
       type: Schema.Types.ObjectId,
       ref: 'TournamentTemplate',
-      required: true,
     },
     status: {
       type: String,
@@ -110,6 +109,20 @@ const tournamentSchema = new Schema(
 
     // Tables
     activeTables: [{type: Schema.Types.ObjectId, ref: 'TournamentTable'}],
+    underlyingTables: [
+      {
+        tableId: {type: String, ref: 'Table'},
+        tournamentTableId: {type: Schema.Types.ObjectId, ref: 'TournamentTable'},
+        tableNumber: Number,
+        status: {
+          type: String,
+          enum: ['ACTIVE', 'COMPLETED', 'MERGED'],
+          default: 'ACTIVE',
+        },
+        isFinalTable: {type: Boolean, default: false},
+      },
+    ],
+    nextEliminationPosition: Number,
 
     // Prize pool and winners
     prizePool: {type: Number, default: 0},
@@ -121,6 +134,9 @@ const tournamentSchema = new Schema(
         finalHand: String,
       },
     ],
+    settlementSummary: {
+      type: Object,
+    },
 
     // Ante configuration
     anteConfig: {
@@ -339,6 +355,10 @@ const tournamentSchema = new Schema(
       type: Number,
       min: 0,
       max: 15
+    },
+    roundingRemainder: {
+      type: Number,
+      default: 0
     }
   },
   {

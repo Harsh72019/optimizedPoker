@@ -1,7 +1,7 @@
 const httpStatus = require('http-status');
 const ApiError = require('../utils/ApiError');
 const catchAsync = require('../utils/catchAsync');
-const {userService, tournamentService} = require('../services');
+const {userService, tournamentGameService} = require('../services');
 const blockchainService = require('../services/blockchain.service');
 // const tableRegistry = require('../services/redis.service');
 const {Table} = require('../models');
@@ -186,7 +186,7 @@ const getFriends = async (req, res) => {
 };
 
 const listTournaments = catchAsync(async (req, res) => {
-  const tournaments = await tournamentService.listAvailableTournaments(req.query);
+  const tournaments = await tournamentGameService.listTournaments(req.query);
   res.status(httpStatus.OK).json({
     status: true,
     message: 'Tournaments fetched successfully',
@@ -195,13 +195,7 @@ const listTournaments = catchAsync(async (req, res) => {
 });
 
 const registerForTournament = catchAsync(async (req, res) => {
-  const registration = await tournamentService.registerPlayerForTournament(
-    req.params.id,
-    req.user._id,
-    req.body.transactionId,
-    req.body.email,
-    req.body.name
-  );
+  const registration = await tournamentGameService.registerPlayer(req.params.id, req.user._id.toString());
 
   res.status(httpStatus.OK).json({
     status: true,
@@ -212,7 +206,11 @@ const registerForTournament = catchAsync(async (req, res) => {
 });
 
 const getMyRegistrations = catchAsync(async (req, res) => {
-  const registrations = await tournamentService.getPlayerRegistrations(req.user._id);
+  const registrationsResult = await require('../models/customdb').find(
+    require('../models/customdb').COLLECTIONS.TOURNAMENT_PLAYERS,
+    { user: req.user._id.toString() }
+  );
+  const registrations = registrationsResult.success ? registrationsResult.data : [];
   res.status(httpStatus.OK).json({
     status: true,
     message: 'Registrations fetched successfully',
@@ -221,7 +219,7 @@ const getMyRegistrations = catchAsync(async (req, res) => {
 });
 
 const unregisterFromTournament = catchAsync(async (req, res) => {
-  const result = await tournamentService.unregisterPlayerFromTournament(req.params.id, req.user._id);
+  const result = await tournamentGameService.unregisterPlayer(req.params.id, req.user._id.toString());
   res.status(httpStatus.OK).json({
     status: true,
     message: 'Successfully unregistered from tournament',

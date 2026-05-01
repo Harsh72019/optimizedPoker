@@ -1,5 +1,22 @@
 const Joi = require('joi');
 
+const isoDateRangeQuery = {
+  startDate: Joi.date().iso().optional(),
+  endDate: Joi.date().iso().optional()
+};
+
+const validateDateRange = (value, helpers) => {
+  if (!value.startDate || !value.endDate) {
+    return value;
+  }
+
+  if (new Date(value.endDate) < new Date(value.startDate)) {
+    return helpers.message('endDate must be greater than or equal to startDate');
+  }
+
+  return value;
+};
+
 const generatePreview = {
   body: Joi.object().keys({
     gameType: Joi.string().valid('CASH_GAME', 'PRIVATE_SNG', 'PRIVATE_TOURNAMENT', 'SCHEDULED_TOURNAMENT').required(),
@@ -96,9 +113,8 @@ const getGameSummary = {
 
 const getRevenueSummary = {
   query: Joi.object().keys({
-    startDate: Joi.date().iso().optional(),
-    endDate: Joi.date().iso().min(Joi.ref('startDate')).optional()
-  })
+    ...isoDateRangeQuery
+  }).custom(validateDateRange)
 };
 
 const getTournamentRake = {
@@ -229,9 +245,8 @@ const getUserTransactions = {
       .optional(),
     status: Joi.string().valid('PENDING', 'COMPLETED', 'FAILED').optional(),
     gameId: Joi.string().optional(),
-    startDate: Joi.date().iso().optional(),
-    endDate: Joi.date().iso().min(Joi.ref('startDate')).optional()
-  })
+    ...isoDateRangeQuery
+  }).custom(validateDateRange)
 };
 
 module.exports = {

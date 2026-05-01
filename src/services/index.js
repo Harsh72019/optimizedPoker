@@ -27,4 +27,5 @@ exports.multiTableTournamentService = require('./multi-table-tournament.service'
 exports.walletIntegrationService = require('./wallet-integration.service');
 exports.trustedHostService = require('./trusted-host.service');
 exports.officialTournamentService = require('./official-tournament.service');
+exports.tournamentGameService = require('./tournament-game.service');
 exports.gameEngineIntegrationService = require('./game-engine-integration.service');

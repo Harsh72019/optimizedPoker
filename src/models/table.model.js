@@ -9,7 +9,8 @@ const tableSchema = new Schema(
     tableTypeId: {type: String, ref: 'TableType'},
     maxPlayers: {
       type: Number,
-      enum: [5, 9],
+      min: 2,
+      max: 9,
       default: 5,
     },
     currentPlayers: [{ type: Schema.Types.ObjectId, ref: 'Player' }], // References to Player models
@@ -51,6 +52,33 @@ const tableSchema = new Schema(
     isPrivate: {
       type: Boolean,
       default: false
+    },
+    isTournament: {
+      type: Boolean,
+      default: false,
+      index: true
+    },
+    tournamentId: {
+      type: Schema.Types.ObjectId,
+      ref: 'Tournament',
+      index: true
+    },
+    tournamentTableId: {
+      type: Schema.Types.ObjectId,
+      ref: 'TournamentTable'
+    },
+    tournamentTableNumber: {
+      type: Number
+    },
+    tournamentConfig: {
+      currentLevel: {
+        levelNumber: Number,
+        smallBlind: Number,
+        bigBlind: Number,
+        ante: Number
+      },
+      turnTimer: Number,
+      startingChips: Number
     },
     
     privateTableId: {
