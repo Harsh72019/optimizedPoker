@@ -175,6 +175,7 @@ class ConnectionHandler {
             const userId = user._id.toString();
 
             this.socket.user = user;
+            this.socket.join(`user_${userId}`);
 
             // 🆕 Handle private table join
             if (privateTableId) {
@@ -217,6 +218,15 @@ class ConnectionHandler {
             }
 
             const table = tableDoc.data;
+
+            if (table.isTournament || data.tournamentId) {
+                return await this.handleTournamentTableJoin(
+                    data.tournamentId || table.tournamentId,
+                    finalTableId,
+                    userId,
+                    user
+                );
+            }
 
             await this.assertNoCooldownConflictForTable(finalTableId, userId);
             
@@ -343,6 +353,72 @@ class ConnectionHandler {
         } catch (err) {
             console.log(err)
             emitError(this.socket, 'unableToJoin', err.message);
+        }
+    }
+
+    /**
+     * Handle scheduled tournament table join.
+     */
+    async handleTournamentTableJoin(tournamentId, tableId, userId, user) {
+        try {
+            if (!tournamentId) {
+                throw new Error('Tournament ID is required');
+            }
+
+            const tournamentGameService = require('../../services/tournament-game.service');
+            const { assignment, player } = await tournamentGameService.buildTournamentSeat(
+                tableId,
+                tournamentId,
+                userId,
+                this.socket.id,
+                user.username
+            );
+
+            const { tableState, isReconnect } = await tableManager.seatPlayer(tableId, player);
+
+            this.socket.join(tableId);
+            this.socket.join(`tournament_${tournamentId}`);
+            this.socket.tableId = tableId;
+            this.socket.tournamentId = tournamentId;
+            this.socket.handsPlayed = 0;
+
+            const gameState = await require('../../state/game-state').getGame(tableId);
+            const tableStatus = await tableManager.getStatus(tableId);
+            const showLoading = !gameState || tableStatus === 'WAITING' || tableStatus === 'IDLE';
+
+            emitSuccess(this.socket, 'roomJoined', {
+                tableId,
+                tournamentId,
+                tournamentTableId: assignment.tournamentTableId,
+                tableNumber: assignment.tableNumber,
+                tableState,
+                showLoading
+            }, 'Joined tournament table successfully');
+
+            const formattedData = this.formatTableData(tableState, gameState);
+            emitSuccess(this.socket, 'tableInfo', formattedData, 'Tournament table info');
+
+            if (!isReconnect) {
+                emitSuccess(this.io.to(tableId), 'playerJoined', formattedData, `${user.username} joined tournament table`);
+                const seatedCount = tableState.players.length;
+                await this.orchestrator.onPlayerSeated(tableId, seatedCount);
+                console.log(`ðŸ† [TOURNAMENT] ${userId} seated at tournament ${tournamentId} table ${tableId}`);
+            } else if (gameState && gameState.currentPlayerId === userId) {
+                this.orchestrator.timerManager.startTimer(tableId, userId);
+            }
+
+            if (gameState && gameState.phase !== 'COMPLETED') {
+                const gamePlayer = gameState.players.find(p => p.id === userId);
+                if (gamePlayer?.cards) {
+                    emitSuccess(this.socket, 'receiveHand', { playerId: gamePlayer.id, hand: gamePlayer.cards }, 'Your cards');
+                }
+                if (gameState.boardCards?.length > 0) {
+                    emitSuccess(this.socket, 'communityCardsDealt', gameState.boardCards, 'Community cards');
+                }
+            }
+        } catch (err) {
+            console.error('Tournament table join error:', err.message);
+            emitError(this.socket, 'unableToJoinTournamentTable', err.message);
         }
     }
 
@@ -517,6 +593,7 @@ class ConnectionHandler {
             const gameStateManager = require('../../state/game-state');
             const tableDoc = await mongoHelper.findById(mongoHelper.COLLECTIONS.TABLES, tableId);
             let isPrivateSng = false;
+            const isTournamentTable = tableDoc.success && !!tableDoc.data?.isTournament;
 
             if (tableDoc.success && tableDoc.data?.privateTableId) {
                 const privateTableDoc = await mongoHelper.findById(
@@ -539,7 +616,7 @@ class ConnectionHandler {
                     player = gameState?.players?.find(p => p.id === userId);
                 }
 
-                if (isPrivateSng && player) {
+                if ((isPrivateSng || isTournamentTable) && player) {
                     player.status = 'folded';
                     player.disconnected = true;
                     player.chips = 0;
@@ -565,7 +642,7 @@ class ConnectionHandler {
             const userDoc = await mongoHelper.findById(mongoHelper.COLLECTIONS.USERS, userId);
             const walletAddress = userDoc.success && userDoc.data ? userDoc.data.walletAddress : null;
             
-            if (isPrivateSng) {
+            if (isPrivateSng || isTournamentTable) {
                 console.log(`🔒 [PRIVATE SNG] Skipping leave cashout for ${userId} on table ${tableId}; chips remain in tournament settlement flow`);
             } else if (finalChips > 0 && walletAddress) {
                 const walletIntegrationService = require('../../services/wallet-integration.service');
@@ -612,6 +689,7 @@ class ConnectionHandler {
             this.socket.leave(tableId);
             this.socket.tableId = null;
             this.socket.privateTableId = null;
+            this.socket.tournamentId = null;
             this.socket.handsPlayed = 0;
 
             emitSuccess(this.socket, 'roomLeft', { tableId }, 'Left table successfully');
