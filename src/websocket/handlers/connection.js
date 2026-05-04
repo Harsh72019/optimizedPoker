@@ -15,6 +15,7 @@ class ConnectionHandler {
 
     registerEvents() {
         this.socket.on('joinTable', this.handleJoinTable.bind(this));
+        this.socket.on('checkActiveSession', this.handleCheckActiveSession.bind(this));
         this.socket.on('leaveTable', this.handleLeaveTable.bind(this));
         this.socket.on('leaveRoom', this.handleLeaveTable.bind(this));
         this.socket.on('disconnect', this.handleDisconnect.bind(this));
@@ -26,6 +27,36 @@ class ConnectionHandler {
         this.socket.on('getFriendSummary', async (data) => this.handleGetFriendUserInfo(data));
         this.socket.on('privateTableRebuy', this.handlePrivateTableRebuy.bind(this));
         this.socket.on('privateTableLeave', this.handlePrivateTableLeave.bind(this));
+    }
+
+    async handleCheckActiveSession(data = {}) {
+        try {
+            const { token } = data;
+            const user = await verifyEventToken(token, this.socket);
+            const userId = user._id.toString();
+            const activeSession = await tableManager.findActiveSessionForUser(userId);
+
+            if (!activeSession) {
+                emitSuccess(this.socket, 'activeSessionChecked', { active: false }, 'No active table session');
+                return;
+            }
+
+            emitSuccess(
+                this.socket,
+                'activeSessionFound',
+                {
+                    active: true,
+                    tableId: activeSession.tableId,
+                    blockChainTableId: activeSession.tableBlockchainId,
+                    chipsInPlay: activeSession.player.chips,
+                    disconnected: !!activeSession.player.disconnected,
+                    status: activeSession.status
+                },
+                'Active table session found'
+            );
+        } catch (err) {
+            emitError(this.socket, 'activeSessionError', err.message);
+        }
     }
 
     async handleAway(data) {
@@ -183,13 +214,6 @@ class ConnectionHandler {
                 return await this.handlePrivateTableJoin(privateTableId, userId, user, buyIn || chipsInPlay);
             }
 
-            // Use chipsInPlay if provided, otherwise buyIn
-            const finalBuyIn = chipsInPlay || buyIn;
-
-            if (!finalBuyIn) {
-                throw new Error('No buyIn or chipsInPlay provided');
-            }
-
             // Get table ID from blockChainTableId if provided
             let finalTableId = tableId;
             if (blockChainTableId && !tableId) {
@@ -208,6 +232,16 @@ class ConnectionHandler {
 
             if (!finalTableId) {
                 throw new Error('No tableId or blockChainTableId provided');
+            }
+
+            const currentTableState = await tableManager.getTable(finalTableId);
+            const existingPlayer = currentTableState.players.find(p => p.userId === userId);
+
+            // Use chipsInPlay if provided, otherwise buyIn. Reconnects may omit both.
+            const finalBuyIn = chipsInPlay || buyIn || existingPlayer?.chips;
+
+            if (!finalBuyIn) {
+                throw new Error('No buyIn or chipsInPlay provided');
             }
 
             // Get table and fetch subTier to validate buyIn
@@ -229,7 +263,9 @@ class ConnectionHandler {
                 );
             }
 
-            await this.assertNoCooldownConflictForTable(finalTableId, userId);
+            if (!existingPlayer) {
+                await this.assertNoCooldownConflictForTable(finalTableId, userId);
+            }
             
             // Fetch SubTier to get bb and calculate buy-in range
             const subTierDoc = await mongoHelper.findById(mongoHelper.COLLECTIONS.SUB_TIERS, table.subTierId);
@@ -247,9 +283,6 @@ class ConnectionHandler {
             if (finalBuyIn < minBuyIn || finalBuyIn > maxBuyIn) {
                 throw new Error(`Buy-in must be between ${minBuyIn} and ${maxBuyIn}`);
             }
-
-            const currentTableState = await tableManager.getTable(finalTableId);
-            const existingPlayer = currentTableState.players.find(p => p.userId === userId);
 
             if (!existingPlayer) {
                     const walletIntegrationService = require('../../services/wallet-integration.service');
@@ -837,10 +870,18 @@ class ConnectionHandler {
             return;
         }
 
-        const seatedUserIds = (table.currentPlayers || [])
-            .filter(player => !player?.isBot && player?.user?._id)
-            .map(player => player.user._id.toString())
-            .filter(seatedUserId => seatedUserId !== userId);
+        const liveTable = await tableManager.getLiveTable(tableId);
+        const livePlayers = Array.isArray(liveTable?.players) ? liveTable.players : [];
+        const seatedUserIds = livePlayers.length > 0
+            ? livePlayers
+                .filter(player => !player?.isBot)
+                .map(player => player.userId?.toString?.() || player.id?.toString?.() || player.userId || player.id)
+                .filter(Boolean)
+                .filter(seatedUserId => seatedUserId !== userId)
+            : (table.currentPlayers || [])
+                .filter(player => !player?.isBot && player?.user?._id)
+                .map(player => player.user._id.toString())
+                .filter(seatedUserId => seatedUserId !== userId);
 
         if (seatedUserIds.length === 0) {
             return;

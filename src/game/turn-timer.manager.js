@@ -75,19 +75,7 @@ class TurnTimerManager {
       const tableState = await tableManager.getTable(tableId);
       const tablePlayer = tableState.players.find(p => p.userId === playerId);
 
-      if (tablePlayer?.isBot) {
-        console.log(`Bot turn: ${playerId}`);
-        await new Promise(r => setTimeout(r, 5000));
-        await this.botManager.handleBotTurn(
-          tableId,
-          player,
-          gameState
-        );
-
-        return;
-      }
-
-      if (!this.isLiveSocket(tablePlayer?.socketId)) {
+      if (!tablePlayer?.isBot && !this.isLiveSocket(tablePlayer?.socketId)) {
         await this.markHumanDisconnectedAndFold(tableId, playerId, gameState, 'missing_socket');
         return;
       }

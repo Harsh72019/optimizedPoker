@@ -439,6 +439,48 @@ class GameOrchestrator {
         this.privateRebuyWindows.delete(tableId);
     }
 
+    async recordCooldownForCompletedHand(tableId) {
+        try {
+            const tableDoc = await mongoHelper.findById(mongoHelper.COLLECTIONS.TABLES, tableId);
+            if (!tableDoc.success || !tableDoc.data?.subTierId || tableDoc.data?.isTournament) {
+                return;
+            }
+
+            const subTierResult = await mongoHelper.findById(
+                mongoHelper.COLLECTIONS.SUB_TIERS,
+                tableDoc.data.subTierId
+            );
+
+            const tierId = subTierResult.success && subTierResult.data?.tierId
+                ? subTierResult.data.tierId
+                : null;
+
+            if (!tierId) {
+                return;
+            }
+
+            const gameState = await gameStateManager.getGame(tableId);
+            const tableState = await tableManager.getTable(tableId);
+            const playersSnapshot = gameState?.players?.length ? gameState.players : tableState.players;
+            const participantIds = [...new Set(
+                (playersSnapshot || [])
+                    .map(player => player.id || player.userId)
+                    .filter(playerId => playerId && !playerId.toString().startsWith('bot_'))
+                    .map(playerId => playerId.toString())
+            )];
+
+            if (participantIds.length < 2) {
+                return;
+            }
+
+            const cooldownService = require('../services/cooldown.service');
+            await cooldownService.updateCooldownsOnSeat(tableId, tierId, participantIds);
+            console.log(`Cooldown recorded for ${participantIds.length} players at table ${tableId}`);
+        } catch (error) {
+            console.error(`Failed to record cooldowns for table ${tableId}:`, error.message);
+        }
+    }
+
     /* ------------------------------------------------ */
     /* PLAYER JOINED                                   */
     /* ------------------------------------------------ */
@@ -564,6 +606,7 @@ class GameOrchestrator {
     async onHandCompleted(tableId) {
         try {
             await handPersister.persist(tableId);
+            await this.recordCooldownForCompletedHand(tableId);
             await tableManager.setStatus(tableId, 'SHOWDOWN_DELAY');
             console.log(`🏁 Hand completed at table ${tableId}`);
             emitSuccess(this.io.to(tableId), 'showdownDelay', { seconds: 10 }, 'Showdown delay');

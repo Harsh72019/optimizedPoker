@@ -98,6 +98,34 @@ class TableManagerService {
         return data ? JSON.parse(data) : null;
     }
 
+    async findActiveSessionForUser(userId) {
+        const keys = await redisClient.keys('table:*');
+
+        for (const key of keys) {
+            const data = await redisClient.get(key);
+            if (!data) {
+                continue;
+            }
+
+            const table = JSON.parse(data);
+            const player = (table.players || []).find(entry => entry.userId === userId);
+            if (!player) {
+                continue;
+            }
+
+            const tableId = key.replace(this.getTableKey(''), '');
+            return {
+                tableId,
+                tableBlockchainId: table.tableBlockchainId || null,
+                status: table.status || null,
+                player,
+                tableState: table
+            };
+        }
+
+        return null;
+    }
+
     async fundBotForTable(table, botUserId, botChips) {
         try {
             const fundingService = require('../services/funding.service');
