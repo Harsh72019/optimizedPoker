@@ -399,6 +399,8 @@ const handleTableTurnover = async (table, gameState, gameStates, socketId, io, e
         };
 
         const playerChipsLog = [];
+        const bustedBotPlayerIds = [];
+
         for (const player of table.currentPlayers) {
             const playerResult = await mongoHelper.findByIdWithPopulate(mongoHelper.COLLECTIONS.PLAYERS, player._id, [
                 {
@@ -448,9 +450,10 @@ const handleTableTurnover = async (table, gameState, gameStates, socketId, io, e
                 // ✅ CRITICAL FIX: Replenish bots OR auto-rebuy players with insufficient chips
                 if (populatedPlayer.isBot && populatedPlayer.chipsInPlay < minChipsRequired) {
                     if (tableTypeResult.success && tableTypeResult.data) {
-                        updateData.chipsInPlay = tableTypeResult.data.maxBuyIn || 0;
-                        updateData.status = 'waiting';
-                        console.log(`🤖 Bot ${populatedPlayer.user.username} replenished with ${updateData.chipsInPlay} chips (had ${populatedPlayer.chipsInPlay})`);
+                        updateData.chipsInPlay = Math.max(0, populatedPlayer.chipsInPlay || 0);
+                        updateData.status = 'busted';
+                        console.log(`Bot ${populatedPlayer.user.username} busted; not auto-replenishing chips`);
+                        bustedBotPlayerIds.push(populatedPlayer._id);
                     }
                 } else if (!populatedPlayer.isBot && populatedPlayer.chipsInPlay < minChipsRequired) {
                     // ✅ CRITICAL: Check if player has autoRenew enabled
@@ -508,6 +511,25 @@ const handleTableTurnover = async (table, gameState, gameStates, socketId, io, e
                     { event: `  Starting Stack: ${startingChips}` },
                     { event: `  Net Profit: ${netProfit}` }
                 );
+            }
+        }
+
+        if (bustedBotPlayerIds.length > 0) {
+            const bustedBotIdSet = new Set(bustedBotPlayerIds.map(id => id.toString()));
+            table.currentPlayers = table.currentPlayers.filter(player => {
+                const id = (player._id || player).toString();
+                return !bustedBotIdSet.has(id);
+            });
+
+            await mongoHelper.updateById(
+                mongoHelper.COLLECTIONS.TABLES,
+                table._id,
+                { currentPlayers: table.currentPlayers.map(player => player._id || player) },
+                mongoHelper.MODELS.TABLE
+            );
+
+            for (const botPlayerId of bustedBotPlayerIds) {
+                await mongoHelper.deleteById(mongoHelper.COLLECTIONS.PLAYERS, botPlayerId);
             }
         }
 
@@ -1437,6 +1459,35 @@ const _addUserToTableInternal = async (
         if (userAlreadyInTable) {
             console.log(`⚠️ [_addUserToTableInternal] User already in table: ${userId}`);
             return { error: true, message: 'User is already in the table' };
+        }
+
+        if (isBot) {
+            const fundingService = require('./funding.service');
+            const existingFunding = await fundingService.findCompletedBotFunding(tableId, userId);
+
+            if (!existingFunding) {
+                const fundingResult = await blockchainService.fundBotBuyInToTable(table, chipsInPlay, {
+                    botId: userId
+                });
+
+                if (!fundingResult.success) {
+                    throw new Error(`Bot funding failed: ${fundingResult.error}`);
+                }
+
+                await fundingService.recordBotTableFunding({
+                    botId: userId,
+                    tableId,
+                    amount: chipsInPlay,
+                    txHash: fundingResult.txHash,
+                    houseWalletAddress: fundingResult.houseWalletAddress,
+                    tableBlockchainId: fundingResult.tableBlockchainId,
+                    tableAddress: fundingResult.tableAddress,
+                    metadata: {
+                        source: 'TABLE_SERVICE_BOT_JOIN',
+                        oneBuyInCap: true
+                    }
+                });
+            }
         }
 
         let assignedSeatPosition = null;

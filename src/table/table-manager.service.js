@@ -54,6 +54,25 @@ class TableManagerService {
                     disconnected: false,
                 };
 
+                const fundingResult = await this.fundBotForTable(tableDoc.data, botUserId, botChips);
+                if (!fundingResult.success) {
+                    console.error(`❌ [TABLE MANAGER] Bot funding failed for ${tableId}: ${fundingResult.error}`);
+                    table = {
+                        players: [],
+                        dealerPosition: null,
+                        status: 'BOT_FUNDING_FAILED',
+                        maxPlayers: tableDoc?.data?.maxPlayers || 9,
+                        tableBlockchainId: tableDoc?.data?.tableBlockchainId,
+                        botFundingError: fundingResult.error
+                    };
+
+                    await this.saveTable(tableId, table);
+                    return table;
+                }
+
+                bot.fundingStatus = fundingResult.duplicate ? 'ALREADY_FUNDED' : 'FUNDED';
+                bot.fundingTxHash = fundingResult.txHash || null;
+
                 table = {
                     players: [bot],
                     dealerPosition: 1,
@@ -72,6 +91,51 @@ class TableManagerService {
         }
 
         return JSON.parse(data);
+    }
+
+    async fundBotForTable(table, botUserId, botChips) {
+        try {
+            const fundingService = require('../services/funding.service');
+            const existing = await fundingService.findCompletedBotFunding(table._id, botUserId);
+            if (existing) {
+                return {
+                    success: true,
+                    duplicate: true,
+                    txHash: existing.txHash,
+                    amount: existing.amount
+                };
+            }
+
+            const blockchainService = require('../services/blockchain.service');
+            const fundingResult = await blockchainService.fundBotBuyInToTable(table, botChips, {
+                botId: botUserId
+            });
+
+            if (!fundingResult.success) {
+                return fundingResult;
+            }
+
+            await fundingService.recordBotTableFunding({
+                botId: botUserId,
+                tableId: table._id,
+                amount: botChips,
+                txHash: fundingResult.txHash,
+                houseWalletAddress: fundingResult.houseWalletAddress,
+                tableBlockchainId: fundingResult.tableBlockchainId,
+                tableAddress: fundingResult.tableAddress,
+                metadata: {
+                    source: 'TABLE_MANAGER_AUTO_BOT',
+                    oneBuyInCap: true
+                }
+            });
+
+            return fundingResult;
+        } catch (error) {
+            return {
+                success: false,
+                error: error.message
+            };
+        }
     }
 
     async syncBotToMongo(tableId, botUserId) {

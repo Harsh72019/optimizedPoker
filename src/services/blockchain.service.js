@@ -956,6 +956,62 @@ const prepareTableForJoin = async (table, chipsInPlay, userAddress, options = {}
   }
 };
 
+const getHouseWalletAddress = () => {
+  return config.HOUSE_WALLET_ADDRESS || baseSigner.address;
+};
+
+const fundBotBuyInToTable = async (table, amount, options = {}) => {
+  try {
+    if (!table) {
+      throw new Error('Table is required for bot funding');
+    }
+
+    const houseWalletAddress = options.houseWalletAddress || getHouseWalletAddress();
+    if (!houseWalletAddress || !ethers.isAddress(houseWalletAddress)) {
+      throw new Error('Invalid house wallet address for bot funding');
+    }
+
+    const numericAmount = Number(amount);
+    if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
+      throw new Error(`Invalid bot funding amount: ${amount}`);
+    }
+
+    const readyTable = await ensureTableBlockchainReady(table, houseWalletAddress, numericAmount);
+    if (!readyTable.blockchainAddress) {
+      throw new Error('Table blockchain address is missing after preparation');
+    }
+
+    const transferResult = await transferFromPoolToTable(
+      houseWalletAddress,
+      readyTable.blockchainAddress,
+      numericAmount
+    );
+
+    if (!transferResult.success) {
+      throw new Error(transferResult.error || 'Bot funding transfer failed');
+    }
+
+    return {
+      success: true,
+      houseWalletAddress,
+      tableId: readyTable._id,
+      tableBlockchainId: readyTable.tableBlockchainId,
+      tableAddress: readyTable.blockchainAddress,
+      amount: numericAmount,
+      txHash: transferResult.txHash,
+      pending: transferResult.pending || false,
+      table: readyTable
+    };
+  } catch (error) {
+    console.error(`[BLOCKCHAIN] Bot funding failed: ${error.message}`);
+    return {
+      success: false,
+      error: error.message,
+      amount
+    };
+  }
+};
+
 
 // Get pending transactions status
 function getPendingTransactions() {
@@ -984,6 +1040,8 @@ module.exports = {
   findTableOrCreateThroughBlockchain,
   signTableCreationRequest,
   transferFromPoolToTable,
+  fundBotBuyInToTable,
+  getHouseWalletAddress,
   createTableOnBlockchain,
   prepareTableForJoin,
   ensureTableBlockchainReady,

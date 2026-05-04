@@ -29,6 +29,62 @@ class FundingService {
     });
   }
 
+  async findCompletedBotFunding(tableId, botId) {
+    const result = await mongoHelper.find(mongoHelper.COLLECTIONS.FUNDING_RECORDS, {
+      tableId,
+      botId,
+      status: 'COMPLETED'
+    });
+
+    return result.success && Array.isArray(result.data) && result.data.length > 0
+      ? result.data[0]
+      : null;
+  }
+
+  async recordBotTableFunding({
+    tierId = null,
+    botId,
+    tableId,
+    amount,
+    txHash,
+    houseWalletAddress,
+    tableBlockchainId,
+    tableAddress,
+    status = 'COMPLETED',
+    metadata = {}
+  }) {
+    const existing = await this.findCompletedBotFunding(tableId, botId);
+    if (existing) {
+      return { record: existing, duplicate: true };
+    }
+
+    const reserveAfter = tierId
+      ? await this.calculateReserveAfter(tierId, amount)
+      : null;
+
+    const createResult = await mongoHelper.create(mongoHelper.COLLECTIONS.FUNDING_RECORDS, {
+      tierId,
+      botId,
+      tableId,
+      amount,
+      txHash,
+      houseWalletAddress,
+      tableBlockchainId,
+      tableAddress,
+      status,
+      metadata,
+      timestamp: new Date(),
+      reserveAfter,
+      windowStart: new Date()
+    });
+
+    if (!createResult.success) {
+      throw new Error(createResult.error || 'Failed to record bot table funding');
+    }
+
+    return { record: createResult.data, duplicate: false };
+  }
+
   async getRecentBurnRate(tierId) {
     const tierResult = await mongoHelper.findById(mongoHelper.COLLECTIONS.TIERS, tierId);
     const tier = tierResult.data;
