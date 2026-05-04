@@ -19,6 +19,23 @@ class TurnTimerManager {
     this.actionService = actionService;
   }
 
+  isLiveSocket(socketId) {
+    return !!socketId && !!this.io.sockets.sockets.get(socketId);
+  }
+
+  async markHumanDisconnectedAndFold(tableId, playerId, gameState, reason) {
+    console.log(`Player ${playerId} unavailable (${reason}) - marking disconnected and folding`);
+    await tableManager.markDisconnected(tableId, playerId);
+
+    const player = gameState.players.find(p => p.id === playerId);
+    if (player) {
+      player.disconnected = true;
+      await gameStateManager.updateGame(tableId, gameState);
+    }
+
+    await this.actionService.handle(tableId, playerId, 'fold');
+  }
+
   async startTimer(tableId, playerId, seconds = 20) {
     this.clearTimer(tableId);
 
@@ -57,6 +74,23 @@ class TurnTimerManager {
 
       const tableState = await tableManager.getTable(tableId);
       const tablePlayer = tableState.players.find(p => p.userId === playerId);
+
+      if (tablePlayer?.isBot) {
+        console.log(`Bot turn: ${playerId}`);
+        await new Promise(r => setTimeout(r, 5000));
+        await this.botManager.handleBotTurn(
+          tableId,
+          player,
+          gameState
+        );
+
+        return;
+      }
+
+      if (!this.isLiveSocket(tablePlayer?.socketId)) {
+        await this.markHumanDisconnectedAndFold(tableId, playerId, gameState, 'missing_socket');
+        return;
+      }
 
       const PlayerActionService = require('./player-action.service');
       const actionService = new PlayerActionService(this.io, this, this.orchestrator);
@@ -192,6 +226,15 @@ class TurnTimerManager {
     }
 
     const tableState = await tableManager.getTable(tableId);
+    const tablePlayer = tableState.players.find(p => p.userId === playerId);
+
+    if (player.disconnected || (!tablePlayer?.isBot && !this.isLiveSocket(tablePlayer?.socketId))) {
+      emitSuccess(this.io.to(tableId), 'playerTimeout', { playerId }, 'Player disconnected');
+      emitSuccess(this.io.to(tableId), 'playerAutoFolded', { playerId }, 'Disconnected player auto folded');
+      await this.markHumanDisconnectedAndFold(tableId, playerId, gameState, 'timeout_missing_socket');
+      return;
+    }
+
     const PlayerActionService = require('./player-action.service');
     const actionService = new PlayerActionService(this.io, this, this.orchestrator);
     const policy = await actionService.getActionPolicy(tableId, playerId, gameState, tableState);

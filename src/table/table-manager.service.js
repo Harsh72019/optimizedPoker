@@ -324,6 +324,8 @@ class TableManagerService {
             return {
                 ...player,
                 chips: gamePlayer.chips,
+                disconnected: !!gamePlayer.disconnected,
+                status: gamePlayer.status || player.status
             };
         });
 
@@ -341,12 +343,29 @@ class TableManagerService {
         if (table.players.length < 2) {
             table.dealerPosition = null;
             table.status = 'IDLE';
-            await this.setStatus(tableId, 'IDLE');
         }
 
         console.log('Removed player', userId);
 
         await this.saveTable(tableId, table);
+
+        if (table.players.length < 2) {
+            try {
+                const mongoHelper = require('../models/customdb');
+                await mongoHelper.updateById(
+                    mongoHelper.COLLECTIONS.TABLES,
+                    tableId,
+                    {
+                        currentPlayers: [],
+                        dealerPosition: null,
+                        currentTurnPosition: null
+                    },
+                    mongoHelper.MODELS.TABLE
+                );
+            } catch (error) {
+                console.error(`Failed to clear Mongo table players for ${tableId}:`, error.message);
+            }
+        }
 
         return table;
     }
@@ -359,6 +378,24 @@ class TableManagerService {
         table.status = status;
 
         await this.saveTable(tableId, table);
+
+        try {
+            const mongoHelper = require('../models/customdb');
+            await mongoHelper.updateById(
+                mongoHelper.COLLECTIONS.TABLES,
+                tableId,
+                {
+                    currentPlayers: [],
+                    dealerPosition: null,
+                    currentTurnPosition: null,
+                    status: status === 'COMPLETED' ? 'available' : table.status
+                },
+                mongoHelper.MODELS.TABLE
+            );
+        } catch (error) {
+            console.error(`Failed to clear Mongo table players for ${tableId}:`, error.message);
+        }
+
         return table;
     }
 

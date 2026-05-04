@@ -108,6 +108,7 @@ class ConnectionHandler {
 
             await tableManager.markDisconnected(tableId, userId);
             player.disconnected = true;
+            await require('../../state/game-state').updateGame(tableId, gameState);
 
             if (gameState.currentPlayerId === userId) {
                 console.log(`🔄 Player ${userId} disconnected on their turn - auto folding`);
