@@ -6,6 +6,7 @@ const fundingService = require('./funding.service');
 const blockchainService = require('./blockchain.service');
 const ApiError = require('../utils/ApiError');
 const userService = require('./user.service');
+const tableManager = require('../table/table-manager.service');
 
 class QueueMatcherService {
   constructor() {
@@ -120,6 +121,84 @@ class QueueMatcherService {
    * PDF: Find eligible open table
    * Eligible = (seats available) AND (no bilateral cooldown conflicts)
    */
+  extractRedisPlayerUserId(player) {
+    return player?.userId?.toString?.()
+      || player?.id?.toString?.()
+      || player?.user?._id?.toString?.()
+      || player?.user?.toString?.()
+      || null;
+  }
+
+  async resolveMongoPlayerEntry(entry) {
+    if (!entry) {
+      return null;
+    }
+
+    if (entry.user || entry.userId) {
+      const userId = entry.user?._id?.toString?.()
+        || entry.user?.toString?.()
+        || entry.userId?.toString?.()
+        || null;
+
+      return {
+        userId,
+        isBot: !!entry.isBot || (typeof userId === 'string' && userId.startsWith('bot_'))
+      };
+    }
+
+    const playerDocId = entry._id?.toString?.() || entry.toString?.();
+    if (!playerDocId || playerDocId === '[object Object]') {
+      return null;
+    }
+
+    const playerResult = await mongoHelper.findById(mongoHelper.COLLECTIONS.PLAYERS, playerDocId);
+    if (!playerResult.success || !playerResult.data) {
+      return null;
+    }
+
+    const player = playerResult.data;
+    const userId = player.user?._id?.toString?.()
+      || player.user?.toString?.()
+      || null;
+
+    return {
+      userId,
+      isBot: !!player.isBot || (typeof userId === 'string' && userId.startsWith('bot_'))
+    };
+  }
+
+  async getLiveSeatSnapshot(table) {
+    const liveTable = await tableManager.getLiveTable(table._id);
+
+    if (liveTable) {
+      const livePlayers = Array.isArray(liveTable.players) ? liveTable.players : [];
+      return {
+        source: 'redis',
+        seatedCount: livePlayers.length,
+        humanUserIds: livePlayers
+          .filter(player => !player?.isBot)
+          .map(player => this.extractRedisPlayerUserId(player))
+          .filter(Boolean)
+      };
+    }
+
+    const currentPlayers = Array.isArray(table.currentPlayers) ? table.currentPlayers : [];
+    const humanUserIds = [];
+
+    for (const entry of currentPlayers) {
+      const resolved = await this.resolveMongoPlayerEntry(entry);
+      if (resolved?.userId && !resolved.isBot) {
+        humanUserIds.push(resolved.userId);
+      }
+    }
+
+    return {
+      source: 'mongo',
+      seatedCount: currentPlayers.length,
+      humanUserIds
+    };
+  }
+
   async findEligibleTable(playerId, subTier) {
     console.log(`🔍 Finding eligible table for player ${playerId} in subTier ${subTier._id}`);
     
@@ -131,29 +210,21 @@ class QueueMatcherService {
     console.log(`📊 Found ${tables.length} tables with subTierId ${subTier._id}`);
 
     for (const table of tables) {
-      console.log(`🔍 Checking table ${table._id}: ${table.currentPlayers?.length || 0}/${subTier.tableConfig.maxSeats} players`);
+      const seatSnapshot = await this.getLiveSeatSnapshot(table);
+      console.log(`Checking table ${table._id}: ${seatSnapshot.seatedCount}/${subTier.tableConfig.maxSeats} players (${seatSnapshot.source})`);
       
       // Check capacity
-      if (table.currentPlayers.length >= subTier.tableConfig.maxSeats) {
+      if (seatSnapshot.seatedCount >= subTier.tableConfig.maxSeats) {
         console.log(`❌ Table ${table._id} is full`);
         continue;
       }
-      console.log(playerId , "player id");
-      console.log(table.currentPlayers, "current players");
+      if (seatSnapshot.humanUserIds.includes(playerId.toString())) {
+        console.log(`Skipping table ${table._id}; player ${playerId} is already seated there`);
+        continue;
+      }
       
       // Get seated user IDs from player records (exclude bots)
-      const seatedUserIds = [];
-      for (const player of table.currentPlayers) {
-        const playerId_str = player._id?.toString() || player.toString();
-        const playerResult = await mongoHelper.findById(mongoHelper.COLLECTIONS.PLAYERS, playerId_str);
-        if (playerResult.success && playerResult.data) {
-          const userId = playerResult.data.user?._id?.toString() || playerResult.data.user?.toString();
-          const isBot = playerResult.data.isBot;
-          if (userId && userId !== playerId && !isBot) {
-            seatedUserIds.push(userId);
-          }
-        }
-      }
+      const seatedUserIds = seatSnapshot.humanUserIds.filter(userId => userId !== playerId.toString());
 
       console.log(`👥 Seated user IDs (excluding requester): ${seatedUserIds.length}`, seatedUserIds);
 

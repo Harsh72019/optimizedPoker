@@ -1446,14 +1446,30 @@ const _addUserToTableInternal = async (
         }
 
         const table = tableResult.data;
+        const tableManager = require('../table/table-manager.service');
+        const liveTable = await tableManager.getLiveTable(tableId);
+        const livePlayers = Array.isArray(liveTable?.players) ? liveTable.players : [];
+        const userAlreadyInLiveTable = livePlayers.some(player => {
+            const liveUserId = player?.userId?.toString?.()
+                || player?.id?.toString?.()
+                || player?.user?._id?.toString?.()
+                || player?.user?.toString?.();
+            return liveUserId === userId;
+        });
+
+        if (userAlreadyInLiveTable) {
+            console.log(`User already in live Redis table: ${userId}`);
+            return { error: true, message: 'User is already in the table' };
+        }
 
         // ✅ FIXED: Safe check for user already in table
         const userAlreadyInTable = table.currentPlayers.some(player => {
             // Check if player.user exists and has _id
-            if (!player.user || !player.user._id) {
+            if (!player.user) {
                 return false;
             }
-            return player.user._id.toString() === userId;
+            const mongoUserId = player.user._id?.toString?.() || player.user?.toString?.();
+            return mongoUserId === userId;
         });
 
         if (userAlreadyInTable) {
@@ -1553,7 +1569,10 @@ const _addUserToTableInternal = async (
         }
 
         // Update table with new player
-        const updatedPlayers = [...table.currentPlayers.map(p => p._id), player._id];
+        const existingPlayerIds = table.currentPlayers
+            .map(p => p._id || (typeof p === 'string' ? p : null))
+            .filter(Boolean);
+        const updatedPlayers = [...existingPlayerIds, player._id];
         await mongoHelper.updateById(
             mongoHelper.COLLECTIONS.TABLES,
             tableId,

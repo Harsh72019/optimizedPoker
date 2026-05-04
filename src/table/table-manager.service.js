@@ -93,6 +93,11 @@ class TableManagerService {
         return JSON.parse(data);
     }
 
+    async getLiveTable(tableId) {
+        const data = await redisClient.get(this.getTableKey(tableId));
+        return data ? JSON.parse(data) : null;
+    }
+
     async fundBotForTable(table, botUserId, botChips) {
         try {
             const fundingService = require('../services/funding.service');
@@ -152,17 +157,7 @@ class TableManagerService {
                 return;
             }
             
-            const botExists = (table.currentPlayers || []).some(p => p.user?.toString() === botUserId);
-            
-            if (!botExists) {
-                const updatedPlayers = [...(table.currentPlayers || []), { user: botUserId }];
-                await mongoHelper.updateById(
-                    mongoHelper.COLLECTIONS.TABLES,
-                    tableId,
-                    { currentPlayers: updatedPlayers }
-                );
-                console.log(`✅ Synced bot ${botUserId} to MongoDB TABLES`);
-            }
+            console.log(`Skipping Mongo currentPlayers bot sync for ${botUserId}; Redis is live table source`);
         }
     }
 
