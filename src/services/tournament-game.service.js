@@ -393,6 +393,8 @@ class TournamentGameService {
         prizePool: financials.prizePool,
         nextEliminationPosition: players.length,
         roundingRemainder: financials.roundingRemainder,
+        finalTableFormed: createdTables.length === 1,
+        finalTableFormedAt: createdTables.length === 1 ? new Date() : null,
       },
       mongoHelper.MODELS.TOURNAMENT
     );
@@ -424,6 +426,55 @@ class TournamentGameService {
       groups[index % tableCount].push(player);
     });
     return groups;
+  }
+
+  calculateBalancedTableSizes(playerCount, maxPlayersPerTable) {
+    const players = Math.max(0, Number(playerCount || 0));
+    const maxPerTable = Math.max(2, Number(maxPlayersPerTable || 9));
+    if (players === 0) return [];
+
+    const tableCount = Math.max(1, Math.ceil(players / maxPerTable));
+    const baseSize = Math.floor(players / tableCount);
+    const remainder = players % tableCount;
+
+    return Array.from({ length: tableCount }, (_, index) =>
+      baseSize + (index < remainder ? 1 : 0)
+    );
+  }
+
+  getTournamentPlayerTableId(player) {
+    return this.toId(player.tableId);
+  }
+
+  getActiveUnderlyingEntries(tournament) {
+    return (tournament.underlyingTables || [])
+      .filter(entry => entry.status === 'ACTIVE')
+      .map(entry => ({
+        ...entry,
+        tableId: this.toId(entry.tableId),
+        tournamentTableId: this.toId(entry.tournamentTableId),
+        tableNumber: Number(entry.tableNumber || 0),
+      }))
+      .filter(entry => entry.tableId && entry.tournamentTableId);
+  }
+
+  groupActivePlayersByTournamentTable(activePlayers = []) {
+    const grouped = new Map();
+    for (const player of activePlayers) {
+      const tableId = this.getTournamentPlayerTableId(player);
+      if (!tableId) continue;
+      if (!grouped.has(tableId)) grouped.set(tableId, []);
+      grouped.get(tableId).push(player);
+    }
+    return grouped;
+  }
+
+  sortTournamentEntriesByStability(entries, playersByTable) {
+    return [...entries].sort((a, b) => {
+      const bCount = playersByTable.get(b.tournamentTableId)?.length || 0;
+      const aCount = playersByTable.get(a.tournamentTableId)?.length || 0;
+      return bCount - aCount || a.tableNumber - b.tableNumber || a.tournamentTableId.localeCompare(b.tournamentTableId);
+    });
   }
 
   async getPlayerTableAssignment(tournamentId, userId) {
@@ -499,34 +550,23 @@ class TournamentGameService {
     }
 
     const activeAtThisTable = snapshot.filter(player => Number(player.chips || 0) > 0 && !player.disconnected);
-    if (activePlayers.length <= Number(tournament.maxPlayersPerTable || 9) && !tournament.finalTableFormed) {
-      const finalTable = await this.createFinalTable(tournament, activePlayers, orchestrator?.io || null);
-      return {
-        isTournament: true,
-        finalTableFormed: true,
-        continueTable: finalTable.tableId === tableId && activeAtThisTable.length >= 2,
-        tableClosed: finalTable.tableId !== tableId,
-        eliminations: eliminationResult.eliminations,
-      };
-    }
-
-    if (activeAtThisTable.length < Number(tournament.minPlayersPerTable || 2)) {
-      const mergeResult = await this.mergeShortTable(tournament, tableDoc, activeAtThisTable, orchestrator?.io || null);
-      return {
-        isTournament: true,
-        tableClosed: !!mergeResult?.merged,
-        continueTable: false,
-        waitingForCapacity: !mergeResult?.merged,
-        mergeResult,
-      };
-    }
-
-    const rebalanceResult = await this.rebalanceAfterCompletedTable(
+    const rebalanceResult = await this.rebalanceTournamentTables(
       tournament,
       tableDoc,
-      activeAtThisTable,
+      activePlayers,
       orchestrator?.io || null
     );
+
+    if (rebalanceResult.finalTableFormed || rebalanceResult.tableClosed) {
+      return {
+        isTournament: true,
+        continueTable: !rebalanceResult.tableClosed && activeAtThisTable.length >= Number(tournament.minPlayersPerTable || 2),
+        tableClosed: rebalanceResult.tableClosed,
+        finalTableFormed: rebalanceResult.finalTableFormed,
+        eliminations: eliminationResult.eliminations,
+        rebalanced: rebalanceResult,
+      };
+    }
 
     if (rebalanceResult.movedPlayers.length > 0) {
       const updatedTableState = await tableManager.getTable(tableId);
@@ -710,217 +750,211 @@ class TournamentGameService {
     return (result.data || []).filter(player => player.status !== 'eliminated' && Number(player.chipsInPlay || 0) > 0);
   }
 
-  async getTournamentTableCapacity(entry, maxPlayersPerTable) {
-    const tableState = await tableManager.getTable(entry.tableId);
-    const seatedCount = (tableState.players || []).filter(player =>
-      Number(player.chips || 0) > 0 && !player.disconnected
-    ).length;
-
-    return {
-      ...entry,
-      seatedCount,
-      availableSeats: Math.max(0, Number(maxPlayersPerTable || 9) - seatedCount),
-    };
-  }
-
-  async mergeShortTable(tournament, tableDoc, activeAtShortTable, io = null) {
+  async rebalanceTournamentTables(tournament, completedTableDoc, activePlayers, io = null) {
     const tournamentId = this.toId(tournament._id);
+    const completedUnderlyingTableId = this.toId(completedTableDoc._id);
     const maxPlayersPerTable = Number(tournament.maxPlayersPerTable || 9);
-    const activePlayersToMove = (activeAtShortTable || []).filter(player =>
-      Number(player.chips || 0) > 0 && !player.disconnected
-    );
+    const desiredSizes = this.calculateBalancedTableSizes(activePlayers.length, maxPlayersPerTable);
+    const activeEntries = this.getActiveUnderlyingEntries(tournament);
 
-    if (activePlayersToMove.length === 0) {
-      return { merged: true, movedPlayers: [], targets: [] };
-    }
-
-    const candidateEntries = (tournament.underlyingTables || []).filter(entry =>
-      entry.status === 'ACTIVE' &&
-      this.toId(entry.tableId) !== this.toId(tableDoc._id) &&
-      !entry.isFinalTable
-    );
-
-    const candidateTables = [];
-    for (const entry of candidateEntries) {
-      const capacity = await this.getTournamentTableCapacity(entry, maxPlayersPerTable);
-      if (capacity.availableSeats > 0) {
-        candidateTables.push(capacity);
-      }
-    }
-
-    candidateTables.sort((a, b) => b.availableSeats - a.availableSeats || a.seatedCount - b.seatedCount);
-
-    const totalAvailableSeats = candidateTables.reduce((sum, table) => sum + table.availableSeats, 0);
-    if (totalAvailableSeats < activePlayersToMove.length) {
-      if (io) {
-        emitSuccess(io.to(tableDoc._id.toString()), 'tournamentTableWaitingForMerge', {
-          tournamentId,
-          tableId: tableDoc._id,
-          reason: 'NO_TARGET_CAPACITY',
-          waitingPlayers: activePlayersToMove.map(player => player.id || player.userId),
-        }, 'Waiting for seats to open at another tournament table');
-      }
-
+    if (activePlayers.length <= 1 || desiredSizes.length === 0 || activeEntries.length <= 1) {
       return {
-        merged: false,
-        reason: 'NO_TARGET_CAPACITY',
+        rebalanced: false,
         movedPlayers: [],
-        targets: candidateTables.map(table => ({
-          tableId: table.tableId,
-          availableSeats: table.availableSeats,
-        })),
+        closedTables: [],
+        desiredTableSizes: desiredSizes,
+        activeTableCount: activeEntries.length,
       };
     }
 
-    const assignments = [];
-    let targetIndex = 0;
-    for (const player of activePlayersToMove) {
-      while (targetIndex < candidateTables.length && candidateTables[targetIndex].availableSeats <= 0) {
-        targetIndex += 1;
+    if (desiredSizes.length === 1 && !tournament.finalTableFormed) {
+      const finalTable = await this.createFinalTable(tournament, activePlayers, io);
+      return {
+        rebalanced: true,
+        finalTableFormed: true,
+        movedPlayers: activePlayers.map(player => ({ userId: this.toId(player.user), toTableId: finalTable.tableId })),
+        closedTables: activeEntries.map(entry => entry.tableId),
+        desiredTableSizes: desiredSizes,
+        activeTableCount: 1,
+        tableClosed: finalTable.tableId !== completedUnderlyingTableId,
+      };
+    }
+
+    const playersByTable = this.groupActivePlayersByTournamentTable(activePlayers);
+    const sortedEntries = this.sortTournamentEntriesByStability(activeEntries, playersByTable);
+    const keptEntries = sortedEntries.slice(0, desiredSizes.length);
+    const closedEntries = sortedEntries.slice(desiredSizes.length);
+    const closedIds = new Set(closedEntries.map(entry => entry.tournamentTableId));
+
+    const currentSizes = keptEntries.map(entry => playersByTable.get(entry.tournamentTableId)?.length || 0);
+    const tableCountChanged = closedEntries.length > 0;
+    const needsSameCountBalance = currentSizes.some((size, index) => Math.abs(size - desiredSizes[index]) > 1);
+
+    if (!tableCountChanged && !needsSameCountBalance) {
+      return {
+        rebalanced: false,
+        movedPlayers: [],
+        closedTables: [],
+        desiredTableSizes: desiredSizes,
+        activeTableCount: activeEntries.length,
+      };
+    }
+
+    const assignments = new Map();
+    const movers = [];
+
+    keptEntries.forEach((entry, index) => {
+      const playersAtTable = [...(playersByTable.get(entry.tournamentTableId) || [])]
+        .sort((a, b) => Number(a.seatPosition || 0) - Number(b.seatPosition || 0));
+      const desiredSize = desiredSizes[index];
+      assignments.set(entry.tournamentTableId, playersAtTable.slice(0, desiredSize));
+      movers.push(...playersAtTable.slice(desiredSize));
+    });
+
+    closedEntries.forEach(entry => {
+      movers.push(...(playersByTable.get(entry.tournamentTableId) || []));
+    });
+
+    for (let index = 0; index < keptEntries.length; index += 1) {
+      const entry = keptEntries[index];
+      const assigned = assignments.get(entry.tournamentTableId) || [];
+      const desiredSize = desiredSizes[index];
+      while (assigned.length < desiredSize && movers.length > 0) {
+        const nextPlayerIndex = movers.findIndex(player => this.getTournamentPlayerTableId(player) !== entry.tournamentTableId);
+        const playerIndex = nextPlayerIndex === -1 ? 0 : nextPlayerIndex;
+        assigned.push(movers.splice(playerIndex, 1)[0]);
       }
+      assignments.set(entry.tournamentTableId, assigned);
+    }
 
-      const target = candidateTables[targetIndex];
-      if (!target) break;
-
-      assignments.push({ player, target });
-      target.availableSeats -= 1;
+    const entryByTournamentTable = new Map(activeEntries.map(entry => [entry.tournamentTableId, entry]));
+    const targetByPlayerId = new Map();
+    for (const [tournamentTableId, players] of assignments.entries()) {
+      players.forEach((player, seatIndex) => {
+        targetByPlayerId.set(this.toId(player._id), {
+          entry: entryByTournamentTable.get(tournamentTableId),
+          seatPosition: seatIndex + 1,
+        });
+      });
     }
 
     const movedPlayers = [];
-    for (const { player, target } of assignments) {
-      const userId = player.id || player.userId;
-      const found = await mongoHelper.find(mongoHelper.COLLECTIONS.TOURNAMENT_PLAYERS, {
-        tournament: tournamentId,
-        user: userId,
-      });
-      const tournamentPlayer = found.success ? found.data?.[0] : null;
-      if (!tournamentPlayer) continue;
+    for (const player of activePlayers) {
+      const playerId = this.toId(player._id);
+      const userId = this.toId(player.user);
+      const sourceTournamentTableId = this.getTournamentPlayerTableId(player);
+      const target = targetByPlayerId.get(playerId);
+      if (!target?.entry) continue;
 
-      await tableManager.removePlayer(tableDoc._id, userId);
+      const sourceEntry = entryByTournamentTable.get(sourceTournamentTableId);
+      const changedTable = sourceTournamentTableId !== target.entry.tournamentTableId;
+      const newSeatPosition = target.seatPosition;
+
       await mongoHelper.updateById(
         mongoHelper.COLLECTIONS.TOURNAMENT_PLAYERS,
-        tournamentPlayer._id,
-        { tableId: target.tournamentTableId, seatPosition: 0 },
+        player._id,
+        {
+          tableId: target.entry.tournamentTableId,
+          seatPosition: newSeatPosition,
+        },
         mongoHelper.MODELS.TOURNAMENT_PLAYER
       );
 
+      if (!changedTable) continue;
+
+      if (sourceEntry?.tableId) {
+        await tableManager.removePlayer(sourceEntry.tableId, userId);
+      }
+
       movedPlayers.push({
         userId,
-        fromTableId: tableDoc._id,
-        toTableId: target.tableId,
-        toTournamentTableId: target.tournamentTableId,
+        fromTableId: sourceEntry?.tableId || null,
+        fromTournamentTableId: sourceTournamentTableId,
+        toTableId: target.entry.tableId,
+        toTournamentTableId: target.entry.tournamentTableId,
       });
 
       if (io) {
         emitSuccess(io.to(`user_${userId}`), 'tournamentTableMoved', {
           tournamentId,
-          tableId: target.tableId,
-          fromTableId: tableDoc._id,
-          reason: 'TABLE_MERGE',
-        }, 'You have been moved to another tournament table');
-      }
-    }
-
-    const underlyingTables = (tournament.underlyingTables || []).map(entry =>
-      this.toId(entry.tableId) === this.toId(tableDoc._id) ? { ...entry, status: 'MERGED' } : entry
-    );
-    await mongoHelper.updateById(
-      mongoHelper.COLLECTIONS.TOURNAMENTS,
-      tournamentId,
-      { underlyingTables },
-      mongoHelper.MODELS.TOURNAMENT
-    );
-    await mongoHelper.updateById(
-      mongoHelper.COLLECTIONS.TOURNAMENT_TABLES,
-      tableDoc.tournamentTableId,
-      { status: 'MERGED', isActive: false },
-      mongoHelper.MODELS.TOURNAMENT_TABLES
-    );
-
-    return {
-      merged: true,
-      movedPlayers,
-      targets: [...new Set(movedPlayers.map(player => player.toTableId))],
-    };
-  }
-
-  async rebalanceAfterCompletedTable(tournament, completedTableDoc, activeAtCompletedTable, io = null) {
-    const tournamentId = this.toId(tournament._id);
-    const maxPlayersPerTable = Number(tournament.maxPlayersPerTable || 9);
-    const activeTables = (tournament.underlyingTables || []).filter(entry =>
-      entry.status === 'ACTIVE' &&
-      !entry.isFinalTable &&
-      this.toId(entry.tableId) !== this.toId(completedTableDoc._id)
-    );
-
-    if (activeTables.length === 0 || activeAtCompletedTable.length <= 0) {
-      return { movedPlayers: [] };
-    }
-
-    const tableCounts = [];
-    for (const entry of activeTables) {
-      const tableState = await tableManager.getTable(entry.tableId);
-      const activeCount = (tableState.players || []).filter(player =>
-        Number(player.chips || 0) > 0 && !player.disconnected
-      ).length;
-      tableCounts.push({ ...entry, activeCount });
-    }
-
-    tableCounts.sort((a, b) => a.activeCount - b.activeCount);
-    const target = tableCounts[0];
-    if (!target) {
-      return { movedPlayers: [] };
-    }
-
-    const sourceCount = activeAtCompletedTable.length;
-    const shouldMove = sourceCount - target.activeCount > 1 && target.activeCount < maxPlayersPerTable;
-    if (!shouldMove) {
-      return { movedPlayers: [] };
-    }
-
-    const moveCount = Math.min(
-      Math.floor((sourceCount - target.activeCount) / 2),
-      maxPlayersPerTable - target.activeCount
-    );
-    const candidates = [...activeAtCompletedTable]
-      .sort((a, b) => Number(a.seatPosition || 0) - Number(b.seatPosition || 0))
-      .slice(-moveCount);
-
-    const movedPlayers = [];
-    for (const player of candidates) {
-      const userId = player.id || player.userId;
-      const found = await mongoHelper.find(mongoHelper.COLLECTIONS.TOURNAMENT_PLAYERS, {
-        tournament: tournamentId,
-        user: userId,
-      });
-      const tournamentPlayer = found.success ? found.data?.[0] : null;
-      if (!tournamentPlayer) continue;
-
-      await tableManager.removePlayer(completedTableDoc._id, userId);
-      await mongoHelper.updateById(
-        mongoHelper.COLLECTIONS.TOURNAMENT_PLAYERS,
-        tournamentPlayer._id,
-        { tableId: target.tournamentTableId, seatPosition: 0 },
-        mongoHelper.MODELS.TOURNAMENT_PLAYER
-      );
-
-      movedPlayers.push({
-        userId,
-        fromTableId: completedTableDoc._id,
-        toTableId: target.tableId,
-      });
-
-      if (io) {
-        emitSuccess(io.to(`user_${userId}`), 'tournamentTableMoved', {
-          tournamentId,
-          tableId: target.tableId,
-          fromTableId: completedTableDoc._id,
-          reason: 'TABLE_REBALANCE',
+          tableId: target.entry.tableId,
+          fromTableId: sourceEntry?.tableId || null,
+          reason: closedIds.has(sourceTournamentTableId) ? 'TABLE_MERGE' : 'TABLE_REBALANCE',
         }, 'You have been moved to balance tournament tables');
       }
     }
 
-    return { movedPlayers };
+    for (const entry of keptEntries) {
+      const assignedPlayers = assignments.get(entry.tournamentTableId) || [];
+      await mongoHelper.updateById(
+        mongoHelper.COLLECTIONS.TOURNAMENT_TABLES,
+        entry.tournamentTableId,
+        {
+          currentPlayers: assignedPlayers.map(player => player._id),
+          players: assignedPlayers.map((player, seatIndex) => ({
+            tournamentPlayerId: player._id,
+            userId: player.user,
+            seatPosition: seatIndex + 1,
+            chips: Number(player.chipsInPlay || 0),
+            status: 'ACTIVE',
+          })),
+          status: 'ACTIVE',
+          isActive: true,
+          isFinalTable: desiredSizes.length === 1,
+        },
+        mongoHelper.MODELS.TOURNAMENT_TABLES
+      );
+    }
+
+    for (const entry of closedEntries) {
+      await mongoHelper.updateById(
+        mongoHelper.COLLECTIONS.TOURNAMENT_TABLES,
+        entry.tournamentTableId,
+        {
+          currentPlayers: [],
+          players: [],
+          status: 'MERGED',
+          isActive: false,
+        },
+        mongoHelper.MODELS.TOURNAMENT_TABLES
+      );
+      await tableManager.clearPlayers(entry.tableId, 'MERGED');
+    }
+
+    const keptUnderlyingIds = new Set(keptEntries.map(entry => entry.tableId));
+    const underlyingTables = (tournament.underlyingTables || []).map(entry => {
+      const normalizedTableId = this.toId(entry.tableId);
+      if (keptUnderlyingIds.has(normalizedTableId)) {
+        return { ...entry, status: 'ACTIVE', isFinalTable: desiredSizes.length === 1 };
+      }
+      if (closedEntries.some(closed => closed.tableId === normalizedTableId)) {
+        return { ...entry, status: 'MERGED', isFinalTable: false };
+      }
+      return entry;
+    });
+
+    await mongoHelper.updateById(
+      mongoHelper.COLLECTIONS.TOURNAMENTS,
+      tournamentId,
+      {
+        activeTables: keptEntries.map(entry => entry.tournamentTableId),
+        underlyingTables,
+        finalTableFormed: desiredSizes.length === 1 ? true : tournament.finalTableFormed,
+        finalTableFormedAt: desiredSizes.length === 1 && !tournament.finalTableFormed
+          ? new Date()
+          : tournament.finalTableFormedAt,
+      },
+      mongoHelper.MODELS.TOURNAMENT
+    );
+
+    return {
+      rebalanced: true,
+      movedPlayers,
+      closedTables: closedEntries.map(entry => entry.tableId),
+      desiredTableSizes: desiredSizes,
+      activeTableCount: keptEntries.length,
+      tableClosed: closedEntries.some(entry => entry.tableId === completedUnderlyingTableId),
+    };
   }
 
   async createFinalTable(tournament, activePlayers, io = null) {

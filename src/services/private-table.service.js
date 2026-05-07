@@ -520,10 +520,28 @@ class PrivateTableService {
   /**
    * Start Private Tournament
    */
-  async startPrivateTournament(privateTable) {
+  async startPrivateTournament(privateTable, orchestrator = null) {
     // Use private config if available, otherwise fall back to legacy fields
     const config = privateTable.privateConfig || {};
     const buyIn = config.buyInSettings?.min || privateTable.buyIn;
+    const tournamentGameService = require('./tournament-game.service');
+    const blindLevels = tournamentGameService.normalizeBlindLevels(config.blindLevels || []);
+    const firstLevel = blindLevels[0];
+    const configuredTableCapacity =
+      config.maxPlayersPerTable ||
+      config.playersPerTable ||
+      config.playerCapacity?.perTable ||
+      config.tableCapacity ||
+      config.playerCapacity?.max;
+    const inferredTableCapacity = Number(configuredTableCapacity || 9);
+    const maxPlayersPerTable = Math.max(
+      2,
+      Number.isFinite(inferredTableCapacity) && inferredTableCapacity <= 9
+        ? inferredTableCapacity
+        : 9
+    );
+    const startingChips = Number(config.startingChips || 10000);
+    const rakePercentage = Number(privateTable.effectiveRake ?? privateTable.tierRake ?? 0);
     
     // Create tournament record using mongoHelper
     const tournamentData = {
@@ -531,23 +549,43 @@ class PrivateTableService {
       description: privateTable.description,
       buyIn,
       maxPlayers: privateTable.declaredCapacity,
+      minPlayersPerTable: 2,
+      maxPlayersPerTable,
       startTime: new Date(),
       registrationDeadline: new Date(),
-      status: 'active',
+      status: 'registering',
       isPrivate: true,
+      isOfficial: false,
       hostId: privateTable.hostId,
       tier: privateTable.tier,
       hostRewardPercent: privateTable.hostRewardPercent,
       participationThreshold: privateTable.participationThreshold,
       estimatedHours: privateTable.estimatedHours,
       timerSeconds: config.turnTimer || privateTable.timerSeconds,
-      startingChips: 10000,
-      levelDuration: 15,
+      startingChips,
+      currentLevel: {
+        levelNumber: firstLevel.levelNumber,
+        smallBlind: firstLevel.smallBlind,
+        bigBlind: firstLevel.bigBlind,
+        ante: firstLevel.ante || 0,
+        startedAt: new Date(),
+      },
+      levelStartTime: new Date(),
+      levelDuration: Number(config.levelDuration || firstLevel.duration || 15),
       timeZone: 'UTC',
+      generatedBlindLevels: blindLevels,
+      payoutStructure: this.getDefaultPayoutStructure(privateTable.registeredPlayers.length),
       tierRake: privateTable.tierRake,
       effectiveRake: privateTable.effectiveRake,
+      rakePercentage,
       setupFeeAmount: privateTable.setupFeeAmount,
       affiliateId: privateTable.affiliateId,
+      players: [],
+      waitlist: [],
+      activeTables: [],
+      underlyingTables: [],
+      prizePool: 0,
+      winners: [],
       registeredPlayers: privateTable.registeredPlayers.map(p => p.userId),
       // Private tournament specific configurations
       privateConfig: config
@@ -578,6 +616,60 @@ class PrivateTableService {
     }
     
     const tournament = tournamentResult.data;
+
+    const tournamentPlayerIds = [];
+    const currentBigBlind = Math.max(1, Number(tournament.currentLevel?.bigBlind || firstLevel.bigBlind || 1));
+
+    for (const registeredPlayer of privateTable.registeredPlayers || []) {
+      const userId = registeredPlayer.userId;
+      if (!userId) continue;
+
+      const playerResult = await mongoHelper.create(
+        mongoHelper.COLLECTIONS.TOURNAMENT_PLAYERS,
+        {
+          tournament: tournament._id,
+          user: userId,
+          seatPosition: 0,
+          status: 'registered',
+          chipsInPlay: startingChips,
+          bigBlindsAvailable: startingChips / currentBigBlind,
+          buyInDetails: {
+            amount: buyIn,
+            transactionId: null,
+            timestamp: new Date(),
+          },
+          isPresent: false,
+        },
+        mongoHelper.MODELS.TOURNAMENT_PLAYER
+      );
+
+      if (!playerResult.success) {
+        throw new Error('Failed to create private tournament player: ' + playerResult.error);
+      }
+
+      tournamentPlayerIds.push(playerResult.data._id);
+    }
+
+    const financials = tournamentGameService.calculatePrizePool(
+      Number(buyIn),
+      tournamentPlayerIds.length,
+      rakePercentage
+    );
+
+    const tournamentUpdate = await mongoHelper.updateById(
+      mongoHelper.COLLECTIONS.TOURNAMENTS,
+      tournament._id,
+      {
+        players: tournamentPlayerIds,
+        prizePool: financials.prizePool,
+        roundingRemainder: financials.roundingRemainder,
+      },
+      mongoHelper.MODELS.TOURNAMENT
+    );
+
+    if (!tournamentUpdate.success) {
+      throw new Error('Failed to prepare private tournament players: ' + tournamentUpdate.error);
+    }
     
     // Update private table with tournament reference
     await mongoHelper.updateById(
@@ -585,10 +677,14 @@ class PrivateTableService {
       privateTable._id,
       { tournamentId: tournament._id }
     );
+
+    const startedTournament = await tournamentGameService.startTournament(tournament._id, orchestrator?.io || null);
     
     return {
-      tournament,
-      playersRegistered: privateTable.registeredPlayers.length
+      tournament: startedTournament.tournament,
+      tables: startedTournament.tables,
+      financials: startedTournament.financials,
+      playersRegistered: tournamentPlayerIds.length
     };
   }
   
