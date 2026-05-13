@@ -10,6 +10,7 @@ const { emitSuccess } = require('../websocket/socket-emitter.js');
 const mongoHelper = require('../models/customdb');
 const walletIntegrationService = require('../services/wallet-integration.service');
 const privateTableGameConfigService = require('../services/private-table-game-config.service');
+const provablyFairSessionService = require('../services/provably-fair-session.service');
 
 class GameOrchestrator {
     constructor(io, timerManager) {
@@ -535,6 +536,48 @@ class GameOrchestrator {
     async startHand(tableId) {
         try {
             this.clearWaitingTimer(tableId);
+
+            const fairnessPreparation = await provablyFairSessionService.prepareHand(tableId);
+            if (fairnessPreparation.status === 'MISSING_COMMITMENTS') {
+                await tableManager.setStatus(tableId, 'WAITING');
+                emitSuccess(
+                    this.io.to(tableId),
+                    'fairnessCommitmentsRequired',
+                    fairnessPreparation.fairnessState,
+                    'Waiting for provably fair seed commitments'
+                );
+                return;
+            }
+
+            if (fairnessPreparation.status === 'AWAITING_REVEALS') {
+                await tableManager.setStatus(tableId, 'WAITING');
+                emitSuccess(
+                    this.io.to(tableId),
+                    'fairnessCommitted',
+                    fairnessPreparation.fairnessState.currentHand,
+                    'Provably fair server seed committed; waiting for player seed reveals'
+                );
+                emitSuccess(
+                    this.io.to(tableId),
+                    'fairnessRevealsRequired',
+                    fairnessPreparation.fairnessState,
+                    'Reveal client seeds to start the hand'
+                );
+                return;
+            }
+
+            const fairnessContext = await provablyFairSessionService.consumeReadyHand(tableId);
+            if (!fairnessContext) {
+                await tableManager.setStatus(tableId, 'WAITING');
+                emitSuccess(
+                    this.io.to(tableId),
+                    'fairnessNotReady',
+                    fairnessPreparation.fairnessState,
+                    'Provably fair hand is not ready'
+                );
+                return;
+            }
+
             await tableManager.setStatus(tableId, 'IN_PROGRESS');
 
             console.log(`🃏 Starting hand at table ${tableId}`);
@@ -548,10 +591,10 @@ class GameOrchestrator {
             if (isPrivateTable) {
                 console.log(`🔒 [PRIVATE SNG] Starting private table game: ${tableId}`);
                 await this.startTimedPrivateTableIfNeeded(tableId);
-                await this.privateTableOrchestrator.startGame(tableId);
+                await this.privateTableOrchestrator.startGame(tableId, fairnessContext);
             } else {
                 console.log(`🎲 [REGULAR SNG] Starting regular table game: ${tableId}`);
-                await this.startGameService.start(tableId);
+                await this.startGameService.start(tableId, fairnessContext);
             }
         } catch (err) {
             console.error(`❌ startHand error for ${tableId}:`, err.message);
@@ -605,6 +648,25 @@ class GameOrchestrator {
 
     async onHandCompleted(tableId) {
         try {
+            const completedGameState = await gameStateManager.getGame(tableId);
+            if (completedGameState) {
+                const fairnessReveal = await provablyFairSessionService.completeHand(tableId, completedGameState);
+                if (fairnessReveal) {
+                    completedGameState.fairnessReveal = {
+                        ...fairnessReveal,
+                        boardCards: completedGameState.boardCards || [],
+                        burnCards: completedGameState.burnCards || []
+                    };
+                    await gameStateManager.updateGame(tableId, completedGameState);
+                    emitSuccess(
+                        this.io.to(tableId),
+                        'fairnessRevealed',
+                        completedGameState.fairnessReveal,
+                        'Provably fair seed revealed'
+                    );
+                }
+            }
+
             await handPersister.persist(tableId);
             await this.recordCooldownForCompletedHand(tableId);
             await tableManager.setStatus(tableId, 'SHOWDOWN_DELAY');

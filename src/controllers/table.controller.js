@@ -310,3 +310,45 @@ exports.getTableById = catchAsync(async (req, res) => {
         data: tableResult.data
     });
 });
+
+exports.getTableFairnessHistory = catchAsync(async (req, res) => {
+    const { tableId } = req.params;
+    const handNumber = req.query.handNumber ? Number(req.query.handNumber) : null;
+    const query = { tableId };
+
+    if (handNumber) {
+        query.handNumber = handNumber;
+    }
+
+    const historyResult = await mongoHelper.find(
+        mongoHelper.COLLECTIONS.GAME_HISTORY,
+        query
+    );
+
+    if (!historyResult.success) {
+        return res.status(500).json({
+            success: false,
+            message: historyResult.error || 'Failed to retrieve fairness history'
+        });
+    }
+
+    const hands = (historyResult.data || [])
+        .filter(hand => hand.fairness)
+        .sort((a, b) => Number(a.handNumber || 0) - Number(b.handNumber || 0))
+        .map(hand => ({
+            handId: hand._id,
+            tableId: hand.tableId,
+            handNumber: hand.handNumber,
+            endedAt: hand.endedAt,
+            boardCards: hand.boardCards,
+            burnCards: hand.burnCards || [],
+            players: hand.players,
+            fairness: hand.fairness
+        }));
+
+    res.status(200).json({
+        success: true,
+        message: 'Fairness history retrieved successfully',
+        data: hands
+    });
+});

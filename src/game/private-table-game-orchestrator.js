@@ -28,7 +28,7 @@ class PrivateTableGameOrchestrator {
   /**
    * Detect if table is a private table and route to appropriate service
    */
-  async startGame(tableId) {
+  async startGame(tableId, fairnessContext = null) {
     try {
       console.log(`🎮 [ORCHESTRATOR] Starting game for table ${tableId}`);
       
@@ -38,10 +38,10 @@ class PrivateTableGameOrchestrator {
       if (isPrivateTable) {
         console.log(`🔒 [ORCHESTRATOR] Detected private table, using regular SNG flow`);
         // Use regular SNG flow for private tables to ensure proper game mechanics
-        return await this.regularStartService.start(tableId);
+        return await this.regularStartService.start(tableId, fairnessContext);
       } else {
         console.log(`🎲 [ORCHESTRATOR] Regular table, using standard game service`);
-        return await this.regularStartService.start(tableId);
+        return await this.regularStartService.start(tableId, fairnessContext);
       }
       
     } catch (error) {

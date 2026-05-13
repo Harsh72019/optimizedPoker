@@ -49,6 +49,7 @@ class StartGameBuilder {
       currentBet: 0,
       pot: 0,
       boardCards: [],
+      burnCards: [],
       deck: [],
       streetBets: {},
       totalContributions: {},

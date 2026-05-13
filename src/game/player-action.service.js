@@ -7,6 +7,7 @@ const gameQueue = require('../queues/game-queue');
 const ProbabilityCalculator = require('./probability-calculator');
 const { emitSuccess } = require('../websocket/socket-emitter');
 const privateTableGameConfig = require('../services/private-table-game-config.service');
+const provablyFairService = require('../services/provably-fair.service');
 class PlayerActionService {
     constructor(io, timerManager, orchestrator) {
         this.io = io;
@@ -276,12 +277,7 @@ class PlayerActionService {
         const delayMs = 800;
 
         while (gameState.boardCards.length < 5) {
-            const nextCard = gameState.deck.pop();
-            if (!nextCard) {
-                break;
-            }
-
-            gameState.boardCards.push(nextCard);
+            this.dealNextCommunityCard(gameState);
 
             emitSuccess(
                 this.io.to(gameState.tableId),
@@ -359,6 +355,7 @@ class PlayerActionService {
         emitSuccess(this.io.to(gameState.tableId), 'newPhase', { phase: nextPhase },`${nextPhase} phase started`);
 
         if (nextPhase === 'FLOP') {
+            provablyFairService.burnCard(gameState, 'FLOP');
             gameState.boardCards.push(gameState.deck.pop(), gameState.deck.pop(), gameState.deck.pop());
             console.log(`🃏 [FLOP] ${gameState.boardCards.slice(0, 3).join(', ')}`);
             emitSuccess(this.io.to(gameState.tableId), 'communityCardsDealt', 
@@ -369,6 +366,7 @@ class PlayerActionService {
         }
 
         if (nextPhase === 'TURN') {
+            provablyFairService.burnCard(gameState, 'TURN');
             gameState.boardCards.push(gameState.deck.pop());
             console.log(`🃏 [TURN] ${gameState.boardCards[3]}`);
             emitSuccess(this.io.to(gameState.tableId), 'communityCardsDealt', 
@@ -379,6 +377,7 @@ class PlayerActionService {
         }
 
         if (nextPhase === 'RIVER') {
+            provablyFairService.burnCard(gameState, 'RIVER');
             gameState.boardCards.push(gameState.deck.pop());
             console.log(`🃏 [RIVER] ${gameState.boardCards[4]}`);
             emitSuccess(this.io.to(gameState.tableId), 'communityCardsDealt', 
@@ -670,6 +669,24 @@ class PlayerActionService {
         return active[(dealerIndex + 1) % active.length].id;
     }
 
+    dealNextCommunityCard(gameState) {
+        if (gameState.boardCards.length === 0) {
+            provablyFairService.burnCard(gameState, 'FLOP');
+        } else if (gameState.boardCards.length === 3) {
+            provablyFairService.burnCard(gameState, 'TURN');
+        } else if (gameState.boardCards.length === 4) {
+            provablyFairService.burnCard(gameState, 'RIVER');
+        }
+
+        const cardsToDeal = gameState.boardCards.length === 0 ? 3 : 1;
+        for (let i = 0; i < cardsToDeal && gameState.boardCards.length < 5; i++) {
+            const nextCard = gameState.deck.pop();
+            if (nextCard) {
+                gameState.boardCards.push(nextCard);
+            }
+        }
+    }
+
     getTurnTimerSeconds(gameState) {
         return gameState?.privateTableConfig?.timer?.turnTimer || gameState?.tournamentConfig?.turnTimer || 20;
     }
@@ -701,7 +718,8 @@ class PlayerActionService {
                 boardCards: gameState.boardCards || [],
                 dealerPosition: gameState.dealerPosition,
                 smallBlindPosition: gameState.smallBlindPosition,
-                bigBlindPosition: gameState.bigBlindPosition
+                bigBlindPosition: gameState.bigBlindPosition,
+                fairness: gameState.fairness || null
             } : null
         };
     }

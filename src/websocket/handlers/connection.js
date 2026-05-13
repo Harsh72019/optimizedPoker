@@ -3,6 +3,7 @@
 const tableManager = require('../../table/table-manager.service');
 const { emitSuccess, emitError } = require('../socket-emitter');
 const verifyEventToken = require('../verify-event-token');
+const provablyFairSessionService = require('../../services/provably-fair-session.service');
 
 class ConnectionHandler {
     constructor(io, socket, orchestrator) {
@@ -25,6 +26,9 @@ class ConnectionHandler {
         this.socket.on('getPlayerInfo', async (data) => this.handleGetPlayerInfo(data));
         this.socket.on('getFriendUserInfo', async (data) => this.handleGetFriendUserInfo(data));
         this.socket.on('getFriendSummary', async (data) => this.handleGetFriendUserInfo(data));
+        this.socket.on('submitFairnessCommitment', this.handleSubmitFairnessCommitment.bind(this));
+        this.socket.on('revealFairnessSeed', this.handleRevealFairnessSeed.bind(this));
+        this.socket.on('getFairnessState', this.handleGetFairnessState.bind(this));
         this.socket.on('privateTableRebuy', this.handlePrivateTableRebuy.bind(this));
         this.socket.on('privateTableLeave', this.handlePrivateTableLeave.bind(this));
     }
@@ -835,6 +839,78 @@ class ConnectionHandler {
         }
     }
 
+    async handleSubmitFairnessCommitment(data = {}) {
+        try {
+            const { token, clientSeedHash } = data;
+            const user = await verifyEventToken(token, this.socket);
+            const tableId = data.tableId || this.socket.tableId;
+
+            if (!tableId) {
+                throw new Error('Not in table');
+            }
+
+            const fairnessState = await provablyFairSessionService.submitCommitment(tableId, {
+                playerId: user._id.toString(),
+                username: user.username,
+                clientSeedHash
+            });
+
+            emitSuccess(this.socket, 'fairnessCommitmentAccepted', fairnessState, 'Fairness seed commitment accepted');
+            emitSuccess(this.io.to(tableId), 'fairnessStateUpdated', fairnessState, 'Fairness state updated');
+
+            const gameState = await require('../../state/game-state').getGame(tableId);
+            if (!gameState) {
+                await this.orchestrator.startHand(tableId);
+            }
+        } catch (err) {
+            emitError(this.socket, 'fairnessCommitmentError', err.message);
+        }
+    }
+
+    async handleRevealFairnessSeed(data = {}) {
+        try {
+            const { token, clientSeed } = data;
+            const user = await verifyEventToken(token, this.socket);
+            const tableId = data.tableId || this.socket.tableId;
+
+            if (!tableId) {
+                throw new Error('Not in table');
+            }
+
+            const result = await provablyFairSessionService.submitReveal(tableId, {
+                playerId: user._id.toString(),
+                clientSeed
+            });
+
+            emitSuccess(this.socket, 'fairnessSeedRevealAccepted', result.fairnessState, 'Fairness seed reveal accepted');
+            emitSuccess(this.io.to(tableId), 'fairnessStateUpdated', result.fairnessState, 'Fairness state updated');
+
+            if (result.status === 'READY') {
+                emitSuccess(this.io.to(tableId), 'fairnessReady', result.fairnessState.currentHand, 'Provably fair hand ready');
+                await this.orchestrator.startHand(tableId);
+            }
+        } catch (err) {
+            emitError(this.socket, 'fairnessSeedRevealError', err.message);
+        }
+    }
+
+    async handleGetFairnessState(data = {}) {
+        try {
+            const { token } = data;
+            await verifyEventToken(token, this.socket);
+            const tableId = data.tableId || this.socket.tableId;
+
+            if (!tableId) {
+                throw new Error('Not in table');
+            }
+
+            const fairnessState = await provablyFairSessionService.getPublicState(tableId);
+            emitSuccess(this.socket, 'fairnessState', fairnessState, 'Fairness state');
+        } catch (err) {
+            emitError(this.socket, 'fairnessStateError', err.message);
+        }
+    }
+
     async assertNoCooldownConflictForTable(tableId, userId) {
         const mongoHelper = require('../../models/customdb');
         const cooldownService = require('../../services/cooldown.service');
@@ -950,6 +1026,7 @@ class ConnectionHandler {
         return {
             maxPlayers: tableState.maxPlayers || 9,
             currentPlayers: formattedPlayers,
+            fairnessState: provablyFairSessionService.getPublicStateFromTable(tableState),
             gameState: gameState ? {
                 pot: gameState.pot || 0,
                 phase: gameState.phase,
@@ -958,7 +1035,8 @@ class ConnectionHandler {
                 boardCards: gameState.boardCards || [],
                 dealerPosition: gameState.dealerPosition,
                 smallBlindPosition: gameState.smallBlindPosition,
-                bigBlindPosition: gameState.bigBlindPosition
+                bigBlindPosition: gameState.bigBlindPosition,
+                fairness: gameState.fairness || null
             } : null
         };
     }

@@ -7,6 +7,8 @@ const tableManager = require('../table/table-manager.service');
 const mongoHelper = require('../models/customdb');
 const { emitSuccess } = require('../websocket/socket-emitter');
 const privateTableGameConfig = require('../services/private-table-game-config.service');
+const provablyFairService = require('../services/provably-fair.service');
+const provablyFairSessionService = require('../services/provably-fair-session.service');
 
 class PrivateTableStartGameService {
     constructor(io, timerManager) {
@@ -24,7 +26,7 @@ class PrivateTableStartGameService {
         return Math.abs(normalized) < 0.000001 ? 0 : normalized;
     }
 
-    async start(tableId) {
+    async start(tableId, fairnessContext = null) {
         console.log(`🎲 [PRIVATE GAME START] Initializing hand for table ${tableId}`);
         const locked = await gameStateManager.acquireLock(tableId);
         if (!locked) throw new Error('Table busy');
@@ -50,6 +52,10 @@ class PrivateTableStartGameService {
             });
 
             const tableState = await tableManager.getTable(tableId);
+            const tableDoc = await mongoHelper.findById(
+                mongoHelper.COLLECTIONS.TABLES,
+                tableId
+            );
             
             // Remove ghost players
             tableState.players = tableState.players.filter(p => p.chips && p.chips > 0);
@@ -128,13 +134,19 @@ class PrivateTableStartGameService {
                 }
             });
 
-            // Deal cards
-            gameState.deck = Deck.generate();
-            gameState.players.forEach(player => {
-                player.cards = [
-                    gameState.deck.pop(),
-                    gameState.deck.pop()
-                ];
+            // Deal cards from a committed deterministic shuffle.
+            const resolvedFairness = fairnessContext || await provablyFairSessionService.consumeReadyHand(tableId);
+            if (!resolvedFairness) {
+                throw new Error('Provably fair hand is not ready to start');
+            }
+
+            gameState.fairness = provablyFairService.buildPublicCommitment(resolvedFairness);
+            gameState.fairnessReveal = provablyFairService.buildReveal(resolvedFairness);
+            gameState.deck = Deck.generate(resolvedFairness.finalSeed);
+            gameState.fairnessDealOrder = provablyFairService.dealHoleCards({
+                deck: gameState.deck,
+                players: gameState.players,
+                dealerPosition: gameState.dealerPosition
             });
 
             gameState.currentPlayerId = this.getFirstPlayerAfterBigBlind(gameState);
@@ -150,6 +162,13 @@ class PrivateTableStartGameService {
                 'gameStarted',
                 this.formatGameStartData(syncedTableState, gameState),
                 'Game started successfully'
+            );
+
+            emitSuccess(
+                this.io.to(tableId),
+                'fairnessCommitted',
+                gameState.fairness,
+                'Provably fair seed committed'
             );
 
             // Emit private table specific event with additional config
@@ -302,7 +321,8 @@ class PrivateTableStartGameService {
                 smallBlindPosition: gameState.smallBlindPosition,
                 bigBlindPosition: gameState.bigBlindPosition,
                 totalAntes: gameState.totalAntes || 0,
-                anteValue: gameState.anteValue || 0
+                anteValue: gameState.anteValue || 0,
+                fairness: gameState.fairness || null
             }
         };
     }

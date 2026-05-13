@@ -47,4 +47,9 @@ router.get(
     '/getTableById/:id',
     tableController.getTableById
 );
+
+router.get(
+    '/:tableId/fairness',
+    tableController.getTableFairnessHistory
+);
 module.exports = router;

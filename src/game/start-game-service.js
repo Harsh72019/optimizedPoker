@@ -4,6 +4,8 @@ const StartGameBuilder = require('./start-game.builder');
 const tableManager = require('../table/table-manager.service');
 const mongoHelper = require('../models/customdb');
 const { emitSuccess } = require('../websocket/socket-emitter');
+const provablyFairService = require('../services/provably-fair.service');
+const provablyFairSessionService = require('../services/provably-fair-session.service');
 
 class StartGameService {
     constructor(io, timerManager) {
@@ -33,7 +35,7 @@ class StartGameService {
         return active[(bbIndex + 1) % active.length].id;
     }
 
-    async start(tableId) {
+    async start(tableId, fairnessContext = null) {
         console.log(`🎲 [GAME START] Initializing hand for table ${tableId}`);
         const locked = await gameStateManager.acquireLock(tableId);
         if (!locked) throw new Error('Table busy');
@@ -233,13 +235,18 @@ class StartGameService {
                 }
             });
 
-            gameState.deck = Deck.generate();
+            const resolvedFairness = fairnessContext || await provablyFairSessionService.consumeReadyHand(tableId);
+            if (!resolvedFairness) {
+                throw new Error('Provably fair hand is not ready to start');
+            }
 
-            gameState.players.forEach(player => {
-                player.cards = [
-                    gameState.deck.pop(),
-                    gameState.deck.pop()
-                ];
+            gameState.fairness = provablyFairService.buildPublicCommitment(resolvedFairness);
+            gameState.fairnessReveal = provablyFairService.buildReveal(resolvedFairness);
+            gameState.deck = Deck.generate(resolvedFairness.finalSeed);
+            gameState.fairnessDealOrder = provablyFairService.dealHoleCards({
+                deck: gameState.deck,
+                players: gameState.players,
+                dealerPosition: gameState.dealerPosition
             });
 
             gameState.currentPlayerId = this.getFirstPlayerAfterBigBlind(gameState);
@@ -265,6 +272,13 @@ class StartGameService {
                 'gameStarted',
                 this.formatGameStartData(syncedTableState, gameState),
                 'Game started successfully'
+            );
+
+            emitSuccess(
+                this.io.to(tableId),
+                'fairnessCommitted',
+                gameState.fairness,
+                'Provably fair seed committed'
             );
 
             emitSuccess(
@@ -400,7 +414,8 @@ class StartGameService {
                 smallBlindPosition: gameState.smallBlindPosition,
                 bigBlindPosition: gameState.bigBlindPosition,
                 totalAntes: gameState.totalAntes || 0,
-                anteValue: gameState.anteValue || 0
+                anteValue: gameState.anteValue || 0,
+                fairness: gameState.fairness || null
             }
         };
     }

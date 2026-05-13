@@ -22,14 +22,17 @@ class HandPersister {
 
             const handData = {
                 tableId: gameState.tableId,
+                handNumber: gameState.fairness?.handNumber || null,
                 pot: gameState.pot,
                 boardCards: gameState.boardCards,
+                burnCards: gameState.burnCards || [],
                 players: gameState.players.map(p => ({
                     userId: p.id,
                     finalChips: p.chips,
                     cards: p.cards,
                     status: p.status,
                 })),
+                fairness: gameState.fairnessReveal || gameState.fairness || null,
                 endedAt: new Date(),
             };
 
@@ -46,7 +49,16 @@ class HandPersister {
                 return;
             }
             
-            console.log(`✅ [PERSIST] Hand data saved successfully with ID: ${createResult.id}`);
+            if (handData.handNumber) {
+                await mongoHelper.updateById(
+                    mongoHelper.COLLECTIONS.TABLES,
+                    tableId,
+                    { gameRoundsCompleted: handData.handNumber },
+                    mongoHelper.MODELS.TABLE
+                );
+            }
+
+            console.log(`[PERSIST] Hand data saved successfully with ID: ${createResult.id}`);
             
             // Update player chips and reputation after hand completion
             for (const player of gameState.players) {
