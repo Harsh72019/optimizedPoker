@@ -13,7 +13,7 @@ class ProvablyFairService {
   createServerCommitment({ tableId, handNumber, playerIds = [] }) {
     const serverSeed = crypto.randomBytes(32).toString('hex');
     const serverSeedHash = this.sha256(serverSeed);
-
+ 
     return {
       protocolVersion: PROTOCOL_VERSION,
       algorithm: ALGORITHM,
