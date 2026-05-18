@@ -12,8 +12,23 @@ const FAIRNESS_STATUS = {
 };
 
 class ProvablyFairSessionService {
+  getPlayerId(playerOrId) {
+    if (!playerOrId) {
+      return null;
+    }
+
+    if (typeof playerOrId === 'string') {
+      return playerOrId;
+    }
+
+    return playerOrId.userId?.toString?.()
+      || playerOrId.id?.toString?.()
+      || playerOrId.playerId?.toString?.()
+      || null;
+  }
+
   isBotPlayer(player) {
-    const userId = player?.userId?.toString?.() || player?.userId;
+    const userId = this.getPlayerId(player);
     return !!player?.isBot || (typeof userId === 'string' && userId.startsWith('bot_'));
   }
 
@@ -42,11 +57,15 @@ class ProvablyFairSessionService {
 
   ensureBotCommitments(fairnessState, players) {
     players
-      .filter(player => this.isBotPlayer(player) && !fairnessState.nextCommitments[player.userId])
+      .filter(player => {
+        const playerId = this.getPlayerId(player);
+        return playerId && this.isBotPlayer(player) && !fairnessState.nextCommitments[playerId];
+      })
       .forEach(player => {
+        const playerId = this.getPlayerId(player);
         const clientSeed = crypto.randomBytes(32).toString('hex');
-        fairnessState.nextCommitments[player.userId] = {
-          playerId: player.userId,
+        fairnessState.nextCommitments[playerId] = {
+          playerId,
           username: player.username,
           clientSeedHash: provablyFairService.sha256(clientSeed),
           clientSeed,
@@ -79,13 +98,13 @@ class ProvablyFairSessionService {
       protocolVersion: fairnessState.protocolVersion,
       status: currentHand?.status || FAIRNESS_STATUS.IDLE,
       nextCommitments: eligiblePlayers
-        .map(player => fairnessState.nextCommitments[player.userId])
+        .map(player => fairnessState.nextCommitments[this.getPlayerId(player)])
         .filter(Boolean)
         .map(commitment => this.sanitizeCommitment(commitment)),
       missingCommitments: eligiblePlayers
-        .filter(player => !fairnessState.nextCommitments[player.userId])
+        .filter(player => !fairnessState.nextCommitments[this.getPlayerId(player)])
         .map(player => ({
-          playerId: player.userId,
+          playerId: this.getPlayerId(player),
           username: player.username,
           seatPosition: player.seatPosition
         })),
@@ -125,8 +144,9 @@ class ProvablyFairSessionService {
 
     const tableState = await tableManager.getTable(tableId);
     const fairnessState = this.ensureFairnessState(tableState);
-    fairnessState.nextCommitments[playerId] = {
-      playerId,
+    const normalizedPlayerId = this.getPlayerId(playerId);
+    fairnessState.nextCommitments[normalizedPlayerId] = {
+      playerId: normalizedPlayerId,
       username,
       clientSeedHash: clientSeedHash.toLowerCase(),
       committedAt: new Date().toISOString()
@@ -140,15 +160,16 @@ class ProvablyFairSessionService {
   async removePlayer(tableId, playerId) {
     const tableState = await tableManager.getTable(tableId);
     const fairnessState = this.ensureFairnessState(tableState);
-    delete fairnessState.nextCommitments[playerId];
+    const normalizedPlayerId = this.getPlayerId(playerId);
+    delete fairnessState.nextCommitments[normalizedPlayerId];
 
     if (fairnessState.currentHand) {
       fairnessState.currentHand.playerSeedCommitments = (fairnessState.currentHand.playerSeedCommitments || [])
-        .filter(commitment => commitment.playerId !== playerId);
+        .filter(commitment => commitment.playerId !== normalizedPlayerId);
       fairnessState.currentHand.playerSeedReveals = (fairnessState.currentHand.playerSeedReveals || [])
-        .filter(reveal => reveal.playerId !== playerId);
+        .filter(reveal => reveal.playerId !== normalizedPlayerId);
       fairnessState.currentHand.pendingRevealPlayerIds = (fairnessState.currentHand.pendingRevealPlayerIds || [])
-        .filter(id => id !== playerId);
+        .filter(id => id !== normalizedPlayerId);
     }
 
     await tableManager.saveTable(tableId, tableState);
@@ -177,9 +198,9 @@ class ProvablyFairSessionService {
     }
 
     const missingCommitments = eligiblePlayers
-      .filter(player => !fairnessState.nextCommitments[player.userId])
+      .filter(player => !fairnessState.nextCommitments[this.getPlayerId(player)])
       .map(player => ({
-        playerId: player.userId,
+        playerId: this.getPlayerId(player),
         username: player.username,
         seatPosition: player.seatPosition
       }));
@@ -197,11 +218,15 @@ class ProvablyFairSessionService {
       throw new Error('Table not found while preparing fairness hand');
     }
 
-    const handNumber = Number(tableDoc.data.gameRoundsCompleted || 0) + 1;
+    const handNumber = Math.max(
+      Number(tableDoc.data.gameRoundsCompleted || 0),
+      Number(fairnessState.lastCompletedHand?.handNumber || 0),
+      Number(fairnessState.currentHand?.handNumber || 0)
+    ) + 1;
     const serverCommitment = provablyFairService.createServerCommitment({
       tableId,
       handNumber,
-      playerIds: eligiblePlayers.map(player => player.userId)
+      playerIds: eligiblePlayers.map(player => this.getPlayerId(player))
     });
     const dealOrder = provablyFairService.buildDealOrder(
       eligiblePlayers.map(player => ({
@@ -220,23 +245,23 @@ class ProvablyFairSessionService {
       serverSeed: serverCommitment.serverSeed,
       serverSeedHash: serverCommitment.serverSeedHash,
       playerSeedCommitments: eligiblePlayers.map(player => ({
-        playerId: player.userId,
+        playerId: this.getPlayerId(player),
         username: player.username,
         seatPosition: player.seatPosition,
         isBot: this.isBotPlayer(player),
-        clientSeedHash: fairnessState.nextCommitments[player.userId].clientSeedHash,
-        committedAt: fairnessState.nextCommitments[player.userId].committedAt
+        clientSeedHash: fairnessState.nextCommitments[this.getPlayerId(player)].clientSeedHash,
+        committedAt: fairnessState.nextCommitments[this.getPlayerId(player)].committedAt
       })),
       playerSeedReveals: eligiblePlayers
         .filter(player => this.isBotPlayer(player))
         .map(player => ({
-          playerId: player.userId,
-          clientSeed: fairnessState.nextCommitments[player.userId].clientSeed,
+          playerId: this.getPlayerId(player),
+          clientSeed: fairnessState.nextCommitments[this.getPlayerId(player)].clientSeed,
           revealedAt: new Date().toISOString()
         })),
       pendingRevealPlayerIds: eligiblePlayers
         .filter(player => !this.isBotPlayer(player))
-        .map(player => player.userId),
+        .map(player => this.getPlayerId(player)),
       dealOrder,
       drawProtocol: {
         holeCards: 'round_robin_two_pass',
@@ -267,13 +292,14 @@ class ProvablyFairSessionService {
     const tableState = await tableManager.getTable(tableId);
     const fairnessState = this.ensureFairnessState(tableState);
     const currentHand = fairnessState.currentHand;
+    const normalizedPlayerId = this.getPlayerId(playerId);
 
     if (!currentHand || currentHand.status !== FAIRNESS_STATUS.AWAITING_REVEALS) {
       throw new Error('No fairness hand is awaiting seed reveals');
     }
 
     const commitment = (currentHand.playerSeedCommitments || [])
-      .find(entry => entry.playerId === playerId);
+      .find(entry => entry.playerId === normalizedPlayerId);
     if (!commitment) {
       throw new Error('Player is not part of the current fairness hand');
     }
@@ -284,15 +310,15 @@ class ProvablyFairSessionService {
     }
 
     const existingReveal = (currentHand.playerSeedReveals || [])
-      .find(entry => entry.playerId === playerId);
+      .find(entry => entry.playerId === normalizedPlayerId);
     if (!existingReveal) {
       currentHand.playerSeedReveals.push({
-        playerId,
+        playerId: normalizedPlayerId,
         clientSeed,
         revealedAt: new Date().toISOString()
       });
       currentHand.pendingRevealPlayerIds = (currentHand.pendingRevealPlayerIds || [])
-        .filter(id => id !== playerId);
+        .filter(id => id !== normalizedPlayerId);
     }
 
     if ((currentHand.pendingRevealPlayerIds || []).length === 0) {
