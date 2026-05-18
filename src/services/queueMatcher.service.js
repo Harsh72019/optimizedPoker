@@ -273,10 +273,35 @@ class QueueMatcherService {
     const player = playerResult.data;
     
     // Calculate final chips
-    const tableType = table.tableTypeId;
+    let tableType = table.tableTypeId;
+    if (!tableType?.minBuyIn || !tableType?.maxBuyIn) {
+      if (table?.tableTypeId) {
+        const tableTypeId = table.tableTypeId?._id || table.tableTypeId;
+        const tableTypeResult = await mongoHelper.findById(
+          mongoHelper.COLLECTIONS.TABLE_TYPES,
+          tableTypeId
+        );
+        if (tableTypeResult.success && tableTypeResult.data) {
+          tableType = tableTypeResult.data;
+        }
+      }
+
+      if ((!tableType?.minBuyIn || !tableType?.maxBuyIn) && subTier?.tableConfig?.bb) {
+        tableType = await this.getTableTypeByBB(subTier.tableConfig.bb);
+      }
+    }
+
+    if (!tableType?.minBuyIn || !tableType?.maxBuyIn) {
+      throw new Error(`Unable to resolve table type for table ${table?._id}`);
+    }
+
+    const requestedChips = Number(chipsInPlay);
+    const normalizedChips = Number.isFinite(requestedChips) && requestedChips > 0
+      ? requestedChips
+      : tableType.maxBuyIn;
     const finalChips = Math.max(
       tableType.minBuyIn,
-      Math.min(chipsInPlay, tableType.maxBuyIn)
+      Math.min(normalizedChips, tableType.maxBuyIn)
     );
 
     // Update reputation for successful match
