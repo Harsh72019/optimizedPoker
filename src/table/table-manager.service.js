@@ -7,17 +7,29 @@ class TableManagerService {
         return `table:${tableId}`;
     }
 
+    async getTableDocument(tableId) {
+        const mongoHelper = require('../models/customdb');
+        const tableDoc = await mongoHelper.findById(mongoHelper.COLLECTIONS.TABLES, tableId);
+        return tableDoc.success ? tableDoc.data : null;
+    }
+
+    isManagedGameTable(tableDoc) {
+        return !!(tableDoc && (tableDoc.isPrivate || tableDoc.privateTableId || tableDoc.isTournament));
+    }
+
+    async deleteTable(tableId) {
+        await redisClient.del(this.getTableKey(tableId));
+    }
+
     async getTable(tableId) {
         const data = await redisClient.get(this.getTableKey(tableId));
 
         if (!data) {
             // Fetch table info to check if it's a private table
-            const mongoHelper = require('../models/customdb');
-            const tableDoc = await mongoHelper.findById(mongoHelper.COLLECTIONS.TABLES, tableId);
+            const tableDoc = await this.getTableDocument(tableId);
             
             // ✅ CRITICAL: Don't add bots to private tables
-            const isManagedGameTable = tableDoc.success && tableDoc.data && 
-                                 (tableDoc.data.isPrivate || tableDoc.data.privateTableId || tableDoc.data.isTournament);
+            const isManagedGameTable = this.isManagedGameTable(tableDoc);
             
             let table;
             
@@ -28,15 +40,16 @@ class TableManagerService {
                     players: [],
                     dealerPosition: null,
                     status: 'IDLE',
-                    maxPlayers: tableDoc?.data?.maxPlayers || 9,
-                    tableBlockchainId: tableDoc?.data?.tableBlockchainId
+                    maxPlayers: tableDoc?.maxPlayers || 9,
+                    tableBlockchainId: tableDoc?.tableBlockchainId
                 };
             } else {
                 // Regular table - add bot as before
                 let botChips = 10000; // Default fallback
                 
-                if (tableDoc.success && tableDoc.data && tableDoc.data.subTierId) {
-                    const subTierDoc = await mongoHelper.findById(mongoHelper.COLLECTIONS.SUB_TIERS, tableDoc.data.subTierId);
+                if (tableDoc?.subTierId) {
+                    const mongoHelper = require('../models/customdb');
+                    const subTierDoc = await mongoHelper.findById(mongoHelper.COLLECTIONS.SUB_TIERS, tableDoc.subTierId);
                     if (subTierDoc.success && subTierDoc.data) {
                         const bb = subTierDoc.data.tableConfig.bb;
                         botChips = parseFloat((bb * 100).toFixed(2)); // maxBuyIn = bb * 100
@@ -54,15 +67,15 @@ class TableManagerService {
                     disconnected: false,
                 };
 
-                const fundingResult = await this.fundBotForTable(tableDoc.data, botUserId, botChips);
+                const fundingResult = await this.fundBotForTable(tableDoc, botUserId, botChips);
                 if (!fundingResult.success) {
                     console.error(`❌ [TABLE MANAGER] Bot funding failed for ${tableId}: ${fundingResult.error}`);
                     table = {
                         players: [],
                         dealerPosition: null,
                         status: 'BOT_FUNDING_FAILED',
-                        maxPlayers: tableDoc?.data?.maxPlayers || 9,
-                        tableBlockchainId: tableDoc?.data?.tableBlockchainId,
+                        maxPlayers: tableDoc?.maxPlayers || 9,
+                        tableBlockchainId: tableDoc?.tableBlockchainId,
                         botFundingError: fundingResult.error
                     };
 
@@ -77,7 +90,7 @@ class TableManagerService {
                     players: [bot],
                     dealerPosition: 1,
                     status: 'IDLE',
-                    tableBlockchainId: tableDoc?.data?.tableBlockchainId
+                    tableBlockchainId: tableDoc?.tableBlockchainId
                 };
                 
                 // Sync bot to MongoDB for regular tables only
@@ -225,6 +238,7 @@ class TableManagerService {
         
         try {
             const table = await this.getTable(tableId);
+            const wasEmpty = (table.players || []).length === 0;
 
             const existing = table.players.find(
                 p => p.userId === player.userId
@@ -262,6 +276,10 @@ class TableManagerService {
 
             if (!table.dealerPosition) {
                 table.dealerPosition = seatPosition;
+            }
+
+            if (wasEmpty || ['COMPLETED', 'MERGED'].includes(table.status)) {
+                table.status = 'IDLE';
             }
 
             await this.saveTable(tableId, table);
@@ -379,7 +397,14 @@ class TableManagerService {
 
         console.log('Removed player', userId);
 
-        await this.saveTable(tableId, table);
+        const tableDoc = await this.getTableDocument(tableId);
+        const isManagedGameTable = this.isManagedGameTable(tableDoc);
+
+        if (table.players.length === 0 && !isManagedGameTable) {
+            await this.deleteTable(tableId);
+        } else {
+            await this.saveTable(tableId, table);
+        }
 
         if (table.players.length < 2) {
             try {
@@ -404,12 +429,24 @@ class TableManagerService {
 
     async clearPlayers(tableId, status = 'COMPLETED') {
         const table = await this.getTable(tableId);
+        const tableDoc = await this.getTableDocument(tableId);
+        const isManagedGameTable = this.isManagedGameTable(tableDoc);
 
         table.players = [];
         table.dealerPosition = null;
         table.status = status;
+        table.fairnessState = {
+            protocolVersion: 'PF_POKER_V1',
+            nextCommitments: {},
+            currentHand: null,
+            lastCompletedHand: null
+        };
 
-        await this.saveTable(tableId, table);
+        if (isManagedGameTable) {
+            await this.saveTable(tableId, table);
+        } else {
+            await this.deleteTable(tableId);
+        }
 
         try {
             const mongoHelper = require('../models/customdb');
