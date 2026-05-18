@@ -400,6 +400,17 @@ class TableManagerService {
         const tableDoc = await this.getTableDocument(tableId);
         const isManagedGameTable = this.isManagedGameTable(tableDoc);
 
+        if (table.players.length < 2 && !isManagedGameTable) {
+            table.fairnessState = {
+                protocolVersion: 'PF_POKER_V1',
+                nextCommitments: {},
+                currentHand: null,
+                lastCompletedHand: null
+            };
+            await require('../state/game-state').deleteGame(tableId);
+            console.log(`🧹 [TABLE] Cleared pending fairness and game state for ${tableId} because seated players dropped below 2`);
+        }
+
         if (table.players.length === 0 && !isManagedGameTable) {
             await this.deleteTable(tableId);
         } else {

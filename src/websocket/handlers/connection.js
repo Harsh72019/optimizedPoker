@@ -319,10 +319,16 @@ class ConnectionHandler {
                 console.error('Failed to sync to MongoDB:', err.message)
             );
 
-            const gameState = await require('../../state/game-state').getGame(finalTableId);
+            const tableStatus = await tableManager.getStatus(finalTableId);
+            let gameState = await require('../../state/game-state').getGame(finalTableId);
+            const activeSeatedCount = tableState.players.filter(p => !p.disconnected).length;
+            if (gameState && (activeSeatedCount < 2 || tableStatus === 'IDLE')) {
+                console.log(`🧹 [JOIN] Clearing stale gameState for ${finalTableId}: status=${tableStatus}, activeSeatedCount=${activeSeatedCount}, phase=${gameState.phase}`);
+                await require('../../state/game-state').deleteGame(finalTableId);
+                gameState = null;
+            }
             
             // showLoading: true if waiting for game to start (30s timer), false if game already ongoing
-            const tableStatus = await tableManager.getStatus(finalTableId);
             const showLoading = !gameState || tableStatus === 'WAITING' || tableStatus === 'IDLE';
             
             emitSuccess(this.socket, 'roomJoined', { 
@@ -726,6 +732,10 @@ class ConnectionHandler {
             if (seatedCount < 2) {
                 this.orchestrator.cancelWaiting(tableId);
                 this.orchestrator.cancelRestart(tableId);
+                if (!isPrivateSng && !isTournamentTable) {
+                    await require('../../state/game-state').deleteGame(tableId);
+                    console.log(`🧹 [LEAVE] Deleted stale gameState for ${tableId} because seatedCount dropped below 2`);
+                }
                 const completed = await this.orchestrator.checkPrivateTableCompletion(tableId, 'PLAYER_LEFT_WAITING_TABLE');
                 if (!completed) {
                     await tableManager.setStatus(tableId, 'IDLE');
