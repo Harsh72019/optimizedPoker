@@ -125,6 +125,10 @@ class ConnectionHandler {
 
             if (!gameState) {
                 await tableManager.removePlayer(tableId, userId);
+                await require('../../services/provably-fair-session.service').removePlayer(tableId, userId);
+                console.log(`🧹 [DISCONNECT] Removed ${userId} from fairness state for table ${tableId}`);
+                this.orchestrator.cancelWaiting(tableId);
+                this.orchestrator.cancelRestart(tableId);
                 await this.orchestrator.checkPrivateTableCompletion(tableId, 'TABLE_EMPTIED_BEFORE_HAND');
                 this.syncPlayerToMongoTable(tableId, userId, 'leave').catch(err =>
                     console.error('Failed to sync disconnect to MongoDB:', err.message)
@@ -674,6 +678,8 @@ class ConnectionHandler {
             const finalChips = playerBefore?.chips || 0;
 
             const tableState = await tableManager.removePlayer(tableId, userId);
+            await require('../../services/provably-fair-session.service').removePlayer(tableId, userId);
+            console.log(`🧹 [LEAVE] Removed ${userId} from fairness state for table ${tableId}`);
             await this.orchestrator.markPrivateTablePlayerLeaving(tableId, userId);
 
             // Get full user document for walletAddress
@@ -715,13 +721,16 @@ class ConnectionHandler {
 
             const seatedCount = tableState.players.length;
             const status = await tableManager.getStatus(tableId);
+            console.log(`🚪 [LEAVE] Post-leave state for ${tableId}: status=${status}, seatedCount=${seatedCount}`);
 
-            if (status === 'WAITING' && seatedCount < 2) {
+            if (seatedCount < 2) {
                 this.orchestrator.cancelWaiting(tableId);
+                this.orchestrator.cancelRestart(tableId);
                 const completed = await this.orchestrator.checkPrivateTableCompletion(tableId, 'PLAYER_LEFT_WAITING_TABLE');
                 if (!completed) {
                     await tableManager.setStatus(tableId, 'IDLE');
                 }
+                console.log(`🛑 [LEAVE] Cleared pending hand timers for ${tableId} after ${userId} left`);
             }
             
             this.socket.leave(tableId);
