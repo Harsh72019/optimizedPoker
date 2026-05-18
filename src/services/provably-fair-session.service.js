@@ -12,6 +12,11 @@ const FAIRNESS_STATUS = {
 };
 
 class ProvablyFairSessionService {
+  isBotPlayer(player) {
+    const userId = player?.userId?.toString?.() || player?.userId;
+    return !!player?.isBot || (typeof userId === 'string' && userId.startsWith('bot_'));
+  }
+
   ensureFairnessState(tableState) {
     if (!tableState.fairnessState) {
       tableState.fairnessState = {
@@ -37,7 +42,7 @@ class ProvablyFairSessionService {
 
   ensureBotCommitments(fairnessState, players) {
     players
-      .filter(player => player.isBot && !fairnessState.nextCommitments[player.userId])
+      .filter(player => this.isBotPlayer(player) && !fairnessState.nextCommitments[player.userId])
       .forEach(player => {
         const clientSeed = crypto.randomBytes(32).toString('hex');
         fairnessState.nextCommitments[player.userId] = {
@@ -217,19 +222,19 @@ class ProvablyFairSessionService {
         playerId: player.userId,
         username: player.username,
         seatPosition: player.seatPosition,
-        isBot: !!player.isBot,
+        isBot: this.isBotPlayer(player),
         clientSeedHash: fairnessState.nextCommitments[player.userId].clientSeedHash,
         committedAt: fairnessState.nextCommitments[player.userId].committedAt
       })),
       playerSeedReveals: eligiblePlayers
-        .filter(player => player.isBot)
+        .filter(player => this.isBotPlayer(player))
         .map(player => ({
           playerId: player.userId,
           clientSeed: fairnessState.nextCommitments[player.userId].clientSeed,
           revealedAt: new Date().toISOString()
         })),
       pendingRevealPlayerIds: eligiblePlayers
-        .filter(player => !player.isBot)
+        .filter(player => !this.isBotPlayer(player))
         .map(player => player.userId),
       dealOrder,
       drawProtocol: {

@@ -5,13 +5,18 @@
   <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
   <style>
     body { font-family: monospace; background: #111; color: #eee; padding: 20px; }
-    .container { display: flex; gap: 20px; }
+    .container { display: flex; gap: 20px; flex-wrap: wrap; }
     .panel {
-      width: 50%;
+      width: 48%;
       border: 1px solid #444;
       padding: 10px;
       background: #1a1a1a;
       border-radius: 8px;
+      margin-bottom: 20px;
+    }
+    .panel.full-width {
+      width: 100%;
+      background: #1a2a1a;
     }
     button { 
       margin: 3px; 
@@ -52,13 +57,166 @@
     .disconnected { background: #4d1a1a; }
     .btn-group { margin: 10px 0; border-top: 1px solid #333; padding-top: 10px; }
     .btn-group label { display: block; margin: 5px 0; color: #888; font-size: 11px; }
+    .financial-info { background: #0a0a0a; padding: 10px; border-radius: 4px; margin: 10px 0; font-size: 11px; }
+    .financial-info div { margin: 3px 0; }
+    h3 { color: #4a9eff; }
+    .section-title { color: #ff9a4a; font-size: 14px; margin: 10px 0; }
+    select { font-family: monospace; }
   </style>
 </head>
 <body>
 
 <h2>🃏 Poker WebSocket Test Client</h2>
 
+<div style="background: #0a2a0a; padding: 15px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid #4a9eff;">
+  <h3 style="margin-top: 0; color: #4a9eff;">🧪 Private Table SNG Testing Guide</h3>
+  <div style="font-size: 12px; line-height: 1.4;">
+    <strong>1. Create Private Table:</strong> Fill in host token, configure stakes (NO_LIMIT 5/10), timer (45s), players (2-6), buy-in (100-200), enable rebuy/antes as needed.<br/>
+    <strong>2. Register Players:</strong> Use different tokens to join the private table. Need minimum players based on your min setting.<br/>
+    <strong>3. Start Game:</strong> Host clicks "Start Game" when enough players joined.<br/>
+    <strong>4. Join Game:</strong> Players use "Join Game as Player A/B" buttons to join the actual poker game.<br/>
+    <strong>5. Test Features:</strong> Verify custom blinds (5/10), turn timer (45s), antes (if enabled), rebuy rules, stakes validation.<br/>
+    <strong>6. Monitor Events:</strong> Watch for <code>privateGameStarted</code>, <code>antesPosted</code>, <code>privateTableTurnTimerStarted</code> events.
+  </div>
+</div>
+
 <div class="container">
+
+  <!-- PRIVATE TABLE PANEL -->
+  <div class="panel full-width">
+    <h3>💼 Private Table & Financial System</h3>
+    
+    <div style="display: flex; gap: 20px;">
+      <div style="flex: 1;">
+        <div class="section-title">Create Private Table (Host)</div>
+        <input id="hostToken" placeholder="Host JWT Token"/>
+        <input id="tableName" placeholder="Table Name" value="My Private SNG"/>
+        <select id="gameType" style="width: 100%; margin-bottom: 8px; padding: 8px; background: #222; color: #fff; border: 1px solid #444; border-radius: 4px;">
+          <option value="SNG">Private SNG</option>
+          <option value="TOURNAMENT">Private Tournament</option>
+        </select>
+        
+        <!-- NEW PRIVATE TABLE CONFIG FIELDS -->
+        <div class="section-title" style="font-size: 12px; margin: 15px 0 5px 0; color: #4a9eff;">🎯 Stakes Configuration</div>
+        <select id="stakesType" style="width: 100%; margin-bottom: 8px; padding: 8px; background: #222; color: #fff; border: 1px solid #444; border-radius: 4px;">
+          <option value="NO_LIMIT">No Limit</option>
+          <option value="POT_LIMIT">Pot Limit</option>
+          <option value="FIXED_LIMIT">Fixed Limit</option>
+          <option value="CUSTOM">Custom</option>
+        </select>
+        <div style="display: flex; gap: 5px;">
+          <input id="smallBlind" placeholder="Small Blind" value="5" style="width: 48%;"/>
+          <input id="bigBlind" placeholder="Big Blind" value="10" style="width: 48%;"/>
+        </div>
+        
+        <div class="section-title" style="font-size: 12px; margin: 15px 0 5px 0; color: #4a9eff;">⏱️ Timer & Players</div>
+        <input id="turnTimer" placeholder="Turn Timer (5-300 seconds)" value="45"/>
+        <div style="display: flex; gap: 5px;">
+          <input id="minPlayers" placeholder="Min Players" value="2" style="width: 48%;"/>
+          <input id="maxPlayers" placeholder="Max Players" value="6" style="width: 48%;"/>
+        </div>
+        
+        <div class="section-title" style="font-size: 12px; margin: 15px 0 5px 0; color: #4a9eff;">💰 Buy-in & Duration</div>
+        <div style="display: flex; gap: 5px;">
+          <input id="minBuyIn" placeholder="Min Buy-in" value="100" style="width: 48%;"/>
+          <input id="maxBuyIn" placeholder="Max Buy-in" value="200" style="width: 48%;"/>
+        </div>
+        <select id="tableDuration" style="width: 100%; margin-bottom: 8px; padding: 8px; background: #222; color: #fff; border: 1px solid #444; border-radius: 4px;">
+          <option value="INFINITY">Unlimited Duration</option>
+          <option value="TIMED">Timed Game</option>
+        </select>
+        
+        <div class="section-title" style="font-size: 12px; margin: 15px 0 5px 0; color: #4a9eff;">🔐 Access & Features</div>
+        <select id="invitationType" style="width: 100%; margin-bottom: 8px; padding: 8px; background: #222; color: #fff; border: 1px solid #444; border-radius: 4px;">
+          <option value="PASSWORD">Password Protected</option>
+          <option value="INVITE">Invite Only</option>
+        </select>
+        <input id="password" placeholder="Password (if password protected)"/>
+        
+        <div style="margin: 10px 0;">
+          <label style="display: flex; align-items: center; color: #fff; font-size: 12px;">
+            <input type="checkbox" id="rebuyEnabled" style="margin-right: 8px;"/> Allow Rebuy
+          </label>
+          <label style="display: flex; align-items: center; color: #fff; font-size: 12px;">
+            <input type="checkbox" id="antesStraddles" style="margin-right: 8px;"/> Enable Antes/Straddles
+          </label>
+        </div>
+        
+        <select id="buyInReentryRules" style="width: 100%; margin-bottom: 8px; padding: 8px; background: #222; color: #fff; border: 1px solid #444; border-radius: 4px;">
+          <option value="ALLOWED_ON_REBUY_ONLY">Rebuy Only When Eliminated</option>
+          <option value="ALWAYS_ALLOWED">Always Allow Rebuy</option>
+          <option value="NEVER_ALLOWED">Never Allow Rebuy</option>
+        </select>
+        
+        <!-- LEGACY FIELDS FOR COMPATIBILITY -->
+        <div class="section-title" style="font-size: 12px; margin: 15px 0 5px 0; color: #888;">📊 Legacy Fields (Auto-calculated)</div>
+        <div style="display: flex; gap: 5px;">
+          <input id="participationThreshold" placeholder="Threshold %" value="50" style="width: 32%; background: #333;" readonly/>
+          <input id="tier" placeholder="Tier" value="3" style="width: 32%; background: #333;" readonly/>
+          <input id="estimatedHours" placeholder="Hours" value="2" style="width: 32%; background: #333;" readonly/>
+        </div>
+        
+        <div style="margin-top: 15px;">
+          <button onclick="createPrivateTable()">🎰 Create Private Table</button>
+          <button onclick="getFinancialPreview()">💰 Preview Costs</button>
+        </div>
+        
+        <div class="section-title" style="margin-top: 20px;">Join Private Table</div>
+        <input id="joinToken" placeholder="Player JWT Token"/>
+        <input id="privateTableId" placeholder="Private Table ID"/>
+        <input id="joinPassword" placeholder="Password (if required)"/>
+        <button onclick="joinPrivateTable()">🪑 Join Private Table</button>
+        <button onclick="joinUnderlyingTable('A')">🎮 Join Game as Player A</button>
+        <button onclick="joinUnderlyingTable('B')">🎮 Join Game as Player B</button>
+        
+        <div class="section-title" style="margin-top: 20px;">Manage Table (Host Only)</div>
+        <button onclick="startPrivateTable()">▶️ Start Game</button>
+        <button onclick="spectatePrivateTable()">👁️ Spectate Game</button>
+        <button onclick="cancelPrivateTable()">❌ Cancel Table</button>
+        <button onclick="getPrivateTableInfo()">ℹ️ Get Table Info</button>
+        <button onclick="getHostTables()">📋 My Tables</button>
+      </div>
+      
+      <div style="flex: 1;">
+        <div class="section-title">Financial Information</div>
+        <div class="financial-info" id="financialInfo">
+          <div><strong>New Private Table Configuration:</strong></div>
+          <div style="margin: 5px 0; color: #4a9eff;">Stakes: NO_LIMIT (5/10), Timer: 45s, Players: 2-6</div>
+          <div style="margin: 5px 0; color: #4a9eff;">Buy-in: 100-200, Rebuy: Enabled, Antes: Disabled</div>
+          <div style="margin-top: 10px; border-top: 1px solid #333; padding-top: 10px;">
+            <div><strong>Setup Fee Formula:</strong> 0.05 × (a × BuyIn) × (b × Capacity) × (c × Hours) - (d × SpeedBonus)</div>
+            <div>a = 1.2, b = 1.1, c = 1.05, d = 0.95</div>
+            <div style="margin-top: 10px; color: #4a9eff;">Example: BuyIn=100, Capacity=6, Hours=2, SpeedBonus=10</div>
+            <div>= 0.05 × (1.2 × 100) × (1.1 × 6) × (1.05 × 2) - (0.95 × 10)</div>
+            <div>= 0.05 × 120 × 6.6 × 2.1 - 9.5</div>
+            <div>= 83.16 - 9.5 = <strong style="color: #0f0;">73.66</strong></div>
+          </div>
+          <div style="margin-top: 10px; border-top: 1px solid #333; padding-top: 10px;">
+            <div><strong>Game Mechanics:</strong></div>
+            <div>• Stakes control actual betting rules (Fixed/Pot/No Limit)</div>
+            <div>• Turn timer applies to actual gameplay</div>
+            <div>• Antes posted automatically if enabled</div>
+            <div>• Rebuy rules enforced during game</div>
+            <div>• Custom blinds override SubTier blinds</div>
+          </div>
+        </div>
+        
+        <div class="section-title">Private Table Status</div>
+        <div class="financial-info" id="privateTableStatus">
+          <div>No private table created yet</div>
+        </div>
+        
+        <div class="section-title">Financial Preview</div>
+        <div class="financial-info" id="financialPreview">
+          <div>Create a table or click "Preview Costs" to see financial breakdown</div>
+        </div>
+      </div>
+    </div>
+    
+    <div class="section-title">Private Table Events Log</div>
+    <textarea id="privateLog" readonly style="height: 200px;"></textarea>
+    <button onclick="clearPrivateLog()">🗑️ Clear Log</button>
+  </div>
 
   <!-- PLAYER A -->
   <div class="panel">
@@ -177,7 +335,8 @@ function updateStatus(player, connected) {
 function connect(player) {
   const token = document.getElementById("token" + player).value;
 
-  const socket = io("https://1bt6qcfk-3000.inc1.devtunnels.ms/");
+  //http://207.154.211.106:3000
+  const socket = io("http://localhost:3000");
 
   sockets[player] = socket;
   sockets[player].token = token;
@@ -353,6 +512,63 @@ function connect(player) {
     log(player, "🚨 ERROR: " + JSON.stringify(err));
   });
 
+  // Private table events
+  socket.on("privateGameStarted", (data) => {
+    log(player, "🎰 PRIVATE GAME STARTED: " + JSON.stringify(data, null, 2));
+  });
+
+  socket.on("privateTableTurnTimerStarted", (data) => {
+    log(player, "⏱️ PRIVATE TIMER STARTED: " + JSON.stringify(data));
+  });
+
+  socket.on("timeBankActivated", (data) => {
+    log(player, "⏰ TIME BANK ACTIVATED: " + JSON.stringify(data));
+  });
+
+  socket.on("antesPosted", (data) => {
+    log(player, "🎯 ANTES POSTED: " + JSON.stringify(data));
+  });
+
+  socket.on("playerAutoAction", (data) => {
+    log(player, "🤖 AUTO ACTION: " + JSON.stringify(data));
+  });
+
+  socket.on("privateTableGameState", (data) => {
+    log(player, "🎮 PRIVATE GAME CONFIG: " + JSON.stringify(data));
+  });
+
+  socket.on("rebuyRequired", (data) => {
+    log(player, "💰 REBUY REQUIRED: " + JSON.stringify(data));
+  });
+
+  socket.on("invalidAction", (data) => {
+    log(player, "❌ INVALID ACTION: " + JSON.stringify(data));
+  });
+
+  socket.on("privateTableCreated", (data) => {
+    log(player, "🎰 PRIVATE TABLE CREATED: " + JSON.stringify(data, null, 2));
+  });
+
+  socket.on("playerJoinedPrivateTable", (data) => {
+    log(player, "👤 PLAYER JOINED PRIVATE TABLE: " + JSON.stringify(data));
+  });
+
+  socket.on("playerLeftPrivateTable", (data) => {
+    log(player, "🚪 PLAYER LEFT PRIVATE TABLE: " + JSON.stringify(data));
+  });
+
+  socket.on("privateTableStarted", (data) => {
+    log(player, "▶️ PRIVATE TABLE STARTED: " + JSON.stringify(data, null, 2));
+  });
+
+  socket.on("setupFeeCharged", (data) => {
+    log(player, "💰 SETUP FEE CHARGED: " + JSON.stringify(data, null, 2));
+  });
+
+  socket.on("privateTableError", (data) => {
+    log(player, "❌ PRIVATE TABLE ERROR: " + data.error);
+  });
+
   // Catch-all for any other events
   socket.onAny((event, data) => {
     const knownEvents = [
@@ -365,7 +581,13 @@ function connect(player) {
       'playerAutoFolded', 'currentPlayerTurn', 'dealerAssigned', 'smallBlind',
       'bigBlind', 'receiveHand', 'newPhase', 'betsReset', 'newRoundStarting',
       'gameOver', 'winners', 'revealCards', 'winningProbability',
-      'turnTimerStarted', 'waitingCountdown', 'showdownDelay'
+      'turnTimerStarted', 'waitingCountdown', 'showdownDelay',
+      'privateTableCreated', 'playerJoinedPrivateTable', 'playerLeftPrivateTable',
+      'privateTableStarted', 'setupFeeCharged', 'privateTableError',
+      // New private table game events
+      'privateGameStarted', 'privateTableTurnTimerStarted', 'timeBankActivated',
+      'antesPosted', 'playerAutoAction', 'privateTableGameState', 'rebuyRequired',
+      'invalidAction', 'unableToJoinPrivateTable'
     ];
     if (!knownEvents.includes(event)) {
       log(player, "📩 " + event + " -> " + JSON.stringify(data));
@@ -431,6 +653,412 @@ function action(player, type) {
     socket.emit("playerAction", { action: type, token });
     log(player, "➡️ " + type + " emitted");
   }
+}
+
+// Private table socket (separate connection)
+let privateSocket = null;
+let currentPrivateTableId = null;
+
+function logPrivate(message) {
+  const logBox = document.getElementById("privateLog");
+  const timestamp = new Date().toLocaleTimeString();
+  logBox.value += `[${timestamp}] ${message}\n`;
+  logBox.scrollTop = logBox.scrollHeight;
+}
+
+function clearPrivateLog() {
+  document.getElementById("privateLog").value = "";
+}
+
+function updatePrivateTableStatus(table) {
+  const statusDiv = document.getElementById("privateTableStatus");
+  statusDiv.innerHTML = `
+    <div><strong>Table ID:</strong> ${table._id || 'N/A'}</div>
+    <div><strong>Name:</strong> ${table.name || 'N/A'}</div>
+    <div><strong>Status:</strong> <span style="color: ${getStatusColor(table.status)}">${table.status || 'N/A'}</span></div>
+    <div><strong>Game Type:</strong> ${table.gameType || 'N/A'}</div>
+    <div><strong>Host:</strong> ${table.hostId || 'N/A'}</div>
+    <div><strong>Players:</strong> <strong style="color: #0f0;">${table.registeredPlayers?.length || 0}</strong>/${table.declaredCapacity || 0}</div>
+    <div><strong>Threshold:</strong> ${table.participationThreshold || 0}% (${Math.ceil((table.declaredCapacity || 0) * (table.participationThreshold || 0) / 100)} players needed)</div>
+    <div><strong>Buy In:</strong> ${table.buyIn || 0}</div>
+    <div><strong>Tier:</strong> ${table.tier || 'N/A'}</div>
+    ${table.underlyingTableId ? `<div><strong>Game Table:</strong> <span style="color: #4a9eff;">${table.underlyingTableId}</span></div>` : ''}
+  `;
+}
+
+function getStatusColor(status) {
+  const colors = {
+    'WAITING_FOR_PLAYERS': '#ff9a4a',
+    'READY_TO_START': '#4a9eff',
+    'ACTIVE': '#0f0',
+    'COMPLETED': '#888',
+    'CANCELLED': '#f00'
+  };
+  return colors[status] || '#fff';
+}
+
+function updateFinancialPreview(data) {
+  const previewDiv = document.getElementById("financialPreview");
+  const preview = data.financialPreview || data;
+  
+  if (preview.scenarios && preview.scenarios.length > 0) {
+    const fullScenario = preview.scenarios[0].financials;
+    previewDiv.innerHTML = `
+      <div><strong>Setup Fee:</strong> ${data.setupFee || preview.setupFee?.amount || 0}</div>
+      <div><strong>Total Prize Pool:</strong> ${fullScenario.prizePool || 'N/A'}</div>
+      <div><strong>Total Rake:</strong> ${fullScenario.totalRake || 'N/A'}</div>
+      <div><strong>Rake %:</strong> ${preview.scenarios[0].breakdown?.effectiveRakePercent || 'N/A'}%</div>
+      <div><strong>Host Reward:</strong> ${fullScenario.hostReward || 0}</div>
+      <div><strong>Affiliate Payout:</strong> ${fullScenario.affiliatePayout || 0}</div>
+      <div><strong>Platform Revenue:</strong> ${fullScenario.platformRevenue || 'N/A'}</div>
+    `;
+  } else {
+    previewDiv.innerHTML = `
+      <div><strong>Setup Fee:</strong> ${data.setupFee || preview.setupFee || 'N/A'}</div>
+      <div><strong>Total Prize Pool:</strong> ${preview.totalPrizePool || 'N/A'}</div>
+      <div><strong>Total Rake:</strong> ${preview.totalRake || 'N/A'}</div>
+      <div><strong>Rake %:</strong> ${preview.rakePercentage || 'N/A'}%</div>
+      <div><strong>Host Reward:</strong> ${preview.hostReward || 'N/A'}</div>
+      <div><strong>Affiliate Payout:</strong> ${preview.affiliatePayout || 'N/A'}</div>
+      <div><strong>Platform Revenue:</strong> ${preview.platformRevenue || 'N/A'}</div>
+    `;
+  }
+}
+
+function initPrivateSocket() {
+  if (privateSocket && privateSocket.connected) return privateSocket;
+  
+  privateSocket = io("http://localhost:3000");
+  
+  privateSocket.on("connect", () => {
+    logPrivate("✅ Private socket connected: " + privateSocket.id);
+  });
+  
+  privateSocket.on("disconnect", () => {
+    logPrivate("❌ Private socket disconnected");
+  });
+  
+  privateSocket.on("privateTableCreated", (data) => {
+    logPrivate("🎰 TABLE CREATED: " + JSON.stringify(data, null, 2));
+    if (data.data && data.data.privateTable) {
+      currentPrivateTableId = data.data.privateTable._id;
+      document.getElementById("privateTableId").value = data.data.privateTable._id;
+      updatePrivateTableStatus(data.data.privateTable);
+      updateFinancialPreview(data.data);
+    }
+  });
+  
+  privateSocket.on("privateTableJoined", (data) => {
+    logPrivate("👤 JOINED TABLE: " + JSON.stringify(data, null, 2));
+  });
+  
+  privateSocket.on("playerRegistered", (data) => {
+    logPrivate("👤 PLAYER REGISTERED: " + JSON.stringify(data));
+  });
+  
+  privateSocket.on("privateTableCancelled", (data) => {
+    logPrivate("❌ TABLE CANCELLED: " + JSON.stringify(data, null, 2));
+  });
+  
+  privateSocket.on("privateTableStarted", (data) => {
+    logPrivate("▶️ GAME STARTED: " + JSON.stringify(data, null, 2));
+  });
+  
+  privateSocket.on("redirectToTable", (data) => {
+    logPrivate("🎮 REDIRECT TO TABLE: " + JSON.stringify(data, null, 2));
+  });
+  
+  privateSocket.on("privateTableInfo", (data) => {
+    logPrivate("ℹ️ TABLE INFO: " + JSON.stringify(data, null, 2));
+    if (data.data) {
+      updatePrivateTableStatus(data.data);
+    }
+  });
+  
+  privateSocket.on("privateTablePreview", (data) => {
+    logPrivate("💰 FINANCIAL PREVIEW: " + JSON.stringify(data, null, 2));
+    if (data.data) {
+      updateFinancialPreview(data.data);
+    }
+  });
+  
+  privateSocket.on("hostTables", (data) => {
+    logPrivate("📋 HOST TABLES: " + JSON.stringify(data, null, 2));
+  });
+  
+  privateSocket.on("joinedAsSpectator", (data) => {
+    logPrivate("👁️ JOINED AS SPECTATOR: " + JSON.stringify(data, null, 2));
+    // Join the underlying table room to receive game events
+    if (data.data && data.data.tableId) {
+      logPrivate("🎮 Now receiving real-time updates from table: " + data.data.tableId);
+    }
+  });
+  
+  privateSocket.on("spectatingTable", (data) => {
+    logPrivate("👁️ SPECTATING TABLE: " + JSON.stringify(data, null, 2));
+  });
+  
+  privateSocket.on("createPrivateTableError", (data) => {
+    logPrivate("❌ CREATE ERROR: " + (data.error || JSON.stringify(data)));
+  });
+  
+  privateSocket.on("joinPrivateTableError", (data) => {
+    logPrivate("❌ JOIN ERROR: " + (data.error || JSON.stringify(data)));
+  });
+  
+  privateSocket.on("startPrivateTableError", (data) => {
+    logPrivate("❌ START ERROR: " + (data.error || JSON.stringify(data)));
+  });
+  
+  privateSocket.on("cancelPrivateTableError", (data) => {
+    logPrivate("❌ CANCEL ERROR: " + (data.error || JSON.stringify(data)));
+  });
+  
+  privateSocket.on("getPrivateTableInfoError", (data) => {
+    logPrivate("❌ INFO ERROR: " + (data.error || JSON.stringify(data)));
+  });
+  
+  privateSocket.on("spectatePrivateTableError", (data) => {
+    logPrivate("❌ SPECTATE ERROR: " + (data.error || JSON.stringify(data)));
+  });
+  
+  privateSocket.onAny((event, data) => {
+    const knownEvents = ['connect', 'disconnect', 'privateTableCreated', 
+      'privateTableJoined', 'playerRegistered', 'privateTableCancelled',
+      'privateTableStarted', 'redirectToTable', 'privateTableInfo',
+      'privateTablePreview', 'hostTables', 'createPrivateTableError',
+      'joinPrivateTableError', 'startPrivateTableError', 'cancelPrivateTableError',
+      'getPrivateTableInfoError', 'getPrivateTablePreviewError', 'spectatePrivateTableError',
+      'joinedAsSpectator', 'spectatingTable',
+      // Game events that spectators receive
+      'gameStarted', 'playerTurn', 'actionTaken', 'communityCardsDealt', 
+      'showdownResults', 'gameOver', 'winners'
+    ];
+    if (!knownEvents.includes(event)) {
+      logPrivate("📩 " + event + " -> " + JSON.stringify(data));
+    }
+  });
+  
+  return privateSocket;
+}
+
+function createPrivateTable() {
+  const socket = initPrivateSocket();
+  
+  const token = document.getElementById("hostToken").value;
+  if (!token) {
+    logPrivate("❌ Host token required");
+    return;
+  }
+  
+  // Build new private table configuration
+  const tableConfig = {
+    name: document.getElementById("tableName").value,
+    gameType: document.getElementById("gameType").value, // 'SNG' or 'TOURNAMENT'
+    
+    // Stakes configuration
+    stakes: {
+      type: document.getElementById("stakesType").value,
+      blinds: {
+        small: parseInt(document.getElementById("smallBlind").value),
+        big: parseInt(document.getElementById("bigBlind").value)
+      }
+    },
+    
+    // Timer and players
+    turnTimer: parseInt(document.getElementById("turnTimer").value),
+    playerCapacity: {
+      min: parseInt(document.getElementById("minPlayers").value),
+      max: parseInt(document.getElementById("maxPlayers").value)
+    },
+    
+    // Duration and buy-in
+    tableDuration: document.getElementById("tableDuration").value,
+    buyInSettings: {
+      min: parseInt(document.getElementById("minBuyIn").value),
+      max: parseInt(document.getElementById("maxBuyIn").value)
+    },
+    
+    // Access control
+    invitationControl: {
+      type: document.getElementById("invitationType").value,
+      password: document.getElementById("password").value || undefined
+    },
+    
+    // Features
+    rebuy: document.getElementById("rebuyEnabled").checked,
+    antesStraddles: document.getElementById("antesStraddles").checked,
+    buyInReentryRules: document.getElementById("buyInReentryRules").value,
+    
+    // Legacy fields for backward compatibility (auto-calculated)
+    buyIn: parseInt(document.getElementById("minBuyIn").value), // Use min buy-in
+    declaredCapacity: parseInt(document.getElementById("maxPlayers").value), // Use max players
+    participationThreshold: Math.ceil((parseInt(document.getElementById("minPlayers").value) / parseInt(document.getElementById("maxPlayers").value)) * 100), // Auto-calculate
+    tier: parseInt(document.getElementById("tier").value),
+    estimatedHours: parseFloat(document.getElementById("estimatedHours").value),
+    timerSeconds: parseInt(document.getElementById("turnTimer").value) // Use same as turnTimer
+  };
+  
+  // Update the readonly fields to show calculated values
+  document.getElementById("participationThreshold").value = tableConfig.participationThreshold;
+  
+  logPrivate(`🎯 NEW CONFIG: ${tableConfig.stakes.type} stakes (${tableConfig.stakes.blinds.small}/${tableConfig.stakes.blinds.big})`);
+  logPrivate(`⏱️ TIMER: ${tableConfig.turnTimer}s, PLAYERS: ${tableConfig.playerCapacity.min}-${tableConfig.playerCapacity.max}`);
+  logPrivate(`💰 BUY-IN: ${tableConfig.buyInSettings.min}-${tableConfig.buyInSettings.max}, REBUY: ${tableConfig.rebuy}`);
+  logPrivate(`🎯 ANTES: ${tableConfig.antesStraddles}, DURATION: ${tableConfig.tableDuration}`);
+  logPrivate(`🔐 ACCESS: ${tableConfig.invitationControl.type}${tableConfig.invitationControl.password ? ' (password protected)' : ''}`);
+  
+  socket.emit("createPrivateTable", { token, tableConfig });
+  logPrivate("➡️ createPrivateTable emitted with new configuration");
+}
+
+function joinPrivateTable() {
+  const socket = initPrivateSocket();
+  
+  const token = document.getElementById("joinToken").value;
+  const tableId = document.getElementById("privateTableId").value;
+  const password = document.getElementById("joinPassword").value;
+  
+  if (!token || !tableId) {
+    logPrivate("❌ Token and Table ID required");
+    return;
+  }
+  
+  socket.emit("joinPrivateTable", { token, tableId, password: password || undefined });
+  logPrivate("➡️ joinPrivateTable emitted");
+}
+
+function startPrivateTable() {
+  const socket = initPrivateSocket();
+  
+  const token = document.getElementById("hostToken").value;
+  const tableId = document.getElementById("privateTableId").value;
+  
+  if (!token || !tableId) {
+    logPrivate("❌ Host token and Table ID required");
+    return;
+  }
+  
+  socket.emit("startPrivateTable", { token, tableId });
+  logPrivate("➡️ startPrivateTable emitted");
+}
+
+function cancelPrivateTable() {
+  const socket = initPrivateSocket();
+  
+  const token = document.getElementById("hostToken").value;
+  const tableId = document.getElementById("privateTableId").value;
+  const reason = prompt("Reason for cancellation (optional):");
+  
+  if (!token || !tableId) {
+    logPrivate("❌ Host token and Table ID required");
+    return;
+  }
+  
+  socket.emit("cancelPrivateTable", { token, tableId, reason });
+  logPrivate("➡️ cancelPrivateTable emitted");
+}
+
+function getPrivateTableInfo() {
+  const socket = initPrivateSocket();
+  
+  const token = document.getElementById("hostToken").value || document.getElementById("joinToken").value;
+  const tableId = document.getElementById("privateTableId").value;
+  
+  if (!token || !tableId) {
+    logPrivate("❌ Token and Table ID required");
+    return;
+  }
+  
+  socket.emit("getPrivateTableInfo", { token, tableId });
+  logPrivate("➡️ getPrivateTableInfo emitted");
+}
+
+function getHostTables() {
+  const socket = initPrivateSocket();
+  
+  const token = document.getElementById("hostToken").value;
+  
+  if (!token) {
+    logPrivate("❌ Host token required");
+    return;
+  }
+  
+  socket.emit("getHostTables", { token });
+  logPrivate("➡️ getHostTables emitted");
+}
+
+function getFinancialPreview() {
+  const socket = initPrivateSocket();
+  
+  const token = document.getElementById("hostToken").value;
+  if (!token) {
+    logPrivate("❌ Host token required");
+    return;
+  }
+  
+  const tableConfig = {
+    gameType: document.getElementById("gameType").value,
+    buyIn: parseInt(document.getElementById("minBuyIn").value),
+    declaredCapacity: parseInt(document.getElementById("maxPlayers").value),
+    tier: parseInt(document.getElementById("tier").value),
+    estimatedHours: parseFloat(document.getElementById("estimatedHours").value),
+    
+    // Include new config for preview
+    stakes: {
+      type: document.getElementById("stakesType").value,
+      blinds: {
+        small: parseInt(document.getElementById("smallBlind").value),
+        big: parseInt(document.getElementById("bigBlind").value)
+      }
+    },
+    turnTimer: parseInt(document.getElementById("turnTimer").value),
+    playerCapacity: {
+      min: parseInt(document.getElementById("minPlayers").value),
+      max: parseInt(document.getElementById("maxPlayers").value)
+    }
+  };
+  
+  socket.emit("getPrivateTablePreview", { token, tableConfig });
+  logPrivate("➡️ getPrivateTablePreview emitted with new config");
+}
+
+// New function to join the underlying table after private table starts
+function joinUnderlyingTable(player) {
+  const socket = sockets[player];
+  if (!socket) {
+    // Connect the player first
+    connect(player);
+    setTimeout(() => joinUnderlyingTable(player), 1000);
+    return;
+  }
+  
+  const privateTableId = document.getElementById("privateTableId").value;
+  const token = player === 'A' ? document.getElementById("tokenA").value : document.getElementById("tokenB").value;
+  
+  if (!privateTableId || !token) {
+    log(player, "❌ Private table ID and token required");
+    return;
+  }
+  
+  // Join using the private table ID - this will redirect to underlying table
+  socket.emit("joinTable", { privateTableId, token });
+  log(player, "➡️ joinTable emitted with privateTableId: " + privateTableId);
+}
+
+function spectatePrivateTable() {
+  const socket = initPrivateSocket();
+  
+  const token = document.getElementById("hostToken").value || document.getElementById("joinToken").value;
+  const tableId = document.getElementById("privateTableId").value;
+  
+  if (!token || !tableId) {
+    logPrivate("❌ Token and Table ID required");
+    return;
+  }
+  
+  socket.emit("spectatePrivateTable", { token, tableId });
+  logPrivate("➡️ spectatePrivateTable emitted - You will receive real-time game updates");
 }
 
 </script>

@@ -234,6 +234,9 @@ class TableManagerService {
                 existing.disconnected = false;
                 existing.socketId = player.socketId;
                 existing.chips = player.chips; // Update chips on reconnect
+                existing.isBot = typeof player.isBot === 'boolean'
+                    ? player.isBot
+                    : !!existing.isBot;
 
                 await this.saveTable(tableId, table);
 
@@ -252,6 +255,7 @@ class TableManagerService {
                 username: player.username,
                 seatPosition,
                 chips: player.chips, // ✅ CRITICAL: Set chips field
+                isBot: !!player.isBot || (typeof player.userId === 'string' && player.userId.startsWith('bot_')),
                 disconnected: false,
                 socketId: player.socketId,
             });
