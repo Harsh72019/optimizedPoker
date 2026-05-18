@@ -5,11 +5,11 @@ const mongoHelper = require('../models/customdb');
 const reputationService = require('../services/reputation.service');
 
 class HandPersister {
-    async persist(tableId) {
+    async persist(tableId, gameStateOverride = null) {
         try {
             console.log(`💾 [PERSIST] Starting hand persist for table ${tableId}`);
             
-            const gameState = await gameStateManager.getGame(tableId);
+            const gameState = gameStateOverride || await gameStateManager.getGame(tableId);
             if (!gameState) {
                 console.log(`⚠️ [PERSIST] No game state found for table ${tableId}`);
                 return;

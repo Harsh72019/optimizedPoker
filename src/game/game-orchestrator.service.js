@@ -649,6 +649,7 @@ class GameOrchestrator {
     async onHandCompleted(tableId) {
         try {
             const completedGameState = await gameStateManager.getGame(tableId);
+            console.log(`🏁 [HAND COMPLETE] Snapshot phase for ${tableId}: ${completedGameState?.phase}`);
             if (completedGameState) {
                 const fairnessReveal = await provablyFairSessionService.completeHand(tableId, completedGameState);
                 if (fairnessReveal) {
@@ -667,7 +668,7 @@ class GameOrchestrator {
                 }
             }
 
-            await handPersister.persist(tableId);
+            await handPersister.persist(tableId, completedGameState);
             await this.recordCooldownForCompletedHand(tableId);
             await tableManager.setStatus(tableId, 'SHOWDOWN_DELAY');
             console.log(`🏁 Hand completed at table ${tableId}`);
