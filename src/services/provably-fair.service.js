@@ -8,6 +8,37 @@ const DRAW_PROTOCOL = {
   deckAccess: 'pop_from_end',
   playerOrder: 'left_of_dealer_then_clockwise'
 };
+const VERIFICATION_SPEC = {
+  combinedClientSeed: {
+    method: 'SHA256_JSON',
+    payload: {
+      protocolVersion: PROTOCOL_VERSION,
+      tableId: 'string',
+      handNumber: 'number',
+      reveals: 'playerSeedReveals'
+    },
+    revealOrdering: 'playerId_asc'
+  },
+  finalSeed: {
+    method: 'HMAC_SHA256',
+    key: 'serverSeed',
+    message: 'combinedClientSeed'
+  },
+  deck: {
+    baseDeckOrder: {
+      suits: ['Heart', 'Diamond', 'Club', 'Spade'],
+      cardFaces: ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A']
+    },
+    shuffle: 'FISHER_YATES',
+    rng: {
+      method: 'HMAC_SHA256_COUNTER',
+      seedEncoding: 'hex',
+      counter: 'uint64_be_start_0',
+      output: 'uint32_be_with_rejection_sampling'
+    },
+    deckAccess: DRAW_PROTOCOL.deckAccess
+  }
+};
 
 class ProvablyFairService {
   createServerCommitment({ tableId, handNumber, playerIds = [] }) {
@@ -89,6 +120,7 @@ class ProvablyFairService {
       playerSeedCommitments: commitment.playerSeedCommitments || [],
       dealOrder: commitment.dealOrder || [],
       drawProtocol: commitment.drawProtocol || { ...DRAW_PROTOCOL },
+      verificationSpec: { ...VERIFICATION_SPEC },
       committedAt: commitment.committedAt,
       readyAt: commitment.readyAt || null
     };
