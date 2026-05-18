@@ -158,6 +158,7 @@ class ProvablyFairSessionService {
     const tableState = await tableManager.getTable(tableId);
     const fairnessState = this.ensureFairnessState(tableState);
     const eligiblePlayers = this.getEligiblePlayers(tableState);
+    this.ensureBotCommitments(fairnessState, eligiblePlayers);
 
     if (eligiblePlayers.length < 2) {
       return {
