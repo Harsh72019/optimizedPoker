@@ -105,11 +105,11 @@ class ProvablyFairSessionService {
     return {
       protocolVersion: fairnessState.protocolVersion,
       status: currentHand?.status || FAIRNESS_STATUS.IDLE,
-      nextCommitments: eligiblePlayers
+      nextCommitments: currentHandActive ? [] : eligiblePlayers
         .map(player => fairnessState.nextCommitments[this.getPlayerId(player)])
         .filter(Boolean)
         .map(commitment => this.sanitizeCommitment(commitment)),
-      missingCommitments: eligiblePlayers
+      missingCommitments: currentHandActive ? [] : eligiblePlayers
         .filter(player => !fairnessState.nextCommitments[this.getPlayerId(player)])
         .map(player => ({
           playerId: this.getPlayerId(player),
