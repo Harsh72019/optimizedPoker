@@ -91,8 +91,16 @@ class ProvablyFairSessionService {
   getPublicStateFromTable(tableState) {
     const fairnessState = this.ensureFairnessState(tableState);
     const eligiblePlayers = this.getEligiblePlayers(tableState);
-    this.ensureBotCommitments(fairnessState, eligiblePlayers);
     const currentHand = fairnessState.currentHand;
+    const currentHandActive = currentHand && [
+      FAIRNESS_STATUS.AWAITING_REVEALS,
+      FAIRNESS_STATUS.READY,
+      FAIRNESS_STATUS.IN_PROGRESS
+    ].includes(currentHand.status);
+
+    if (!currentHandActive) {
+      this.ensureBotCommitments(fairnessState, eligiblePlayers);
+    }
 
     return {
       protocolVersion: fairnessState.protocolVersion,
