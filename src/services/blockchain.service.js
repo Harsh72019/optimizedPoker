@@ -589,14 +589,6 @@ const findTableOrCreateThroughBlockchainNew = async (playerCount, tableTypeId, c
       if (table) {
         console.log(`✅ Found existing table in sub-tier ${subTierId}: ${table._id}, blockchain ID: ${table.tableBlockchainId}`);
 
-        // Table exists, transfer funds from user's pool to table
-        const transferResult = await transferFromPoolToTable(userAddress, table.blockchainAddress, chipsInPlay);
-
-        if (!transferResult.success) {
-          console.error('❌ Failed to transfer funds to existing table:', transferResult.error);
-          throw new Error(`Fund transfer failed: ${transferResult.error}`);
-        }
-
         const matchmakingService = require('./matchmaking.service.js');
 
         let matchmakeTable = await matchmakingService.updateMatchmakingTable(subTierId, table._id, userId);
@@ -609,7 +601,7 @@ const findTableOrCreateThroughBlockchainNew = async (playerCount, tableTypeId, c
           tableData: table,
           wasCreated: false,
           currentPlayers: matchmakeTable.currentPlayerIds,
-          message: `Joined existing table in sub-tier ${subTierId} with funds transferred`,
+          message: `Found existing table in sub-tier ${subTierId} ready for join`,
         };
       }
 
@@ -640,23 +632,13 @@ const findTableOrCreateThroughBlockchainNew = async (playerCount, tableTypeId, c
         userId
       );
 
-      console.log('💰 Transferring creator funds to new table...');
-      const transferResult = await transferFromPoolToTable(userAddress, createResult.tableAddress, chipsInPlay);
-
-      if (!transferResult.success) {
-        console.error('❌ Failed to transfer creator funds to new table:', transferResult.error);
-        throw new Error(`Creator fund transfer failed: ${transferResult.error}`);
-      }
-
-      console.log(`✅ Creator funds successfully transferred to new table in sub-tier ${subTierId}`);
-
       return {
         table: newTable,
         isBlockchainEnabled: true,
         blockchainInfo: {},
         tableData: newTable,
         wasCreated: true,
-        message: `Created new table in sub-tier ${subTierId} with funds transferred`,
+        message: `Created new table in sub-tier ${subTierId} ready for join`,
       };
     } else {
       // Fallback to original behavior if no subTierId provided
