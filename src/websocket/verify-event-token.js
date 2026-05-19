@@ -32,6 +32,7 @@ async function verifyEventToken(token, socket) {
 
     socket.user = user;
     socket.cachedToken = token;
+    socket.join(`user_${user._id.toString()}`);
 
     return user;
 }

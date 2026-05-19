@@ -15,6 +15,7 @@ class ConnectionHandler {
     }
 
     registerEvents() {
+        this.socket.on('authorize', this.handleAuthorize.bind(this));
         this.socket.on('joinTable', this.handleJoinTable.bind(this));
         this.socket.on('checkActiveSession', this.handleCheckActiveSession.bind(this));
         this.socket.on('leaveTable', this.handleLeaveTable.bind(this));
@@ -31,6 +32,30 @@ class ConnectionHandler {
         this.socket.on('getFairnessState', this.handleGetFairnessState.bind(this));
         this.socket.on('privateTableRebuy', this.handlePrivateTableRebuy.bind(this));
         this.socket.on('privateTableLeave', this.handlePrivateTableLeave.bind(this));
+    }
+
+    async handleAuthorize(data = {}) {
+        try {
+            const { token } = data;
+            const user = await verifyEventToken(token, this.socket);
+            const userId = user._id.toString();
+
+            this.socket.user = user;
+            this.socket.join(`user_${userId}`);
+
+            emitSuccess(
+                this.socket,
+                'authorized',
+                {
+                    userId,
+                    username: user.username,
+                    room: `user_${userId}`
+                },
+                'Socket authorized successfully'
+            );
+        } catch (err) {
+            emitError(this.socket, 'authorizeError', err.message);
+        }
     }
 
     async handleCheckActiveSession(data = {}) {

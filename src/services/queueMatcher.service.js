@@ -447,7 +447,7 @@ class QueueMatcherService {
         );
 
         if (result.status === 'seated' && io) {
-          io.to(entry.playerId.toString()).emit('callJoinTable', {
+          io.to(`user_${entry.playerId.toString()}`).emit('callJoinTable', {
             message: 'Table ready, please join',
             status: true,
             data: {
