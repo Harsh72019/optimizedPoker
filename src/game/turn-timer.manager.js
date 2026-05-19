@@ -81,7 +81,9 @@ class TurnTimerManager {
       // Emit playerTurn to specific player
       emitSuccess(this.io.to(tableId), 'currentPlayerTurn', { playerId }, 'Current turn');
       
-      if (tablePlayer?.socketId) {
+      if (tablePlayer?.isBot) {
+        // Bots do not have live client sockets; botManager handles their turn.
+      } else if (tablePlayer?.socketId) {
         emitSuccess(this.io.to(tablePlayer.socketId), 'playerTurn', playerTurnData, `${playerTurnData.username}, it's your turn to act.`);
       } else {
         console.error(`❌ [TIMER DEBUG] No socketId found for player ${playerId}`);

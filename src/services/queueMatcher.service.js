@@ -200,7 +200,10 @@ class QueueMatcherService {
   async findEligibleTable(playerId, subTier) {
     
     const tablesResult = await mongoHelper.find(mongoHelper.COLLECTIONS.TABLES, {
-      subTierId: subTier._id
+      subTierId: subTier._id,
+      isPrivate: { $ne: true },
+      privateTableId: { $exists: false },
+      isTournament: { $ne: true }
     });
     
     const tables = tablesResult.data || [];

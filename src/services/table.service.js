@@ -1099,7 +1099,12 @@ const findTableWithVacancies = async (playerCount, tableTypeId, userId = null) =
 
         // Use table pool service to get available table
         const tablePoolService = require('./tablePool.service');
-        const table = await tablePoolService.getAvailableTable(tableTypeId, playerCount, userId);
+        let table = await tablePoolService.getAvailableTable(tableTypeId, playerCount, userId);
+
+        if (table && (table.isPrivate || table.privateTableId || table.isTournament)) {
+            console.warn(`⚠️ [findTableWithVacancies] Ignoring managed table ${table._id} in regular matchmaking flow`);
+            table = null;
+        }
 
         if (!table) {
             console.log(`❌ [findTableWithVacancies] No suitable table found`);
@@ -2461,6 +2466,9 @@ const findTableWithVacanciesInSubTier = async(playerCount, tableTypeId, subTierI
       // Find tables in this sub-tier using mongoHelper
       const tablesResult = await mongoHelper.find(mongoHelper.COLLECTIONS.TABLES, {
         subTierId: subTierId,
+        isPrivate: { $ne: true },
+        privateTableId: { $exists: false },
+        isTournament: { $ne: true },
         'status': { $in: ['waitingForPlayers', 'gameOngoing', 'in-use'] }
       });
 

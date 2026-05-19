@@ -1,6 +1,15 @@
 const mongoHelper = require('../models/customdb');
 
 class ReputationService {
+  isBotPlayerId(playerId) {
+    if (!playerId) {
+      return false;
+    }
+
+    const normalizedId = playerId?.toString?.() || String(playerId);
+    return normalizedId.startsWith('bot_');
+  }
+
   determineInitialTierByDeposit(depositAmount) {
     if (depositAmount >= 100) return 'Dog';
     if (depositAmount >= 34) return 'Cat';
@@ -115,6 +124,10 @@ class ReputationService {
 
   async onPlayerLeave(playerId, tableId, handsPlayed, reason = "NORMAL") {
     console.log(`🎯 [onPlayerLeave] ENTRY - playerId: ${playerId}, handsPlayed: ${handsPlayed}, reason: ${reason}`);
+
+    if (this.isBotPlayerId(playerId)) {
+      return;
+    }
     
     const playerResult = await mongoHelper.findById(mongoHelper.COLLECTIONS.USERS, playerId);
     const player = playerResult.data;
