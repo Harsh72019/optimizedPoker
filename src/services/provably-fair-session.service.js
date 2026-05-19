@@ -173,7 +173,11 @@ class ProvablyFairSessionService {
   }
 
   async removePlayer(tableId, playerId) {
-    const tableState = await tableManager.getTable(tableId);
+    const tableState = await tableManager.getLiveTable(tableId);
+    if (!tableState) {
+      return;
+    }
+
     const fairnessState = this.ensureFairnessState(tableState);
     const normalizedPlayerId = this.getPlayerId(playerId);
     delete fairnessState.nextCommitments[normalizedPlayerId];

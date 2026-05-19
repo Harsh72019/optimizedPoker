@@ -262,10 +262,36 @@ class ConnectionHandler {
             }
 
             const currentTableState = await tableManager.getTable(finalTableId);
-            const existingPlayer = currentTableState.players.find(p => p.userId === userId);
+            let existingPlayer = currentTableState.players.find(p => p.userId === userId);
+            let isReconnectEligible = false;
 
-            // Use chipsInPlay if provided, otherwise buyIn. Reconnects may omit both.
-            const finalBuyIn = chipsInPlay || buyIn || existingPlayer?.chips;
+            if (existingPlayer) {
+                const isSameSocketSession = existingPlayer.socketId === this.socket.id;
+                const hasLiveExistingSocket = !!existingPlayer.socketId
+                    && this.io.sockets.sockets.has(existingPlayer.socketId);
+
+                isReconnectEligible = !!existingPlayer.disconnected || isSameSocketSession;
+
+                if (!isReconnectEligible) {
+                    if (hasLiveExistingSocket) {
+                        throw new Error('You are already seated at this table from another active connection');
+                    }
+
+                    // Stale "connected" seats must be cleared so a fresh join is charged again.
+                    await tableManager.removePlayer(finalTableId, userId);
+                    await provablyFairSessionService.removePlayer(finalTableId, userId);
+                    this.syncPlayerToMongoTable(finalTableId, userId, 'leave').catch(err =>
+                        console.error('Failed to clear stale seat from MongoDB:', err.message)
+                    );
+
+                    const refreshedTableState = await tableManager.getTable(finalTableId);
+                    existingPlayer = refreshedTableState.players.find(p => p.userId === userId);
+                    isReconnectEligible = !!existingPlayer?.disconnected;
+                }
+            }
+
+            // Use chipsInPlay if provided, otherwise buyIn. True reconnects may omit both.
+            const finalBuyIn = chipsInPlay || buyIn || (isReconnectEligible ? existingPlayer?.chips : null);
 
             if (!finalBuyIn) {
                 throw new Error('No buyIn or chipsInPlay provided');
@@ -290,7 +316,7 @@ class ConnectionHandler {
                 );
             }
 
-            if (!existingPlayer) {
+            if (!isReconnectEligible) {
                 await this.assertNoCooldownConflictForTable(finalTableId, userId);
             }
             
@@ -311,11 +337,11 @@ class ConnectionHandler {
                 throw new Error(`Buy-in must be between ${minBuyIn} and ${maxBuyIn}`);
             }
 
-            if (!existingPlayer) {
-                    const walletIntegrationService = require('../../services/wallet-integration.service');
-                    await walletIntegrationService.chargeBuyInToTable(userId, finalBuyIn, finalTableId, table, {
-                        paymentContext: 'NORMAL_TABLE_JOIN'
-                    });
+            if (!isReconnectEligible) {
+                const walletIntegrationService = require('../../services/wallet-integration.service');
+                await walletIntegrationService.chargeBuyInToTable(userId, finalBuyIn, finalTableId, table, {
+                    paymentContext: 'NORMAL_TABLE_JOIN'
+                });
             }
 
             const { tableState, isReconnect } = await tableManager.seatPlayer(
