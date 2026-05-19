@@ -151,7 +151,6 @@ class ConnectionHandler {
             if (!gameState) {
                 await tableManager.removePlayer(tableId, userId);
                 await require('../../services/provably-fair-session.service').removePlayer(tableId, userId);
-                console.log(`🧹 [DISCONNECT] Removed ${userId} from fairness state for table ${tableId}`);
                 this.orchestrator.cancelWaiting(tableId);
                 this.orchestrator.cancelRestart(tableId);
                 await this.orchestrator.checkPrivateTableCompletion(tableId, 'TABLE_EMPTIED_BEFORE_HAND');
@@ -175,12 +174,10 @@ class ConnectionHandler {
             await require('../../state/game-state').updateGame(tableId, gameState);
 
             if (gameState.currentPlayerId === userId) {
-                console.log(`🔄 Player ${userId} disconnected on their turn - auto folding`);
                 const PlayerActionService = require('../../game/player-action.service');
                 const actionService = new PlayerActionService(this.io, this.orchestrator.timerManager, this.orchestrator);
                 await actionService.handle(tableId, userId, 'fold');
             } else {
-                console.log(`⚠ Player ${userId} disconnected - will fold on] their turn`);
                 await require('../../state/game-state').updateGame(tableId, gameState);
             }
 
@@ -219,14 +216,12 @@ class ConnectionHandler {
                             }
                         }
                         
-                        console.log(`🔌 [PRIVATE DISCONNECT] Updated privateTableInfo for all players in room private_table_${privateTableId}`);
                     }
                 } catch (error) {
                     console.error('Failed to update private table info on disconnect:', error.message);
                 }
             }
 
-            console.log(`⚠ ${userId} disconnected`);
 
         } catch (err) {
             console.error('Disconnect error:', err.message);
@@ -260,7 +255,6 @@ class ConnectionHandler {
                 }
                 
                 finalTableId = tableResult.data[0]._id.toString();
-                console.log(`🔗 Resolved blockChainTableId ${blockChainTableId} to tableId ${finalTableId}`);
             }
 
             if (!finalTableId) {
@@ -322,7 +316,6 @@ class ConnectionHandler {
                     await walletIntegrationService.chargeBuyInToTable(userId, finalBuyIn, finalTableId, table, {
                         paymentContext: 'NORMAL_TABLE_JOIN'
                     });
-                    console.log(`💰 [BLOCKCHAIN] Confirmed transfer for ${finalBuyIn} chips to table ${finalTableId}`);
             }
 
             const { tableState, isReconnect } = await tableManager.seatPlayer(
@@ -348,7 +341,6 @@ class ConnectionHandler {
             let gameState = await require('../../state/game-state').getGame(finalTableId);
             const activeSeatedCount = tableState.players.filter(p => !p.disconnected).length;
             if (gameState && (activeSeatedCount < 2 || tableStatus === 'IDLE')) {
-                console.log(`🧹 [JOIN] Clearing stale gameState for ${finalTableId}: status=${tableStatus}, activeSeatedCount=${activeSeatedCount}, phase=${gameState.phase}`);
                 await require('../../state/game-state').deleteGame(finalTableId);
                 gameState = null;
             }
@@ -371,20 +363,16 @@ class ConnectionHandler {
                 emitSuccess(this.io.to(finalTableId), 'playerJoined', formattedData, `${user.username} joined`);
                 const seatedCount = tableState.players.length;
                 await this.orchestrator.onPlayerSeated(finalTableId, seatedCount);
-                console.log(`👤 ${userId} seated at table ${finalTableId}`);
             } else {
-                console.log(`🔄 ${userId} reconnected to table ${finalTableId}`);
                 
                 // Check if we need to start waiting timer
                 const seatedCount = tableState.players.filter(p => !p.disconnected).length;
                 if (seatedCount >= 2 && !gameState) {
-                    console.log(`⏳ Triggering waiting timer after reconnect`);
                     await this.orchestrator.onPlayerSeated(finalTableId, seatedCount);
                 }
                 
                 // If game is active and it's player's turn, restart timer
                 if (gameState && gameState.currentPlayerId === userId) {
-                    console.log(`⏱️ Restarting timer for reconnected player ${userId}`);
                     this.orchestrator.timerManager.startTimer(finalTableId, userId);
                 }
             }
@@ -420,11 +408,9 @@ class ConnectionHandler {
                     }
                 }
                 
-                console.log(`🎮 Sent mid-game state to ${userId}: cards=${player?.cards?.length || 0}, board=${gameState.boardCards?.length || 0}`);
             }
 
         } catch (err) {
-            console.log(err)
             emitError(this.socket, 'unableToJoin', err.message);
         }
     }
@@ -475,7 +461,6 @@ class ConnectionHandler {
                 emitSuccess(this.io.to(tableId), 'playerJoined', formattedData, `${user.username} joined tournament table`);
                 const seatedCount = tableState.players.length;
                 await this.orchestrator.onPlayerSeated(tableId, seatedCount);
-                console.log(`ðŸ† [TOURNAMENT] ${userId} seated at tournament ${tournamentId} table ${tableId}`);
             } else if (gameState && gameState.currentPlayerId === userId) {
                 this.orchestrator.timerManager.startTimer(tableId, userId);
             }
@@ -556,7 +541,6 @@ class ConnectionHandler {
                         privateTableId,
                         { registeredPlayers: updatedRegisteredPlayers }
                     );
-                    console.log(`💰 [PRIVATE BLOCKCHAIN] Confirmed transfer for ${finalBuyIn} chips to table ${underlyingTableId}`);
             }
 
             const { tableState, isReconnect } = await tableManager.seatPlayer(
@@ -610,17 +594,13 @@ class ConnectionHandler {
                 // Use tableState from seatPlayer() which has the correct cumulative count
                 const seatedCount = tableState.players.length;
                 
-                console.log(`🎮 [PRIVATE JOIN DEBUG] About to call onPlayerSeated for table ${underlyingTableId} with ${seatedCount} players`);
-                console.log(`🎮 [PRIVATE JOIN DEBUG] Orchestrator exists: ${!!this.orchestrator}`);
                 
                 try {
                     await this.orchestrator.onPlayerSeated(underlyingTableId, seatedCount);
-                    console.log(`✅ [PRIVATE JOIN DEBUG] onPlayerSeated completed successfully`);
                 } catch (error) {
                     console.error(`❌ [PRIVATE JOIN DEBUG] onPlayerSeated failed:`, error.message);
                 }
                 
-                console.log(`🎮 [PRIVATE] ${userId} seated at private table ${privateTableId} -> underlying table ${underlyingTableId}`);
             }
             
             // Send mid-game state if needed
@@ -681,7 +661,6 @@ class ConnectionHandler {
             if (gameState) {
                 let player = gameState.players.find(p => p.id === userId);
                 if (player && gameState.currentPlayerId === userId) {
-                    console.log(`🚪 Player ${userId} leaving on their turn - auto folding`);
                     const PlayerActionService = require('../../game/player-action.service');
                     const actionService = new PlayerActionService(this.io, this.orchestrator.timerManager, this.orchestrator);
                     await actionService.handle(tableId, userId, 'fold');
@@ -710,7 +689,6 @@ class ConnectionHandler {
 
             const tableState = await tableManager.removePlayer(tableId, userId);
             await require('../../services/provably-fair-session.service').removePlayer(tableId, userId);
-            console.log(`🧹 [LEAVE] Removed ${userId} from fairness state for table ${tableId}`);
             await this.orchestrator.markPrivateTablePlayerLeaving(tableId, userId);
 
             // Get full user document for walletAddress
@@ -718,7 +696,6 @@ class ConnectionHandler {
             const walletAddress = userDoc.success && userDoc.data ? userDoc.data.walletAddress : null;
             
             if (isPrivateSng || isTournamentTable) {
-                console.log(`🔒 [PRIVATE SNG] Skipping leave cashout for ${userId} on table ${tableId}; chips remain in tournament settlement flow`);
             } else if (finalChips > 0 && walletAddress) {
                 const walletIntegrationService = require('../../services/wallet-integration.service');
                 walletIntegrationService.queuePlayerTableCashout(
@@ -733,9 +710,7 @@ class ConnectionHandler {
                 ).catch(err =>
                     console.error('💰 [BLOCKCHAIN] Withdrawal queue error:', err.message)
                 );
-                console.log(`💰 [BLOCKCHAIN] Queued cashout for ${finalChips} chips (async)`);
             } else {
-                console.log(`⚠️ [BLOCKCHAIN] Skipping withdrawal - chips: ${finalChips}, wallet: ${walletAddress ? 'present' : 'missing'}`);
             }
 
             // Sync to MongoDB TABLES.currentPlayers
@@ -752,20 +727,17 @@ class ConnectionHandler {
 
             const seatedCount = tableState.players.length;
             const status = await tableManager.getStatus(tableId);
-            console.log(`🚪 [LEAVE] Post-leave state for ${tableId}: status=${status}, seatedCount=${seatedCount}`);
 
             if (seatedCount < 2) {
                 this.orchestrator.cancelWaiting(tableId);
                 this.orchestrator.cancelRestart(tableId);
                 if (!isPrivateSng && !isTournamentTable) {
                     await require('../../state/game-state').deleteGame(tableId);
-                    console.log(`🧹 [LEAVE] Deleted stale gameState for ${tableId} because seatedCount dropped below 2`);
                 }
                 const completed = await this.orchestrator.checkPrivateTableCompletion(tableId, 'PLAYER_LEFT_WAITING_TABLE');
                 if (!completed) {
                     await tableManager.setStatus(tableId, 'IDLE');
                 }
-                console.log(`🛑 [LEAVE] Cleared pending hand timers for ${tableId} after ${userId} left`);
             }
             
             this.socket.leave(tableId);
@@ -781,7 +753,6 @@ class ConnectionHandler {
             const formattedData = this.formatTableData(updatedTableState, updatedGameState);
             emitSuccess(this.io.to(tableId), 'playerLeft', formattedData, 'Player left');
 
-            console.log(`👤 ${userId} left table ${tableId}`);
 
         } catch (err) {
             emitError(this.socket, 'unableToLeave', err.message);
@@ -793,7 +764,6 @@ class ConnectionHandler {
             const { token, amount } = data;
             const user = await verifyEventToken(token, this.socket);
             const tableId = this.socket.tableId;
-            console.log(tableId , "tableId in rebuy--------------", user.username);
             if (!tableId) {
                 emitError(this.socket, 'privateTableRebuyError', 'Not in a table');
                 return;
@@ -1048,7 +1018,6 @@ class ConnectionHandler {
                     lastActivityAt: new Date()
                 }
             );
-            console.log(`✅ Synced ${action} for ${userId} to MongoDB TABLES`);
         }
     }
 

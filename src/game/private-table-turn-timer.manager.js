@@ -29,7 +29,6 @@ class PrivateTableTurnTimerManager {
       if (!gameState) return;
 
       if (gameState.phase === 'SHOWDOWN' || gameState.phase === 'COMPLETED') {
-        console.log(`Skipping private timer for ${tableId} because hand is in ${gameState.phase}`);
         return;
       }
 
@@ -37,7 +36,6 @@ class PrivateTableTurnTimerManager {
       if (!player) return;
 
       if (player.status !== 'ACTIVE') {
-        console.log(`Skipping private timer for ${playerId} because status is ${player.status}`);
         return;
       }
 
@@ -54,11 +52,9 @@ class PrivateTableTurnTimerManager {
         timeBank = privateConfig.gameConfig.timer.timeBank;
         warningTime = privateConfig.gameConfig.timer.warningTime;
         
-        console.log(`⏱️ [PRIVATE TIMER] Using private table timer: ${timerSeconds}s (bank: ${timeBank}s)`);
       }
 
       if (player.disconnected) {
-        console.log(`🔄 Player ${playerId} is disconnected - auto folding`);
         await this.actionService.handle(tableId, playerId, 'fold');
         return;
       }
@@ -71,12 +67,10 @@ class PrivateTableTurnTimerManager {
           player, 
           gameState
         );
-        console.log(`🎯 [PRIVATE ACTIONS] Player ${playerId} | Stakes: ${validation.stakes} | Actions: ${validation.actions.join(', ')}`);
       } else {
         // Fall back to regular poker engine
         const PokerEngine = require('../engine/poker-engine');
         validation = PokerEngine.validateAction(player, gameState);
-        console.log(`🎯 Player ${playerId} turn | Actions: ${validation.options.join(', ')}`);
       }
 
       const tableState = await tableManager.getTable(tableId);
@@ -97,7 +91,6 @@ class PrivateTableTurnTimerManager {
       emitSuccess(this.io.to(tableId), 'currentPlayerTurn', { playerId }, 'Current turn');
       
       if (tablePlayer?.socketId) {
-        console.log(`🎯 Private table player turn data:`, JSON.stringify(playerTurnData, null, 2));
         emitSuccess(
           this.io.to(tablePlayer.socketId), 
           'playerTurn', 
@@ -111,7 +104,6 @@ class PrivateTableTurnTimerManager {
       /* ------------------------------------ */
 
       if (tablePlayer?.isBot) {
-        console.log(`🤖 Bot turn: ${playerId}`);
         await new Promise(r => setTimeout(r, 5000));
         await this.botManager.handleBotTurn(tableId, player, gameState);
         return; // NO TIMER
@@ -122,7 +114,6 @@ class PrivateTableTurnTimerManager {
       /* ------------------------------------ */
 
       if (player.isAway) {
-        console.log(`💤 Away auto-action: ${playerId}`);
         await new Promise(r => setTimeout(r, 5000));
         const autoAction = await this.awayManager.handleAwayTurn(tableId, player, gameState);
 
@@ -142,7 +133,6 @@ class PrivateTableTurnTimerManager {
       const warningTimeoutId = setTimeout(() => {
         const activeTimer = this.timers.get(tableId);
         if (!activeTimer || activeTimer.token !== timerToken) {
-          console.log(`[PRIVATE TIMER] Ignoring stale warning timer for ${playerId} at table ${tableId}`);
           return;
         }
         emitSuccess(
@@ -161,10 +151,8 @@ class PrivateTableTurnTimerManager {
       const timeoutId = setTimeout(async () => {
         const activeTimer = this.timers.get(tableId);
         if (!activeTimer || activeTimer.token !== timerToken) {
-          console.log(`[PRIVATE TIMER] Ignoring stale timer for ${playerId} at table ${tableId}`);
           return;
         }
-        console.log(`⏰ Private table timer expired for ${playerId}`);
         clearTimeout(warningTimeoutId);
 
         try {
@@ -222,28 +210,23 @@ class PrivateTableTurnTimerManager {
 
     const gameState = await gameStateManager.getGame(tableId);
     if (!gameState) {
-      console.log(`⚠️ No game state found for ${tableId}`);
       return;
     }
 
     if (gameState.phase === 'SHOWDOWN' || gameState.phase === 'COMPLETED') {
-      console.log(`Skipping private timeout for ${tableId} because hand is in ${gameState.phase}`);
       return;
     }
 
     if (gameState.currentPlayerId !== playerId) {
-      console.log(`⚠️ Not current player's turn. Current: ${gameState.currentPlayerId}, Timeout: ${playerId}`);
       return;
     }
 
     const player = gameState.players.find(p => p.id === playerId);
     if (!player) {
-      console.log(`⚠️ Player ${playerId} not found in game`);
       return;
     }
 
     if (player.status !== 'ACTIVE') {
-      console.log(`Skipping private timeout for ${playerId} because status is ${player.status}`);
       return;
     }
 
@@ -261,7 +244,6 @@ class PrivateTableTurnTimerManager {
         autoAction = 'check';
       }
       
-      console.log(`⏰ Private table auto-action for ${playerId}: ${autoAction} (stakes: ${privateConfig.gameConfig.stakes.type})`);
     } else {
       // Fall back to regular logic
       const PokerEngine = require('../engine/poker-engine');
@@ -271,7 +253,6 @@ class PrivateTableTurnTimerManager {
         autoAction = 'check';
       }
       
-      console.log(`⏰ Auto-action for ${playerId}: ${autoAction}`);
     }
 
     emitSuccess(this.io.to(tableId), 'playerTimeout', { playerId }, 'Player timeout');
@@ -339,7 +320,6 @@ class PrivateTableTurnTimerManager {
     const elapsed = Date.now() - timerInfo.startTime;
     
     if (elapsed >= timerInfo.duration && timeBank > 0) {
-      console.log(`⏰ [TIME BANK] Player ${playerId} using time bank: ${timeBank/1000}s`);
       
       // Clear existing timer
       clearTimeout(timerInfo.timeoutId);

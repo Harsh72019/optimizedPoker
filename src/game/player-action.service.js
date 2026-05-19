@@ -38,7 +38,6 @@ class PlayerActionService {
 
     async handle(tableId, playerId, action, amount = 0) {
 
-        console.log(`🎮 [ACTION] Player ${playerId} attempting ${action} ${amount || ''} at table ${tableId}`);
         const locked = await gameStateManager.acquireLock(tableId);
         if (!locked) throw new Error('Table busy');
 
@@ -49,7 +48,6 @@ class PlayerActionService {
             const gameState = await gameStateManager.getGame(tableId);
             if (!gameState) throw new Error('Game not found');
             if (gameState.phase === 'COMPLETED') {
-                console.log('🛑 Hand already completed. Ignoring action.');
                 return gameState;
             }
 
@@ -75,7 +73,6 @@ class PlayerActionService {
                 : this.normalizeAmount(action === 'call' ? actionPolicy.callAmount || 0 : amount);
 
             this.applyAction(gameState, player, action, amount, actionPolicy);
-            console.log(`✅ [ACTION APPLIED] ${action} by ${playerId}`);
 
             // Emit specific action events
             if (action === 'fold') {
@@ -104,18 +101,15 @@ class PlayerActionService {
             emitSuccess(this.io.to(tableId), 'playerActionEnded', { playerId, action }, 'Action ended');
 
             if (GameStateMachine.isBettingRoundComplete(gameState)) {
-                console.log(`🔄 [BETTING COMPLETE] Moving to next phase from ${gameState.phase}`);
                 emitSuccess(this.io.to(tableId), 'betsReset', { pot: gameState.pot }, 'Bets collected');
                 this.moveToNextPhase(gameState);
             } else {
-                console.log(`➡️ [NEXT PLAYER] Moving turn from ${playerId}`);
                 this.moveToNextPlayer(gameState);
             }
 
             await gameStateManager.updateGame(tableId, gameState);
             await require('../table/table-manager.service').syncFromGameState(tableId, gameState);
             const refreshedGameState = await gameStateManager.getGame(tableId);
-            console.log(`💾 [STATE SAVED] Phase: ${gameState.phase}, Pot: ${gameState.pot}`);
 
             tableState = await require('../table/table-manager.service').getTable(tableId);
             const formattedData = this.formatTableData(tableState, refreshedGameState);
@@ -130,12 +124,10 @@ class PlayerActionService {
             if (gameState.phase !== 'COMPLETED' && gameState.phase !== 'SHOWDOWN' && gameState.currentPlayerId) {
                 this.timerManager.startTimer(tableId, gameState.currentPlayerId, this.getTurnTimerSeconds(gameState));
             } else if (gameState.phase === 'COMPLETED') {
-                console.log(`🏁 [HAND COMPLETE] Starting cleanup`);
                 this.timerManager.clearTimer(tableId);
 
                 await require('../table/table-manager.service').syncFromGameState(tableId, gameState);
                 await this.orchestrator.onHandCompleted(tableId);
-                console.log(`✅ [CLEANUP DONE]`);
             }
             else {
                 this.timerManager.clearTimer(tableId);
@@ -236,14 +228,12 @@ class PlayerActionService {
 
         // Edge case: No active players left
         if (active.length === 0) {
-            console.log('⚠️ [NO ACTIVE PLAYERS] Moving to showdown');
             gameState.currentPlayerId = null;
             this.moveToNextPhase(gameState);
             return;
         }
         // If exactly one player can still act, give them the turn.
         if (active.length === 1) {
-            console.log(`[SINGLE ACTIVE PLAYER] Next to act: ${active[0].id}`);
             gameState.currentPlayerId = active[0].id;
             return;
         }
@@ -315,7 +305,6 @@ class PlayerActionService {
         const activePlayers = gameState.players.filter(p => p.status !== 'FOLDED');
 
         if (activePlayers.length === 1) {
-            console.log(`🏆 [WINNER] ${activePlayers[0].id} wins by fold`);
             const winner = activePlayers[0];
             const winAmount = this.normalizeAmount(gameState.pot);
             winner.chips = this.normalizeAmount(winner.chips + winAmount);
@@ -342,7 +331,6 @@ class PlayerActionService {
         }
 
         if (this.isAllInRunoutRequired(gameState)) {
-            console.log(`⚡ [ALL-IN RUNOUT] Auto-completing board`);
             gameState.currentPlayerId = null;
             this.animateRunoutAndShowdown(gameState).catch(error => {
                 console.error(`âŒ [ALL-IN RUNOUT] Failed for table ${gameState.tableId}:`, error);
@@ -357,7 +345,6 @@ class PlayerActionService {
         if (nextPhase === 'FLOP') {
             provablyFairService.burnCard(gameState, 'FLOP');
             gameState.boardCards.push(gameState.deck.pop(), gameState.deck.pop(), gameState.deck.pop());
-            console.log(`🃏 [FLOP] ${gameState.boardCards.slice(0, 3).join(', ')}`);
             emitSuccess(this.io.to(gameState.tableId), 'communityCardsDealt', 
                 gameState.boardCards, 'Flop dealt');
             
@@ -368,7 +355,6 @@ class PlayerActionService {
         if (nextPhase === 'TURN') {
             provablyFairService.burnCard(gameState, 'TURN');
             gameState.boardCards.push(gameState.deck.pop());
-            console.log(`🃏 [TURN] ${gameState.boardCards[3]}`);
             emitSuccess(this.io.to(gameState.tableId), 'communityCardsDealt', 
                 gameState.boardCards, 'Turn dealt');
             
@@ -379,7 +365,6 @@ class PlayerActionService {
         if (nextPhase === 'RIVER') {
             provablyFairService.burnCard(gameState, 'RIVER');
             gameState.boardCards.push(gameState.deck.pop());
-            console.log(`🃏 [RIVER] ${gameState.boardCards[4]}`);
             emitSuccess(this.io.to(gameState.tableId), 'communityCardsDealt', 
                 gameState.boardCards, 'River dealt');
             
@@ -388,7 +373,6 @@ class PlayerActionService {
         }
 
         if (nextPhase === 'SHOWDOWN') {
-            console.log(`🎰 [SHOWDOWN] Evaluating hands`);
             gameState.currentPlayerId = null;
             this.handleShowdown(gameState);
             return;
@@ -400,13 +384,11 @@ class PlayerActionService {
         
         // Edge case: No active player to act
         if (!gameState.currentPlayerId) {
-            console.log('⚠️ [NO PLAYER TO ACT] Moving to showdown');
             gameState.currentPlayerId = null;
             this.handleShowdown(gameState);
             return;
         }
         
-        console.log(`🔄 [NEW ROUND] ${gameState.phase} begins`);
     }
 
     async formatPlayerTurnData(gameState, playerId, tableState) {
@@ -588,16 +570,12 @@ class PlayerActionService {
             gameState.streetBets[id] = 0;
         }
 
-        console.log(`💰 [SHOWDOWN] Pot: ${gameState.pot}`);
-        console.log(`💰 [CONTRIBUTIONS]`, gameState.totalContributions);
         
         const results = PokerEngine.evaluateShowdown(gameState);
-        console.log(`💰 [SHOWDOWN RESULTS] ${results.length} winner(s)`);
 
         results.forEach(r => {
             const winner = gameState.players.find(p => p.id === r.playerId);
             winner.chips = this.normalizeAmount(winner.chips + r.amount);
-            console.log(`💵 Player ${r.playerId} wins ${r.amount} with ${r.handName || 'High Card'}`);
         });
 
         // Get table state for usernames
@@ -641,13 +619,6 @@ class PlayerActionService {
             emitSuccess(this.io.to(gameState.tableId), 'winners', formattedWinners, 'Winners');
         }, 3000);
 
-        console.log("🎰 Players at showdown:",
-            gameState.players.map(p => ({
-                id: p.id,
-                status: p.status,
-                cards: p.cards
-            }))
-        );
         gameState.phase = 'COMPLETED';
         gameState.pot = 0;
     }
@@ -658,7 +629,6 @@ class PlayerActionService {
 
         // Edge case: No active players
         if (active.length === 0) {
-            console.log('⚠️ [NO ACTIVE PLAYERS] Cannot determine first player');
             return null;
         }
 
@@ -694,7 +664,6 @@ class PlayerActionService {
     formatTableData(tableState, gameState) {
         const formattedPlayers = tableState.players.map(player => {
             const gamePlayer = gameState?.players.find(p => p.id === player.userId);
-            console.log(`[DEBUG] Player ${player.userId} - gamePlayer status: ${gamePlayer?.status}`);
             return {
                 _id: player.userId,
                 username: player.username,

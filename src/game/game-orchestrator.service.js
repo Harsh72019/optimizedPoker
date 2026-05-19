@@ -96,7 +96,6 @@ class GameOrchestrator {
         try {
             const privateConfig = await this.getPrivateTableConfig(tableId);
             if (!privateConfig?.gameConfig?.buyIn?.allowRebuy) {
-                console.log(`💸 [PRIVATE REBUY] Rebuy disabled for table ${tableId}`);
                 return false;
             }
 
@@ -112,101 +111,12 @@ class GameOrchestrator {
             const shouldPause = playersForRebuy.some(
                 player => !player.disconnected && Number(player.chips || 0) < rebuyThreshold
             );
-            console.log(`💸 [PRIVATE REBUY] Rebuy inspection for table ${tableId}:`, {
-                shouldPause,
-                rebuyThreshold,
-                players: playersSnapshot,
-            });
-            return shouldPause;
-        } catch (error) {
-            console.error(`âŒ [PRIVATE REBUY] Failed to inspect table ${tableId}:`, error.message);
-            return false;
-        }
-    }
-
-    async startPrivateRebuyWindow(tableId) {
-        try {
-            this.clearRestartTimer(tableId);
-            this.clearPrivateRebuyWindow(tableId);
-
-            const privateConfig = await this.getPrivateTableConfig(tableId);
-            if (!privateConfig?.gameConfig?.buyIn?.allowRebuy) {
-                await this.prepareNextHand(tableId);
-                return;
-            }
-
-            const rebuyThreshold = this.getPrivateRebuyThreshold(privateConfig.gameConfig);
-            const playersForRebuy = await this.getPrivateRebuyCandidates(tableId);
-            const pendingPlayers = playersForRebuy.filter(
-                player => !player.disconnected && Number(player.chips || 0) < rebuyThreshold
-            );
-            console.log(`💸 [PRIVATE REBUY] Starting rebuy window evaluation for table ${tableId}:`, {
-                players: playersForRebuy.map(player => ({
-                    userId: player.userId,
-                    username: player.username,
-                    chips: Number(player.chips || 0),
-                    disconnected: !!player.disconnected,
-                    socketId: player.socketId,
-                    gameStatus: player.gameStatus,
-                })),
-                pendingPlayers: pendingPlayers.map(player => ({
-                    userId: player.userId,
-                    username: player.username,
-                    chips: Number(player.chips || 0),
-                })),
-            });
-
-            if (pendingPlayers.length === 0) {
-                console.log(`💸 [PRIVATE REBUY] No pending rebuy players found for table ${tableId}; preparing next hand`);
-                await this.prepareNextHand(tableId);
-                return;
-            }
-
-            const seconds = 300;
-            const minAmount = privateConfig.gameConfig.buyIn.min;
-            const maxAmount = privateConfig.gameConfig.buyIn.max;
-
-            const timeout = setTimeout(async () => {
-                await this.resolvePrivateRebuyWindow(tableId, 'timeout');
-            }, seconds * 1000);
-
-            this.privateRebuyWindows.set(tableId, {
-                timeout,
-                startedAt: Date.now(),
-                seconds,
-                players: new Map(
-                    pendingPlayers.map(player => [
-                        player.userId,
-                        {
-                            socketId: player.socketId,
-                            username: player.username,
-                            status: 'pending',
-                        },
-                    ])
-                ),
-            });
-
-            emitSuccess(
-                this.io.to(tableId),
-                'waitingCountdown',
-                {
-                    seconds,
-                    reason: 'PRIVATE_REBUY_WINDOW',
-                    pendingPlayers: pendingPlayers.map(player => ({
-                        playerId: player.userId,
-                        username: player.username,
-                    })),
-                },
-                'Waiting for rebuy decisions'
-            );
 
             for (const player of pendingPlayers) {
                 if (!player.socketId) {
-                    console.log(`⚠️ [PRIVATE REBUY] Skipping rebuyRequired emit for ${player.username} (${player.userId}) because socketId is missing`);
                     continue;
                 }
 
-                console.log(`📣 [PRIVATE REBUY] Emitting rebuyRequired to ${player.username} (${player.userId}) on socket ${player.socketId}`);
 
                 emitSuccess(
                     this.io.to(player.socketId),
@@ -477,7 +387,6 @@ class GameOrchestrator {
 
             const cooldownService = require('../services/cooldown.service');
             await cooldownService.updateCooldownsOnSeat(tableId, tierId, participantIds);
-            console.log(`Cooldown recorded for ${participantIds.length} players at table ${tableId}`);
         } catch (error) {
             console.error(`Failed to record cooldowns for table ${tableId}:`, error.message);
         }
@@ -495,27 +404,22 @@ class GameOrchestrator {
     }
     async onPlayerSeated(tableId, seatedCount) {
         try {
-            console.log(`🎮 [ORCHESTRATOR] onPlayerSeated called for table ${tableId} with ${seatedCount} players`);
             
             if (seatedCount < 2) {
-                console.log(`🎮 [ORCHESTRATOR] Not enough players (${seatedCount} < 2) - skipping`);
                 return;
             }
 
             const gameState = await gameStateManager.getGame(tableId);
 
             if (gameState) {
-                console.log(`🔄 Player joined mid-game at table ${tableId} - will join next hand`);
                 return;
             }
 
             if (this.waitingTimers.has(tableId)) {
-                console.log(`⏳ Waiting timer already active for table ${tableId} - skipping`);
                 return;
             }
 
             const waitSeconds = 8;
-            console.log(`⏳ Starting ${waitSeconds}s waiting for table ${tableId}`);
 
             emitSuccess(this.io.to(tableId), 'waitingCountdown', { seconds: waitSeconds }, 'Waiting countdown');
 
@@ -618,7 +522,6 @@ class GameOrchestrator {
             const tableDoc = await mongoHelper.findById(mongoHelper.COLLECTIONS.TABLES, tableId);
             
             if (tableDoc.success && tableDoc.data && tableDoc.data.privateTableId) {
-                console.log(`💰 [FINANCIAL] Private table detected: ${tableDoc.data.privateTableId}`);
                 
                 // Get private table details for financial integration
                 const privateTableDoc = await mongoHelper.findById(
@@ -657,7 +560,6 @@ class GameOrchestrator {
     async onHandCompleted(tableId) {
         try {
             const completedGameState = await gameStateManager.getGame(tableId);
-            console.log(`🏁 [HAND COMPLETE] Snapshot phase for ${tableId}: ${completedGameState?.phase}`);
             if (completedGameState) {
                 const fairnessReveal = await provablyFairSessionService.completeHand(tableId, completedGameState);
                 if (fairnessReveal) {
@@ -679,7 +581,6 @@ class GameOrchestrator {
             await handPersister.persist(tableId, completedGameState);
             await this.recordCooldownForCompletedHand(tableId);
             await tableManager.setStatus(tableId, 'SHOWDOWN_DELAY');
-            console.log(`🏁 Hand completed at table ${tableId}`);
             emitSuccess(this.io.to(tableId), 'showdownDelay', { seconds: 10 }, 'Showdown delay');
 
             // Increment handsPlayed for all connected players
@@ -687,7 +588,6 @@ class GameOrchestrator {
             sockets.forEach(socket => {
                 if (socket.handsPlayed !== undefined) {
                     socket.handsPlayed++;
-                    console.log(`🎴 Player ${socket.user?._id} hands: ${socket.handsPlayed}`);
                 }
             });
 
@@ -719,69 +619,6 @@ class GameOrchestrator {
             }
 
             const shouldPauseForRebuy = await this.shouldPauseForPrivateRebuy(tableId);
-            console.log(`💸 [PRIVATE REBUY] Post-hand decision for table ${tableId}:`, {
-                shouldPauseForRebuy,
-            });
-
-            // 🆕 Check if this is the final hand (SNG completion)
-            const shouldComplete = await this.checkGameCompletion(tableId);
-            console.log(`🏁 [HAND COMPLETE] Completion check for table ${tableId}:`, {
-                shouldComplete,
-                shouldPauseForRebuy,
-            });
-            
-            if (shouldComplete && !shouldPauseForRebuy) {
-                await this.handleGameCompletion(tableId);
-                return;
-            }
-
-            const timeout = setTimeout(async () => {
-                if (shouldPauseForRebuy) {
-                    await this.startPrivateRebuyWindow(tableId);
-                    return;
-                }
-
-                emitSuccess(this.io.to(tableId), 'newRoundStarting', { seconds: 8 }, 'New round starting');
-                await this.prepareNextHand(tableId);
-            }, 8000);
-
-            await tableManager.setStatus(tableId, 'WAITING');
-            this.restartTimers.set(tableId, timeout);
-        } catch (err) {
-            console.error(`❌ onHandCompleted error for ${tableId}:`, err.message);
-        }
-    }
-
-    /* ------------------------------------------------ */
-    /* CHECK GAME COMPLETION                           */
-    /* ------------------------------------------------ */
-    async checkGameCompletion(tableId) {
-        try {
-            const gameState = await gameStateManager.getGame(tableId);
-            const playersWithChips = gameState
-                ? gameState.players.filter(p => p.chips > 0 && !p.disconnected)
-                : (await tableManager.getTable(tableId)).players.filter(p => p.chips > 0 && !p.disconnected);
-            
-            // SNG is complete when only 1 player has chips
-            return playersWithChips.length <= 1;
-        } catch (err) {
-            console.error(`❌ checkGameCompletion error:`, err.message);
-            return false;
-        }
-    }
-
-    async checkPrivateTableCompletion(tableId, reason = 'PRIVATE_TABLE_CONDITION_MET') {
-        try {
-            const tableResult = await mongoHelper.findById(mongoHelper.COLLECTIONS.TABLES, tableId);
-            if (!tableResult.success || !tableResult.data?.privateTableId) {
-                return false;
-            }
-
-            const tableDoc = tableResult.data;
-            const privateTableResult = await mongoHelper.findById(
-                mongoHelper.COLLECTIONS.PRIVATE_TABLES,
-                tableDoc.privateTableId
-            );
             
 
             if (!privateTableResult.success || !privateTableResult.data) {
@@ -800,42 +637,6 @@ class GameOrchestrator {
                 player => Number(player.chips || 0) > 0 && !player.disconnected
             );
 
-            console.log(`🏁 [PRIVATE TABLE CHECK] Completion inspection for ${tableId}:`, {
-                reason,
-                privateTableStatus: privateTable.status,
-                tableStatus: tableState.status,
-                playersRemaining: activePlayers.length,
-                hasGameState: !!gameState,
-            });
-
-            if (activePlayers.length <= 1) {
-                await this.handleGameCompletion(tableId, { reason });
-                return true;
-            }
-
-            return false;
-        } catch (error) {
-            console.error(`❌ [PRIVATE TABLE CHECK] Error checking completion for ${tableId}:`, error.message);
-            return false;
-        }
-    }
-
-    /* ------------------------------------------------ */
-    /* HANDLE GAME COMPLETION (FINANCIAL SETTLEMENT)  */
-    /* ------------------------------------------------ */
-    async handleGameCompletion(tableId, options = {}) {
-        try {
-            console.log(`🏆 [GAME COMPLETE] Processing completion for table ${tableId}`);
-            
-            const gameState = await gameStateManager.getGame(tableId);
-            const tableState = await tableManager.getTable(tableId);
-            const tableDoc = await mongoHelper.findById(mongoHelper.COLLECTIONS.TABLES, tableId);
-            const completionReason = options.reason || 'NORMAL_COMPLETION';
-            const seatedPlayerIds = new Set(
-                (tableState.players || [])
-                    .map(player => player.userId?.toString?.() || player.id?.toString?.() || player.userId || player.id)
-                    .filter(Boolean)
-            );
 
             const playersForStandings = (gameState?.players || tableState.players || [])
                 .map(player => {
@@ -875,7 +676,6 @@ class GameOrchestrator {
             
             // 🆕 Execute financial settlement if this is a private table
             if (tableDoc.success && tableDoc.data && tableDoc.data.privateTableId) {
-                console.log(`💰 [SETTLEMENT] Processing settlement for private table`);
                 
                 // Get private table details for settlement
                 const privateTableDoc = await mongoHelper.findById(
@@ -893,7 +693,6 @@ class GameOrchestrator {
                         privateTable.settlementCompleted && privateTable.settlementGameId === tableId;
 
                     if (settlementAlreadyMarkedForThisGame) {
-                        console.log(`💰 [SETTLEMENT] Skipping duplicate settlement for private table ${privateTable._id}`);
                     }
 
                     const financialResult = await financialIntegrationService.onGameCompleted({
@@ -1242,7 +1041,6 @@ class GameOrchestrator {
             await tableManager.clearPlayers(tableId, 'COMPLETED');
             tableTimerService.clearTableTimer(tableId);
             
-            console.log(`✅ [CLEANUP] Game ${tableId} cleaned up successfully`);
         } catch (err) {
             console.error(`❌ cleanupCompletedGame error:`, err.message);
         }
@@ -1287,12 +1085,10 @@ class GameOrchestrator {
                 ).length;
 
             if (seatedCount < 2) {
-                console.log(`🔄 Not enough players to restart`);
                 await this.handleGameCompletion(tableId, { reason: 'INSUFFICIENT_PLAYERS_FOR_NEXT_HAND' });
                 return;
             }
 
-            console.log(`🔁 Restarting next hand...`);
             await this.startHand(tableId);
         } catch (err) {
             console.error(`❌ prepareNextHand error for ${tableId}:`, err.message);

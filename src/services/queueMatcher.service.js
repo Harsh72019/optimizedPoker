@@ -42,7 +42,6 @@ class QueueMatcherService {
 
     // 2. Check funds
     const required = subTier.tableConfig.bb * 100; // 100 BB requirement
-    console.log(player.chips , required);
     // if (player.chips < required) {
     //   throw new ApiError(402, 'insufficient_funds');
     // }
@@ -98,7 +97,6 @@ class QueueMatcherService {
           data: result.data
         };
       } else {
-        console.log(`[QUEUE] Reserve exhausted for player ${playerId}, keeping in queue`);
         position = await queueService.getQueuePosition(playerId, subTierId);
         return { 
           status: 'queued', 
@@ -200,44 +198,36 @@ class QueueMatcherService {
   }
 
   async findEligibleTable(playerId, subTier) {
-    console.log(`🔍 Finding eligible table for player ${playerId} in subTier ${subTier._id}`);
     
     const tablesResult = await mongoHelper.find(mongoHelper.COLLECTIONS.TABLES, {
       subTierId: subTier._id
     });
     
     const tables = tablesResult.data || [];
-    console.log(`📊 Found ${tables.length} tables with subTierId ${subTier._id}`);
 
     for (const table of tables) {
       const seatSnapshot = await this.getLiveSeatSnapshot(table);
-      console.log(`Checking table ${table._id}: ${seatSnapshot.seatedCount}/${subTier.tableConfig.maxSeats} players (${seatSnapshot.source})`);
       
       // Check capacity
       if (seatSnapshot.seatedCount >= subTier.tableConfig.maxSeats) {
-        console.log(`❌ Table ${table._id} is full`);
         continue;
       }
       if (seatSnapshot.humanUserIds.includes(playerId.toString())) {
-        console.log(`Skipping table ${table._id}; player ${playerId} is already seated there`);
         continue;
       }
       
       // Get seated user IDs from player records (exclude bots)
       const seatedUserIds = seatSnapshot.humanUserIds.filter(userId => userId !== playerId.toString());
 
-      console.log(`👥 Seated user IDs (excluding requester): ${seatedUserIds.length}`, seatedUserIds);
 
       const hasBlockedConflict = await userService.hasBlockedUserConflict(playerId, seatedUserIds);
       if (hasBlockedConflict) {
-        console.log(`❌ Table ${table._id} has blocked user conflict`);
         continue;
       }
 
       // Check cooldown conflicts
       const hasConflict = await cooldownService.hasCooldownConflict(playerId, seatedUserIds);
       if (hasConflict) {
-        console.log(`❌ Table ${table._id} has cooldown conflict`);
         continue;
       }
 
@@ -252,16 +242,13 @@ class QueueMatcherService {
           }
         }
         if (mutualConflict) {
-          console.log(`❌ Table ${table._id} has mutual cooldown conflict`);
           continue;
         }
       }
 
-      console.log(`✅ Found eligible table ${table._id}`);
       return table; // Found eligible table
     }
 
-    console.log(`❌ No eligible tables found`);
     return null; // No eligible tables
   }
 
@@ -461,7 +448,6 @@ class QueueMatcherService {
               userData: result.data.userData
             }
           });
-          console.log(`✅ Notified player ${entry.playerId} to join table ${result.tableId}`);
         }
       } catch (error) {
         console.error(`❌ Error processing queued player ${entry.playerId}:`, error.message);

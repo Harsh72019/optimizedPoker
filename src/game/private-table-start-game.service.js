@@ -65,7 +65,6 @@ class PrivateTableStartGameService {
             const smallBlindAmount = privateConfig.gameConfig.blinds.small;
             const bigBlindAmount = privateConfig.gameConfig.blinds.big;
 
-            console.log(`🎴 [PRIVATE BLINDS] SB: ${smallBlindAmount}, BB: ${bigBlindAmount}, Type: ${privateConfig.gameConfig.stakes.type}`);
 
             gameState = StartGameBuilder.buildInitialState({
                 tableId,
@@ -104,7 +103,6 @@ class PrivateTableStartGameService {
                 });
 
                 gameState.totalAntes = antesResult.totalAntes;
-                console.log(`🎯 [ANTES] Posted ${antesResult.totalAntes} in antes`);
             }
 
             // Deduct blinds

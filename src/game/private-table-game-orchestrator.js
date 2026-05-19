@@ -30,17 +30,14 @@ class PrivateTableGameOrchestrator {
    */
   async startGame(tableId, fairnessContext = null) {
     try {
-      console.log(`🎮 [ORCHESTRATOR] Starting game for table ${tableId}`);
       
       // Check if this is a private table
       const isPrivateTable = await this.isPrivateTable(tableId);
       
       if (isPrivateTable) {
-        console.log(`🔒 [ORCHESTRATOR] Detected private table, using regular SNG flow`);
         // Use regular SNG flow for private tables to ensure proper game mechanics
         return await this.regularStartService.start(tableId, fairnessContext);
       } else {
-        console.log(`🎲 [ORCHESTRATOR] Regular table, using standard game service`);
         return await this.regularStartService.start(tableId, fairnessContext);
       }
       
@@ -58,11 +55,9 @@ class PrivateTableGameOrchestrator {
       const isPrivateTable = await this.isPrivateTable(tableId);
       
       if (isPrivateTable) {
-        console.log(`⏱️ [ORCHESTRATOR] Using regular timer for private table ${tableId}`);
         // Use regular timer for private tables to ensure proper action handling
         return await this.regularTimerManager.startTimer(tableId, playerId, seconds);
       } else {
-        console.log(`⏱️ [ORCHESTRATOR] Using regular timer for ${tableId}`);
         return await this.regularTimerManager.startTimer(tableId, playerId, seconds);
       }
       
@@ -95,7 +90,6 @@ class PrivateTableGameOrchestrator {
       if (isPrivateTable) {
         return await this.privateTimerManager.useTimeBank(tableId, playerId);
       } else {
-        console.log(`⚠️ [ORCHESTRATOR] Time bank not available for regular tables`);
         return false;
       }
       

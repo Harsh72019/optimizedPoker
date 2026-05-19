@@ -411,7 +411,7 @@ class TableManagerService {
             console.log(`🧹 [TABLE] Cleared pending fairness and game state for ${tableId} because seated players dropped below 2`);
         }
 
-        if (table.players.length === 0 && !isManagedGameTable) {
+        if (table.players.length < 2 && !isManagedGameTable) {
             await this.deleteTable(tableId);
         } else {
             await this.saveTable(tableId, table);

@@ -13,11 +13,7 @@ const FAIRNESS_STATUS = {
 
 class ProvablyFairSessionService {
   log(event, payload = {}) {
-    if (!['HAND_READY', 'HAND_COMPLETED'].includes(event)) {
-      return;
-    }
-
-    console.log(`[PF][${event}]`, payload);
+    return;
   }
 
   formatCards(cards = []) {

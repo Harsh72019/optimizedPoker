@@ -52,7 +52,6 @@ class StartGameService {
             
             // Check if this is a tournament table
             if (matchmakingTable.data.isTournament && matchmakingTable.data.tournamentId) {
-                console.log(`ðŸ† [TOURNAMENT] Using tournament blind level`);
 
                 const tournamentResult = await mongoHelper.findById(
                     mongoHelper.COLLECTIONS.TOURNAMENTS,
@@ -70,9 +69,7 @@ class StartGameService {
 
                 smallBlindAmount = Number(currentLevel.smallBlind);
                 bigBlindAmount = Number(currentLevel.bigBlind);
-                console.log(`ðŸŽ´ [TOURNAMENT BLINDS] SB: ${smallBlindAmount}, BB: ${bigBlindAmount}, Ante: ${currentLevel.ante || 0}`);
             } else if (matchmakingTable.data.isPrivate && matchmakingTable.data.privateTableId) {
-                console.log(`🔒 [PRIVATE TABLE] Using private table configuration`);
                 
                 // Get private table configuration
                 const privateTableGameConfig = require('../services/private-table-game-config.service');
@@ -84,7 +81,6 @@ class StartGameService {
                 
                 bigBlindAmount = privateConfig.gameConfig.blinds.big;
                 smallBlindAmount = privateConfig.gameConfig.blinds.small;
-                console.log(`🎴 [PRIVATE BLINDS] SB: ${smallBlindAmount}, BB: ${bigBlindAmount}, Type: ${privateConfig.gameConfig.blinds.type}`);
             } else {
                 // Regular table - use SubTier configuration
                 let subTier = await mongoHelper.findById(
@@ -170,7 +166,6 @@ class StartGameService {
                 });
 
                 gameState.pot = this.normalizeAmount((gameState.pot || 0) + gameState.totalAntes);
-                console.log(`ðŸ† [TOURNAMENT ANTES] Posted ${gameState.totalAntes} in antes (${anteAmount} each where possible)`);
             } else if (gameState.privateTableConfig?.features?.antesEnabled) {
                 const privateTableGameConfig = require('../services/private-table-game-config.service');
                 const antesResult = privateTableGameConfig.calculateAntes(gameState.privateTableConfig, gameState.players);
@@ -191,7 +186,6 @@ class StartGameService {
                     }
                 });
 
-                console.log(`🎯 [ANTES] Posted ${gameState.totalAntes} in antes (${gameState.anteValue} each where possible)`);
             }
 
             // ✅ Deduct blinds into streetBets (NOT pot)
@@ -322,7 +316,6 @@ class StartGameService {
                 );
             });
 
-            console.log(`✅ [GAME STARTED] First turn: ${gameState.currentPlayerId}`);
 
         } catch (err) {
             console.error(`❌ start game error for ${tableId}:`, err.message);
@@ -340,7 +333,6 @@ class StartGameService {
             
             if (tableResult?.data?.isTournament && tableResult?.data?.tournamentId) {
                 const customTimer = gameState.tournamentConfig?.turnTimer || tableResult.data.tournamentConfig?.turnTimer || 20;
-                console.log(`â±ï¸ [TOURNAMENT TIMER] Using timer: ${customTimer}s`);
                 await this.timerManager.startTimer(tableId, gameState.currentPlayerId, customTimer);
             } else if (tableResult?.data?.isPrivate && tableResult?.data?.privateTableId) {
                 const privateTableGameConfig = require('../services/private-table-game-config.service');
@@ -348,7 +340,6 @@ class StartGameService {
                 
                 if (privateConfig && privateConfig.gameConfig.timer) {
                     const customTimer = privateConfig.gameConfig.timer.turnTimer || 30;
-                    console.log(`⏱️ [PRIVATE TIMER] Using custom timer: ${customTimer}s`);
                     await this.timerManager.startTimer(tableId, gameState.currentPlayerId, customTimer);
                 } else {
                     await this.timerManager.startTimer(tableId, gameState.currentPlayerId);
