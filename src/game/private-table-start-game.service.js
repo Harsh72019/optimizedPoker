@@ -31,7 +31,6 @@ class PrivateTableStartGameService {
     }
 
     async start(tableId, fairnessContext = null) {
-        console.log(`🎲 [PRIVATE GAME START] Initializing hand for table ${tableId}`);
         const locked = await gameStateManager.acquireLock(tableId);
         if (!locked) throw new Error('Table busy');
 
@@ -48,12 +47,6 @@ class PrivateTableStartGameService {
                 return await regularService.start(tableId);
             }
 
-            console.log(`🔧 [PRIVATE CONFIG] Using private table config:`, {
-                gameType: privateConfig.gameType,
-                stakes: privateConfig.config.stakes?.type,
-                blinds: privateConfig.gameConfig.blinds,
-                timer: privateConfig.gameConfig.timer.turnTimer
-            });
 
             const tableState = await tableManager.getTable(tableId);
             const tableDoc = await mongoHelper.findById(
@@ -152,22 +145,6 @@ class PrivateTableStartGameService {
                 players: gameState.players,
                 dealerPosition: gameState.dealerPosition
             });
-            console.log('[PF][PRIVATE_GAME_START_DEAL]', {
-                tableId,
-                handNumber: resolvedFairness.handNumber,
-                finalSeed: resolvedFairness.finalSeed,
-                dealerPosition: gameState.dealerPosition,
-                smallBlindPosition: gameState.smallBlindPosition,
-                bigBlindPosition: gameState.bigBlindPosition,
-                dealOrder: gameState.fairnessDealOrder,
-                holeCards: gameState.players.map(player => ({
-                    playerId: player.id,
-                    username: player.username,
-                    seatPosition: player.seatPosition,
-                    cards: this.formatCards(player.cards || [])
-                })),
-                remainingDeckCount: gameState.deck.length
-            });
 
             gameState.currentPlayerId = this.getFirstPlayerAfterBigBlind(gameState);
 
@@ -210,7 +187,6 @@ class PrivateTableStartGameService {
             // Emit standard events
             this.emitGameEvents(tableId, syncedTableState, gameState, smallBlindAmount, bigBlindAmount);
 
-            console.log(`✅ [PRIVATE GAME STARTED] First turn: ${gameState.currentPlayerId}`);
 
         } catch (err) {
             console.error(`❌ Private game start error for ${tableId}:`, err.message);

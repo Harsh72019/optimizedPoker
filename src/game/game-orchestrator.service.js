@@ -37,6 +37,7 @@ class GameOrchestrator {
         this.waitingTimers = new Map();   // tableId -> timeout
         this.restartTimers = new Map();   // tableId -> timeout
         this.privateRebuyWindows = new Map(); // tableId -> rebuy window metadata
+        this.startingHands = new Set();
     }
 
     async emitRoomLeftToConnectedPlayers(tableId, reason = 'TABLE_CLOSED', message = 'Table closed') {
@@ -534,23 +535,21 @@ class GameOrchestrator {
     /* ------------------------------------------------ */
 
     async startHand(tableId) {
+        if (this.startingHands.has(tableId)) {
+            return;
+        }
+
+        this.startingHands.add(tableId);
+
         try {
             this.clearWaitingTimer(tableId);
 
+            const existingGameState = await gameStateManager.getGame(tableId);
+            if (existingGameState) {
+                return;
+            }
+
             const fairnessPreparation = await provablyFairSessionService.prepareHand(tableId);
-            console.log('[PF][ORCHESTRATOR_START_HAND]', {
-                tableId,
-                preparationStatus: fairnessPreparation.status,
-                currentHand: fairnessPreparation.fairnessState?.currentHand
-                    ? {
-                        handNumber: fairnessPreparation.fairnessState.currentHand.handNumber,
-                        status: fairnessPreparation.fairnessState.currentHand.status,
-                        pendingRevealPlayerIds: fairnessPreparation.fairnessState.currentHand.pendingRevealPlayerIds,
-                        revealedPlayerIds: fairnessPreparation.fairnessState.currentHand.revealedPlayerIds
-                    }
-                    : null,
-                missingCommitments: fairnessPreparation.missingCommitments || []
-            });
             if (fairnessPreparation.status === 'MISSING_COMMITMENTS') {
                 await tableManager.setStatus(tableId, 'WAITING');
                 emitSuccess(
@@ -592,25 +591,21 @@ class GameOrchestrator {
             }
 
             await tableManager.setStatus(tableId, 'IN_PROGRESS');
-
-            console.log(`🃏 Starting hand at table ${tableId}`);
-
-            // 🆕 Check if this is a private table and handle financial setup
             await this.handleTableStart(tableId);
 
-            // 🎯 CRITICAL: Use private table orchestrator for private tables
             const isPrivateTable = await this.isPrivateTable(tableId);
-            
             if (isPrivateTable) {
-                console.log(`🔒 [PRIVATE SNG] Starting private table game: ${tableId}`);
                 await this.startTimedPrivateTableIfNeeded(tableId);
                 await this.privateTableOrchestrator.startGame(tableId, fairnessContext);
             } else {
-                console.log(`🎲 [REGULAR SNG] Starting regular table game: ${tableId}`);
                 await this.startGameService.start(tableId, fairnessContext);
             }
         } catch (err) {
-            console.error(`❌ startHand error for ${tableId}:`, err.message);
+            if (err.message !== 'Table busy') {
+                console.error(`startHand error for ${tableId}:`, err.message);
+            }
+        } finally {
+            this.startingHands.delete(tableId);
         }
     }
 
@@ -666,18 +661,6 @@ class GameOrchestrator {
             if (completedGameState) {
                 const fairnessReveal = await provablyFairSessionService.completeHand(tableId, completedGameState);
                 if (fairnessReveal) {
-                    console.log('[PF][ORCHESTRATOR_REVEAL_EMIT]', {
-                        tableId,
-                        handNumber: fairnessReveal.handNumber,
-                        serverSeedHash: fairnessReveal.serverSeedHash,
-                        finalSeed: fairnessReveal.finalSeed,
-                        combinedClientSeed: fairnessReveal.combinedClientSeed,
-                        boardCards: (completedGameState.boardCards || []).map(card => `${card.cardFace}${card.suit?.[0] || ''}`),
-                        burnCards: (completedGameState.burnCards || []).map(entry => ({
-                            street: entry.street,
-                            card: `${entry.card?.cardFace}${entry.card?.suit?.[0] || ''}`
-                        }))
-                    });
                     completedGameState.fairnessReveal = {
                         ...fairnessReveal,
                         boardCards: completedGameState.boardCards || [],

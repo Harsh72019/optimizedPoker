@@ -22,11 +22,6 @@ class StartGameService {
         const normalized = Math.round((amount + Number.EPSILON) * 100) / 100;
         return Math.abs(normalized) < 0.000001 ? 0 : normalized;
     }
-
-    formatCards(cards = []) {
-        return cards.map(card => `${card.cardFace}${card.suit?.[0] || ''}`);
-    }
-
     getFirstPlayerAfterBigBlind(gameState) {
         const active = gameState.players
             .filter(p => p.status === 'ACTIVE')
@@ -40,7 +35,6 @@ class StartGameService {
     }
 
     async start(tableId, fairnessContext = null) {
-        console.log(`🎲 [GAME START] Initializing hand for table ${tableId}`);
         const locked = await gameStateManager.acquireLock(tableId);
         if (!locked) throw new Error('Table busy');
 
@@ -53,9 +47,7 @@ class StartGameService {
             );
 
             if (!matchmakingTable)
-                throw new Error('Matchmaking table not found');
-            console.log(matchmakingTable);
-            
+                throw new Error('Matchmaking table not found');            
             let bigBlindAmount, smallBlindAmount;
             
             // Check if this is a tournament table
@@ -106,22 +98,12 @@ class StartGameService {
                 
                 bigBlindAmount = subTier.tableConfig.bb;
                 smallBlindAmount = bigBlindAmount / 2;
-                
-                console.log(`🎴 [BLINDS POSTED] SB: ${smallBlindAmount}, BB: ${bigBlindAmount}`);
             }
             const tableState = await tableManager.getTable(tableId);
-
-            console.log(`🔍 [DEBUG] Redis tableState:`, JSON.stringify(tableState, null, 2));
-            console.log(`🔍 [DEBUG] Players count: ${tableState.players.length}`);
-            console.log(`🔍 [DEBUG] Players:`, tableState.players.map(p => ({ userId: p.userId, chips: p.chips })));
-
             // Remove ghost players
             tableState.players = tableState.players.filter(
                 p => p.chips && p.chips > 0
             );
-
-            console.log(`🔍 [DEBUG] After filter - Players count: ${tableState.players.length}`);
-
             if (tableState.players.length < 2) {
                 throw new Error('Not enough players');
             }
@@ -252,40 +234,11 @@ class StartGameService {
                 players: gameState.players,
                 dealerPosition: gameState.dealerPosition
             });
-            console.log('[PF][GAME_START_DEAL]', {
-                tableId,
-                handNumber: resolvedFairness.handNumber,
-                finalSeed: resolvedFairness.finalSeed,
-                dealerPosition: gameState.dealerPosition,
-                smallBlindPosition: gameState.smallBlindPosition,
-                bigBlindPosition: gameState.bigBlindPosition,
-                dealOrder: gameState.fairnessDealOrder,
-                holeCards: gameState.players.map(player => ({
-                    playerId: player.id,
-                    username: player.username,
-                    seatPosition: player.seatPosition,
-                    cards: this.formatCards(player.cards || [])
-                })),
-                remainingDeckCount: gameState.deck.length
-            });
-
             gameState.currentPlayerId = this.getFirstPlayerAfterBigBlind(gameState);
-            console.log(`🎴 [BLINDS POSTED] SB: ${smallBlindAmount}, BB: ${bigBlindAmount}`);
-            console.log(`🎴 [CARDS DEALT] ${gameState.players.length} players`);
-
             await gameStateManager.createGame(tableId, gameState);
             await tableManager.syncFromGameState(tableId, gameState);
             await tableManager.setStatus(tableId, 'IN_PROGRESS');
             const syncedTableState = await tableManager.getTable(tableId);
-            
-            // Debug: Verify gameState was created
-            const verifyGameState = await gameStateManager.getGame(tableId);
-            if (verifyGameState) {
-                console.log(`✅ [GAME STATE] Successfully created and verified for table ${tableId}`);
-                console.log(`🎯 [GAME STATE] Current player: ${verifyGameState.currentPlayerId}`);
-            } else {
-                console.error(`❌ [GAME STATE] Failed to create or retrieve gameState for table ${tableId}`);
-            }
 
             emitSuccess(
                 this.io.to(tableId),
