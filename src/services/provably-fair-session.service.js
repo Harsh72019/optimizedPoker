@@ -12,6 +12,14 @@ const FAIRNESS_STATUS = {
 };
 
 class ProvablyFairSessionService {
+  log(event, payload = {}) {
+    console.log(`[PF][${event}]`, payload);
+  }
+
+  formatCards(cards = []) {
+    return cards.map(card => `${card.cardFace}${card.suit?.[0] || ''}`);
+  }
+
   getPlayerId(playerOrId) {
     if (!playerOrId) {
       return null;
@@ -161,6 +169,19 @@ class ProvablyFairSessionService {
     };
 
     await tableManager.saveTable(tableId, tableState);
+    this.log('COMMITMENT_ACCEPTED', {
+      tableId,
+      playerId: normalizedPlayerId,
+      username,
+      clientSeedHash: clientSeedHash.toLowerCase(),
+      eligiblePlayers: this.getEligiblePlayers(tableState).map(player => ({
+        playerId: this.getPlayerId(player),
+        username: player.username,
+        seatPosition: player.seatPosition,
+        isBot: this.isBotPlayer(player)
+      })),
+      commitmentCount: Object.keys(fairnessState.nextCommitments || {}).length
+    });
 
     return this.getPublicStateFromTable(tableState);
   }
@@ -188,6 +209,22 @@ class ProvablyFairSessionService {
     const fairnessState = this.ensureFairnessState(tableState);
     const eligiblePlayers = this.getEligiblePlayers(tableState);
     this.ensureBotCommitments(fairnessState, eligiblePlayers);
+    this.log('PREPARE_HAND_ENTER', {
+      tableId,
+      eligiblePlayers: eligiblePlayers.map(player => ({
+        playerId: this.getPlayerId(player),
+        username: player.username,
+        seatPosition: player.seatPosition,
+        chips: Number(player.chips || 0),
+        isBot: this.isBotPlayer(player)
+      })),
+      existingStatus: fairnessState.currentHand?.status || FAIRNESS_STATUS.IDLE,
+      nextCommitments: eligiblePlayers.map(player => ({
+        playerId: this.getPlayerId(player),
+        hasCommitment: !!fairnessState.nextCommitments[this.getPlayerId(player)],
+        clientSeedHash: fairnessState.nextCommitments[this.getPlayerId(player)]?.clientSeedHash || null
+      }))
+    });
 
     if (eligiblePlayers.length < 2) {
       return {
@@ -214,6 +251,10 @@ class ProvablyFairSessionService {
       }));
 
     if (missingCommitments.length > 0) {
+      this.log('PREPARE_HAND_MISSING_COMMITMENTS', {
+        tableId,
+        missingCommitments
+      });
       return {
         status: 'MISSING_COMMITMENTS',
         missingCommitments,
@@ -281,6 +322,15 @@ class ProvablyFairSessionService {
     };
 
     await tableManager.saveTable(tableId, tableState);
+    this.log('HAND_COMMITTED', {
+      tableId,
+      handNumber,
+      serverSeedHash: fairnessState.currentHand.serverSeedHash,
+      dealOrder,
+      playerSeedCommitments: fairnessState.currentHand.playerSeedCommitments,
+      pendingRevealPlayerIds: fairnessState.currentHand.pendingRevealPlayerIds,
+      botRevealCount: fairnessState.currentHand.playerSeedReveals.length
+    });
 
     if ((fairnessState.currentHand.pendingRevealPlayerIds || []).length === 0) {
       return this.finalizeCurrentHand(tableId, tableState, fairnessState);
@@ -329,6 +379,16 @@ class ProvablyFairSessionService {
         .filter(id => id !== normalizedPlayerId);
     }
 
+    this.log('CLIENT_SEED_REVEALED', {
+      tableId,
+      handNumber: currentHand.handNumber,
+      playerId: normalizedPlayerId,
+      derivedClientSeedHash: clientSeedHash,
+      expectedClientSeedHash: commitment.clientSeedHash,
+      revealCount: currentHand.playerSeedReveals.length,
+      pendingRevealPlayerIds: currentHand.pendingRevealPlayerIds
+    });
+
     if ((currentHand.pendingRevealPlayerIds || []).length === 0) {
       await tableManager.saveTable(tableId, tableState);
       return this.finalizeCurrentHand(tableId, tableState, fairnessState);
@@ -349,6 +409,12 @@ class ProvablyFairSessionService {
       reveals: currentHand.playerSeedReveals,
       dealOrder: currentHand.dealOrder
     });
+    const verification = provablyFairService.verifyCommitment({
+      serverSeed: finalized.serverSeed,
+      serverSeedHash: finalized.serverSeedHash,
+      combinedClientSeed: finalized.combinedClientSeed,
+      finalSeed: finalized.finalSeed
+    });
 
     fairnessState.currentHand = {
       ...currentHand,
@@ -358,6 +424,17 @@ class ProvablyFairSessionService {
     };
 
     await tableManager.saveTable(tableId, tableState);
+    this.log('HAND_READY', {
+      tableId,
+      handNumber: fairnessState.currentHand.handNumber,
+      combinedClientSeed: fairnessState.currentHand.combinedClientSeed,
+      finalSeed: fairnessState.currentHand.finalSeed,
+      verification,
+      playerSeedReveals: fairnessState.currentHand.playerSeedReveals.map(reveal => ({
+        playerId: reveal.playerId,
+        clientSeedHash: reveal.clientSeedHash
+      }))
+    });
 
     return {
       status: FAIRNESS_STATUS.READY,
@@ -382,6 +459,13 @@ class ProvablyFairSessionService {
     });
 
     await tableManager.saveTable(tableId, tableState);
+    this.log('HAND_CONSUMED_FOR_GAME_START', {
+      tableId,
+      handNumber: currentHand.handNumber,
+      finalSeed: currentHand.finalSeed,
+      dealOrder: currentHand.dealOrder,
+      startedAt: currentHand.startedAt
+    });
 
     return currentHand;
   }
@@ -399,6 +483,25 @@ class ProvablyFairSessionService {
       ...currentHand,
       boardCards: gameState?.boardCards || [],
       burnCards: gameState?.burnCards || []
+    });
+    this.log('HAND_COMPLETED', {
+      tableId,
+      handNumber: currentHand.handNumber,
+      phase: gameState?.phase,
+      pot: gameState?.pot,
+      boardCards: this.formatCards(gameState?.boardCards || []),
+      burnCards: (gameState?.burnCards || []).map(entry => ({
+        street: entry.street,
+        card: `${entry.card?.cardFace}${entry.card?.suit?.[0] || ''}`
+      })),
+      playerCards: (gameState?.players || []).map(player => ({
+        playerId: player.id,
+        username: player.username,
+        cards: this.formatCards(player.cards || [])
+      })),
+      serverSeedHash: reveal.serverSeedHash,
+      finalSeed: reveal.finalSeed,
+      combinedClientSeed: reveal.combinedClientSeed
     });
 
     fairnessState.lastCompletedHand = reveal;

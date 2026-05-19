@@ -538,6 +538,19 @@ class GameOrchestrator {
             this.clearWaitingTimer(tableId);
 
             const fairnessPreparation = await provablyFairSessionService.prepareHand(tableId);
+            console.log('[PF][ORCHESTRATOR_START_HAND]', {
+                tableId,
+                preparationStatus: fairnessPreparation.status,
+                currentHand: fairnessPreparation.fairnessState?.currentHand
+                    ? {
+                        handNumber: fairnessPreparation.fairnessState.currentHand.handNumber,
+                        status: fairnessPreparation.fairnessState.currentHand.status,
+                        pendingRevealPlayerIds: fairnessPreparation.fairnessState.currentHand.pendingRevealPlayerIds,
+                        revealedPlayerIds: fairnessPreparation.fairnessState.currentHand.revealedPlayerIds
+                    }
+                    : null,
+                missingCommitments: fairnessPreparation.missingCommitments || []
+            });
             if (fairnessPreparation.status === 'MISSING_COMMITMENTS') {
                 await tableManager.setStatus(tableId, 'WAITING');
                 emitSuccess(
@@ -653,6 +666,18 @@ class GameOrchestrator {
             if (completedGameState) {
                 const fairnessReveal = await provablyFairSessionService.completeHand(tableId, completedGameState);
                 if (fairnessReveal) {
+                    console.log('[PF][ORCHESTRATOR_REVEAL_EMIT]', {
+                        tableId,
+                        handNumber: fairnessReveal.handNumber,
+                        serverSeedHash: fairnessReveal.serverSeedHash,
+                        finalSeed: fairnessReveal.finalSeed,
+                        combinedClientSeed: fairnessReveal.combinedClientSeed,
+                        boardCards: (completedGameState.boardCards || []).map(card => `${card.cardFace}${card.suit?.[0] || ''}`),
+                        burnCards: (completedGameState.burnCards || []).map(entry => ({
+                            street: entry.street,
+                            card: `${entry.card?.cardFace}${entry.card?.suit?.[0] || ''}`
+                        }))
+                    });
                     completedGameState.fairnessReveal = {
                         ...fairnessReveal,
                         boardCards: completedGameState.boardCards || [],

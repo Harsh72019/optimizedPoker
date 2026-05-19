@@ -26,6 +26,10 @@ class PrivateTableStartGameService {
         return Math.abs(normalized) < 0.000001 ? 0 : normalized;
     }
 
+    formatCards(cards = []) {
+        return cards.map(card => `${card.cardFace}${card.suit?.[0] || ''}`);
+    }
+
     async start(tableId, fairnessContext = null) {
         console.log(`🎲 [PRIVATE GAME START] Initializing hand for table ${tableId}`);
         const locked = await gameStateManager.acquireLock(tableId);
@@ -147,6 +151,22 @@ class PrivateTableStartGameService {
                 deck: gameState.deck,
                 players: gameState.players,
                 dealerPosition: gameState.dealerPosition
+            });
+            console.log('[PF][PRIVATE_GAME_START_DEAL]', {
+                tableId,
+                handNumber: resolvedFairness.handNumber,
+                finalSeed: resolvedFairness.finalSeed,
+                dealerPosition: gameState.dealerPosition,
+                smallBlindPosition: gameState.smallBlindPosition,
+                bigBlindPosition: gameState.bigBlindPosition,
+                dealOrder: gameState.fairnessDealOrder,
+                holeCards: gameState.players.map(player => ({
+                    playerId: player.id,
+                    username: player.username,
+                    seatPosition: player.seatPosition,
+                    cards: this.formatCards(player.cards || [])
+                })),
+                remainingDeckCount: gameState.deck.length
             });
 
             gameState.currentPlayerId = this.getFirstPlayerAfterBigBlind(gameState);
