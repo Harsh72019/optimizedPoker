@@ -583,7 +583,6 @@ class GameOrchestrator {
             await tableManager.setStatus(tableId, 'SHOWDOWN_DELAY');
             emitSuccess(this.io.to(tableId), 'showdownDelay', { seconds: 10 }, 'Showdown delay');
 
-            // Increment handsPlayed for all connected players
             const sockets = await this.io.in(tableId).fetchSockets();
             sockets.forEach(socket => {
                 if (socket.handsPlayed !== undefined) {
@@ -619,7 +618,54 @@ class GameOrchestrator {
             }
 
             const shouldPauseForRebuy = await this.shouldPauseForPrivateRebuy(tableId);
-            
+            const shouldComplete = await this.checkGameCompletion(tableId);
+            if (shouldComplete && !shouldPauseForRebuy) {
+                await this.handleGameCompletion(tableId);
+                return;
+            }
+
+            const timeout = setTimeout(async () => {
+                if (shouldPauseForRebuy) {
+                    await this.startPrivateRebuyWindow(tableId);
+                    return;
+                }
+
+                emitSuccess(this.io.to(tableId), 'newRoundStarting', { seconds: 8 }, 'New round starting');
+                await this.prepareNextHand(tableId);
+            }, 8000);
+
+            await tableManager.setStatus(tableId, 'WAITING');
+            this.restartTimers.set(tableId, timeout);
+        } catch (err) {
+            console.error(`? onHandCompleted error for ${tableId}:`, err.message);
+        }
+    }
+
+    async checkGameCompletion(tableId) {
+        try {
+            const gameState = await gameStateManager.getGame(tableId);
+            const playersWithChips = gameState
+                ? gameState.players.filter(p => p.chips > 0 && !p.disconnected)
+                : (await tableManager.getTable(tableId)).players.filter(p => p.chips > 0 && !p.disconnected);
+
+            return playersWithChips.length <= 1;
+        } catch (err) {
+            console.error(`? checkGameCompletion error:`, err.message);
+            return false;
+        }
+    }
+
+    async checkPrivateTableCompletion(tableId, reason = 'PRIVATE_TABLE_CONDITION_MET') {
+        try {
+            const tableResult = await mongoHelper.findById(mongoHelper.COLLECTIONS.TABLES, tableId);
+            if (!tableResult.success || !tableResult.data?.privateTableId) {
+                return false;
+            }
+
+            const privateTableResult = await mongoHelper.findById(
+                mongoHelper.COLLECTIONS.PRIVATE_TABLES,
+                tableResult.data.privateTableId
+            );
 
             if (!privateTableResult.success || !privateTableResult.data) {
                 return false;
@@ -637,6 +683,29 @@ class GameOrchestrator {
                 player => Number(player.chips || 0) > 0 && !player.disconnected
             );
 
+            if (activePlayers.length <= 1) {
+                await this.handleGameCompletion(tableId, { reason });
+                return true;
+            }
+
+            return false;
+        } catch (error) {
+            console.error(`? [PRIVATE TABLE CHECK] Error checking completion for ${tableId}:`, error.message);
+            return false;
+        }
+    }
+
+    async handleGameCompletion(tableId, options = {}) {
+        try {
+            const gameState = await gameStateManager.getGame(tableId);
+            const tableState = await tableManager.getTable(tableId);
+            const tableDoc = await mongoHelper.findById(mongoHelper.COLLECTIONS.TABLES, tableId);
+            const completionReason = options.reason || 'NORMAL_COMPLETION';
+            const seatedPlayerIds = new Set(
+                (tableState.players || [])
+                    .map(player => player.userId?.toString?.() || player.id?.toString?.() || player.userId || player.id)
+                    .filter(Boolean)
+            );
 
             const playersForStandings = (gameState?.players || tableState.players || [])
                 .map(player => {
@@ -673,46 +742,37 @@ class GameOrchestrator {
                 },
                 'Please wait. Payouts are being registered.'
             );
-            
-            // 🆕 Execute financial settlement if this is a private table
+
             if (tableDoc.success && tableDoc.data && tableDoc.data.privateTableId) {
-                
-                // Get private table details for settlement
                 const privateTableDoc = await mongoHelper.findById(
-                    mongoHelper.COLLECTIONS.PRIVATE_TABLES, 
+                    mongoHelper.COLLECTIONS.PRIVATE_TABLES,
                     tableDoc.data.privateTableId
                 );
-                
+
                 if (privateTableDoc.success && privateTableDoc.data) {
                     const privateTable = privateTableDoc.data;
-
                     const participantUserIds = await this.getPrivateSngParticipantUserIds(tableId, privateTable);
                     const actualParticipants = Math.max(participantUserIds.length, 1);
                     const totalWagered = await this.getPrivateSngTotalWagered(tableId, privateTable);
-                    const settlementAlreadyMarkedForThisGame =
-                        privateTable.settlementCompleted && privateTable.settlementGameId === tableId;
-
-                    if (settlementAlreadyMarkedForThisGame) {
-                    }
 
                     const financialResult = await financialIntegrationService.onGameCompleted({
-                            gameId: tableId,
-                            tableId,
-                            gameType: privateTable.gameType,
-                            hostId: privateTable.hostId,
-                            buyIn: privateTable.buyIn,
-                            declaredCapacity: privateTable.declaredCapacity,
-                            actualParticipants,
-                            totalWagered,
-                            participationThreshold: privateTable.participationThreshold,
-                            tierRake: privateTable.tierRake,
-                            hostUplift: privateTable.hostUplift,
-                            hostRewardPercent: privateTable.hostRewardPercent,
-                            setupFeeAmount: privateTable.setupFeeAmount,
-                            affiliateId: privateTable.affiliateId,
-                            participantUserIds,
-                            winners
-                        });
+                        gameId: tableId,
+                        tableId,
+                        gameType: privateTable.gameType,
+                        hostId: privateTable.hostId,
+                        buyIn: privateTable.buyIn,
+                        declaredCapacity: privateTable.declaredCapacity,
+                        actualParticipants,
+                        totalWagered,
+                        participationThreshold: privateTable.participationThreshold,
+                        tierRake: privateTable.tierRake,
+                        hostUplift: privateTable.hostUplift,
+                        hostRewardPercent: privateTable.hostRewardPercent,
+                        setupFeeAmount: privateTable.setupFeeAmount,
+                        affiliateId: privateTable.affiliateId,
+                        participantUserIds,
+                        winners
+                    });
 
                     const completionStats = await this.getPrivateTableCompletionStats(tableId, privateTable, actualParticipants);
                     const persistedWinners = financialResult.settlement
@@ -722,28 +782,27 @@ class GameOrchestrator {
                     await mongoHelper.updateById(
                         mongoHelper.COLLECTIONS.PRIVATE_TABLES,
                         privateTable._id,
-                            {
-                                status: 'COMPLETED',
-                                completedAt: new Date(),
-                                settlementCompleted: true,
-                                settlementGameId: tableId,
-                                settlementCompletedAt: privateTable.settlementCompletedAt || new Date(),
-                                settlementSummary: {
-                                    ...(financialResult.settlement || {}),
-                                    totalWagered,
-                                },
-                                walletResults: financialResult.walletResults,
-                                winners: persistedWinners,
-                                gameFinancialsId: financialResult.gameFinancials?._id || privateTable.gameFinancialsId || null,
-                                stats: completionStats
-                            }
-                        );
+                        {
+                            status: 'COMPLETED',
+                            completedAt: new Date(),
+                            settlementCompleted: true,
+                            settlementGameId: tableId,
+                            settlementCompletedAt: privateTable.settlementCompletedAt || new Date(),
+                            settlementSummary: {
+                                ...(financialResult.settlement || {}),
+                                totalWagered,
+                            },
+                            walletResults: financialResult.walletResults,
+                            winners: persistedWinners,
+                            gameFinancialsId: financialResult.gameFinancials?._id || privateTable.gameFinancialsId || null,
+                            stats: completionStats
+                        }
+                    );
                 }
             } else {
                 await this.queueRegularTableCompletionCashouts(tableId, playersForStandings);
             }
-            
-            // Emit game completion
+
             emitSuccess(this.io.to(tableId), 'gameCompleted', {
                 winners,
                 reason: completionReason,
@@ -760,13 +819,11 @@ class GameOrchestrator {
                 },
                 'Payout registration completed.'
             );
-            
-            // Clean up
+
             await new Promise(resolve => setTimeout(resolve, 250));
             await this.cleanupCompletedGame(tableId, options);
-            
         } catch (err) {
-            console.error(`❌ handleGameCompletion error:`, err.message);
+            console.error(`? handleGameCompletion error:`, err.message);
         }
     }
 
