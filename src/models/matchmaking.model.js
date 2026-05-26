@@ -122,6 +122,22 @@ const subTierSchema = new mongoose.Schema({
         enqueuedAt: {
             type: Date,
             default: Date.now
+        },
+        assignedTableId: {
+            type: String,
+            default: null
+        },
+        assignedBlockChainTableId: {
+            type: String,
+            default: null
+        },
+        assignedChipsInPlay: {
+            type: Number,
+            default: null
+        },
+        assignedAt: {
+            type: Date,
+            default: null
         }
     }]
 }, {

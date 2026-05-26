@@ -11,7 +11,11 @@ class QueueService {
     
     subTier.playersInQueue.push({
       playerId: playerId,
-      enqueuedAt: new Date()
+      enqueuedAt: new Date(),
+      assignedTableId: null,
+      assignedBlockChainTableId: null,
+      assignedChipsInPlay: null,
+      assignedAt: null
     });
     
     await mongoHelper.updateById(mongoHelper.COLLECTIONS.SUB_TIERS, subTierId, {
@@ -51,6 +55,46 @@ class QueueService {
       entry => entry.playerId.toString() === playerId.toString()
     );
     return playerIndex >= 0 ? playerIndex + 1 : -1;
+  }
+
+  async getQueueEntry(playerId, subTierId) {
+    const subTierResult = await mongoHelper.findById(mongoHelper.COLLECTIONS.SUB_TIERS, subTierId);
+    const subTier = subTierResult.data;
+
+    if (!subTier || !subTier.playersInQueue) return null;
+
+    return subTier.playersInQueue.find(
+      entry => entry.playerId.toString() === playerId.toString()
+    ) || null;
+  }
+
+  async markAssigned(playerId, subTierId, assignment) {
+    const subTierResult = await mongoHelper.findById(mongoHelper.COLLECTIONS.SUB_TIERS, subTierId);
+    const subTier = subTierResult.data;
+
+    if (!subTier || !subTier.playersInQueue) {
+      return null;
+    }
+
+    subTier.playersInQueue = subTier.playersInQueue.map(entry => {
+      if (entry.playerId.toString() !== playerId.toString()) {
+        return entry;
+      }
+
+      return {
+        ...entry,
+        assignedTableId: assignment.tableId?.toString?.() || assignment.tableId || null,
+        assignedBlockChainTableId: assignment.blockChainTableId?.toString?.() || assignment.blockChainTableId || null,
+        assignedChipsInPlay: assignment.chipsInPlay ?? null,
+        assignedAt: new Date()
+      };
+    });
+
+    await mongoHelper.updateById(mongoHelper.COLLECTIONS.SUB_TIERS, subTierId, {
+      playersInQueue: subTier.playersInQueue
+    });
+
+    return this.getQueueEntry(playerId, subTierId);
   }
 }
 

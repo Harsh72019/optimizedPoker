@@ -354,6 +354,11 @@ class ConnectionHandler {
                 }
             );
 
+            if (!isReconnect && table.subTierId) {
+                const queueService = require('../../services/queue.service');
+                await queueService.removeFromQueue(userId, table.subTierId.toString?.() || table.subTierId);
+            }
+
             this.socket.join(finalTableId);
             this.socket.tableId = finalTableId;
             this.socket.handsPlayed = 0; // Track hands played

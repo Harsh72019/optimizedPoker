@@ -46,18 +46,10 @@ class QueueMatcherService {
     //   throw new ApiError(402, 'insufficient_funds');
     // }
 
-    // 3. Enqueue player (only if not already in queue)
-    let position = await queueService.getQueuePosition(playerId, subTierId);
-    if (position === -1) {
-      const enqueuedAt = new Date();
-      await queueService.addToQueue(playerId, subTierId);
-    }
-
-    // 4. Immediate seating attempt (atomic)
+    // 3. Immediate table assignment attempt
     const eligibleTable = await this.findEligibleTable(playerId, subTier);
     
     if (eligibleTable) {
-      await queueService.removeFromQueue(playerId, subTierId);
       const result = await this.seatPlayer(eligibleTable, playerId, subTier, chipsInPlay);
       return { 
         status: 'seated', 
@@ -67,18 +59,36 @@ class QueueMatcherService {
       };
     }
 
-    // 5. Queued under threshold
-    const queueEntry = subTier.playersInQueue?.find(e => e.playerId.toString() === playerId.toString());
-    const enqueuedAt = queueEntry?.enqueuedAt || new Date();
-    const waitTime = (Date.now() - new Date(enqueuedAt)) / 1000;
-    if (waitTime < (tier.maxWaitSoftensSecs || 30)) {
-      const position = await queueService.getQueuePosition(playerId, subTierId);
-      return { 
-        status: 'queued', 
-        position,
-        message: 'No available tables, you are in queue'
+    // 4. Enqueue player (only if not already in queue)
+    let position = await queueService.getQueuePosition(playerId, subTierId);
+    if (position === -1) {
+      await queueService.addToQueue(playerId, subTierId);
+    }
+
+    // 5. Respect an already-assigned table while waiting for joinTable
+    const queueEntry = await queueService.getQueueEntry(playerId, subTierId);
+    if (queueEntry?.assignedTableId && queueEntry?.assignedBlockChainTableId) {
+      return {
+        status: 'assigned',
+        tableId: queueEntry.assignedTableId,
+        blockChainTableId: queueEntry.assignedBlockChainTableId,
+        data: {
+          tableId: queueEntry.assignedTableId,
+          blockChainTableId: queueEntry.assignedBlockChainTableId,
+          chipsInPlay: queueEntry.assignedChipsInPlay,
+          tableCreated: true,
+          viaMatchmaking: true,
+          subTierId,
+          userData: {
+            userId: playerId,
+            walletAddress: player.walletAddress
+          }
+        }
       };
     }
+
+    const enqueuedAt = queueEntry?.enqueuedAt || new Date();
+    const waitTime = (Date.now() - new Date(enqueuedAt)) / 1000;
 
     // 6. Bot concession
     const playerRepScore = player?.reputation?.score ?? 50;
@@ -87,7 +97,6 @@ class QueueMatcherService {
         waitTime >= tier.botConcession.minWaitToConcedeSecs) {
       
       if (await fundingService.bankReserveAllows(tierId, required)) {
-        await queueService.removeFromQueue(playerId, subTierId);
         const result = await this.createTableWithBot(playerId, subTier, chipsInPlay, tier);
         return { 
           status: 'seated', 
@@ -188,6 +197,15 @@ class QueueMatcherService {
       if (resolved?.userId && !resolved.isBot) {
         humanUserIds.push(resolved.userId);
       }
+    }
+
+    if (waitTime < (tier.maxWaitSoftensSecs || 30)) {
+      position = await queueService.getQueuePosition(playerId, subTierId);
+      return { 
+        status: 'queued', 
+        position,
+        message: 'No available tables, you are in queue'
+      };
     }
 
     return {
@@ -429,6 +447,28 @@ class QueueMatcherService {
       if (!entry) return;
 
       try {
+        if (entry.assignedTableId && entry.assignedBlockChainTableId) {
+          if (io) {
+            io.to(`user_${entry.playerId.toString()}`).emit('callJoinTable', {
+              message: 'Table ready, please join',
+              status: true,
+              data: {
+                blockChainTableId: entry.assignedBlockChainTableId,
+                tableId: entry.assignedTableId,
+                chipsInPlay: entry.assignedChipsInPlay,
+                autoRenew: false,
+                maxBuy: true,
+                viaMatchmaking: true,
+                subTierId: subTierId,
+                userData: {
+                  userId: entry.playerId.toString()
+                }
+              }
+            });
+          }
+          return;
+        }
+
         const result = await this.processJoinRequest(
           entry.playerId,
           subTier.tierId._id || subTier.tierId,
@@ -436,7 +476,13 @@ class QueueMatcherService {
           1000
         );
 
-        if (result.status === 'seated' && io) {
+        if ((result.status === 'seated' || result.status === 'assigned') && io) {
+          await queueService.markAssigned(entry.playerId, subTierId, {
+            tableId: result.tableId,
+            blockChainTableId: result.blockChainTableId,
+            chipsInPlay: result.data?.chipsInPlay
+          });
+
           io.to(`user_${entry.playerId.toString()}`).emit('callJoinTable', {
             message: 'Table ready, please join',
             status: true,
