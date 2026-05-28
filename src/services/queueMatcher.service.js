@@ -199,15 +199,6 @@ class QueueMatcherService {
       }
     }
 
-    if (waitTime < (tier.maxWaitSoftensSecs || 30)) {
-      position = await queueService.getQueuePosition(playerId, subTierId);
-      return { 
-        status: 'queued', 
-        position,
-        message: 'No available tables, you are in queue'
-      };
-    }
-
     return {
       source: 'mongo',
       seatedCount: currentPlayers.length,
