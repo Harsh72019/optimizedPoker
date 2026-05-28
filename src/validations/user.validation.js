@@ -87,6 +87,17 @@ const listTournaments = {
       .min(1)
       .max(50),
     sortBy: Joi.string(),
+    status: Joi.string().valid('registering', 'scheduled', 'active', 'completed', 'cancelled', 'paused'),
+    family: Joi.string().valid('scheduled', 'casual', 'satellite', 'official'),
+    rankKey: Joi.string().valid('humens', 'rats', 'cats', 'dogs'),
+    templateKey: Joi.string().valid(
+      'heads-up-blitz',
+      'quick-blitz',
+      'fast-table',
+      'classic-ring',
+      'deep-ring',
+      'bounty-rush'
+    ),
     buyInMin: Joi.number().min(0),
     buyInMax: Joi.number().min(Joi.ref('buyInMin')),
   }),

@@ -8,6 +8,7 @@ const {
   DUMMY_TOURNAMENT_ID,
   matchesTournamentFilters,
 } = require('../fixtures/dummy-tournament.fixture');
+const casualTournamentService = require('./casual-tournament.service');
 
 class TournamentGameService {
   constructor() {
@@ -35,50 +36,83 @@ class TournamentGameService {
   }
 
   async createTournament(config, adminId = null) {
-    const blindLevels = this.normalizeBlindLevels(config.blindLevels || config.generatedBlindLevels);
+    const resolvedConfig = casualTournamentService.buildCasualTournamentConfig(config);
+    const blindLevels = this.normalizeBlindLevels(resolvedConfig.blindLevels || resolvedConfig.generatedBlindLevels);
     const firstLevel = blindLevels[0];
-    const rakePercentage = Number(config.rakePercentage ?? config.tierRake ?? 6);
+    const rakePercentage = Number(resolvedConfig.rakePercentage ?? resolvedConfig.tierRake ?? 6);
+    const bountyShareOfBuyIn = Number(resolvedConfig.bountyConfig?.bountyShareOfBuyIn || 0);
+    const buyInBreakdown = casualTournamentService.buildBuyInBreakdown({
+      buyIn: Number(resolvedConfig.buyIn),
+      rakePercentage,
+      bountyShareOfBuyIn,
+    });
 
-    this.validatePayoutStructure(config.payoutStructure || [{ position: 1, percentage: 100 }]);
+    this.validatePayoutStructure(resolvedConfig.payoutStructure || [{ position: 1, percentage: 100 }]);
     this.validateScheduledTournamentRake(rakePercentage);
 
     const createResult = await mongoHelper.create(
       mongoHelper.COLLECTIONS.TOURNAMENTS,
       {
-        name: config.name,
-        description: config.description || '',
-        startTime: new Date(config.startTime),
-        registrationDeadline: new Date(config.registrationDeadline || config.startTime),
-        templateId: config.templateId || undefined,
+        name: resolvedConfig.name,
+        description: resolvedConfig.description || '',
+        startTime: new Date(resolvedConfig.startTime),
+        registrationDeadline: new Date(resolvedConfig.registrationDeadline || resolvedConfig.startTime),
+        templateId: resolvedConfig.templateId || undefined,
+        family: resolvedConfig.family || 'scheduled',
+        rankKey: resolvedConfig.rankKey || null,
+        rankName: resolvedConfig.rankName || null,
+        templateKey: resolvedConfig.templateKey || null,
+        templateName: resolvedConfig.templateName || resolvedConfig.name,
+        visibilityTier: resolvedConfig.visibilityTier || 'A',
         status: 'registering',
-        maxPlayers: Number(config.maxPlayers || 90),
-        minPlayersPerTable: Number(config.minPlayersPerTable || 2),
-        maxPlayersPerTable: Number(config.maxPlayersPerTable || 9),
-        buyIn: Number(config.buyIn),
+        maxPlayers: Number(resolvedConfig.maxPlayers || 90),
+        minPlayersPerTable: Number(resolvedConfig.minPlayersPerTable || 2),
+        maxPlayersPerTable: Number(resolvedConfig.maxPlayersPerTable || 9),
+        buyIn: Number(resolvedConfig.buyIn),
+        buyInBreakdown,
         currentLevel: {
           levelNumber: firstLevel.levelNumber,
           smallBlind: firstLevel.smallBlind,
           bigBlind: firstLevel.bigBlind,
           ante: firstLevel.ante || 0,
-          startedAt: new Date(config.startTime),
+          startedAt: new Date(resolvedConfig.startTime),
         },
-        levelStartTime: new Date(config.startTime),
-        payoutStructure: config.payoutStructure || [{ position: 1, percentage: 100 }],
+        levelStartTime: new Date(resolvedConfig.startTime),
+        payoutStructure: resolvedConfig.payoutStructure || [{ position: 1, percentage: 100 }],
+        quickStartConfig: {
+          enabled: !!resolvedConfig.quickStartConfig?.enabled,
+          minPlayers: Number(resolvedConfig.quickStartConfig?.minPlayers || resolvedConfig.minPlayersPerTable || 2),
+          countdownSeconds: Number(resolvedConfig.quickStartConfig?.countdownSeconds || 0),
+          consentRequired: !!resolvedConfig.quickStartConfig?.consentRequired,
+        },
+        startRule: resolvedConfig.startRule || 'START_ON_FILL',
+        preStartAnonymity: {
+          enabled: resolvedConfig.preStartAnonymity?.enabled !== false,
+          revealAt: resolvedConfig.preStartAnonymity?.revealAt || 'TOURNAMENT_START',
+        },
+        hotPoolStatus: {
+          ready: !!resolvedConfig.hotPoolStatus?.ready,
+          readyInstances: Number(resolvedConfig.hotPoolStatus?.readyInstances || 0),
+          spawnOnDemand: resolvedConfig.hotPoolStatus?.spawnOnDemand !== false,
+          lastSpawnedAt: resolvedConfig.hotPoolStatus?.lastSpawnedAt || null,
+        },
+        bountyConfig: resolvedConfig.bountyConfig || undefined,
         players: [],
         waitlist: [],
         activeTables: [],
         underlyingTables: [],
         prizePool: 0,
         winners: [],
-        levelDuration: Number(config.levelDuration || firstLevel.duration || 15),
-        tournamentDuration: Number(config.tournamentDuration || 0),
-        timeZone: config.timeZone || 'UTC',
+        levelDuration: Number(resolvedConfig.levelDuration || firstLevel.duration || 15),
+        tournamentDuration: Number(resolvedConfig.tournamentDuration || 0),
+        timeZone: resolvedConfig.timeZone || 'UTC',
         generatedBlindLevels: blindLevels,
-        startingChips: Number(config.startingChips || 10000),
-        isOfficial: config.isOfficial !== false,
+        startingChips: Number(resolvedConfig.startingChips || 10000),
+        isOfficial: resolvedConfig.isOfficial !== false,
         isPrivate: false,
         createdBy: adminId,
         rakePercentage,
+        metadata: resolvedConfig.metadata || undefined,
         nextEliminationPosition: 0,
       },
       mongoHelper.MODELS.TOURNAMENT
@@ -88,7 +122,7 @@ class TournamentGameService {
       throw new Error(createResult.error || 'Failed to create tournament');
     }
 
-    return createResult.data;
+    return casualTournamentService.decorateTournament(createResult.data);
   }
 
   normalizeBlindLevels(levels = []) {
@@ -118,15 +152,26 @@ class TournamentGameService {
   async listTournaments(filters = {}) {
     const query = { isPrivate: false };
     if (filters.status) query.status = filters.status;
+    if (filters.family) query.family = filters.family;
+    if (filters.rankKey) query.rankKey = filters.rankKey;
+    if (filters.templateKey) query.templateKey = filters.templateKey;
     const result = await mongoHelper.find(mongoHelper.COLLECTIONS.TOURNAMENTS, query);
     if (!result.success) throw new Error(result.error || 'Failed to list tournaments');
 
-    const tournaments = result.data || [];
+    let tournaments = result.data || [];
+    if (typeof filters.buyInMin !== 'undefined') {
+      tournaments = tournaments.filter(tournament => Number(tournament.buyIn || 0) >= Number(filters.buyInMin));
+    }
+    if (typeof filters.buyInMax !== 'undefined') {
+      tournaments = tournaments.filter(tournament => Number(tournament.buyIn || 0) <= Number(filters.buyInMax));
+    }
     if (tournaments.length === 0 && matchesTournamentFilters(filters)) {
       tournaments.push(dummyTournament);
     }
 
-    return tournaments.sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
+    return tournaments
+      .map(tournament => casualTournamentService.decorateTournament(tournament))
+      .sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
   }
 
   async getTournament(tournamentId) {
@@ -138,7 +183,7 @@ class TournamentGameService {
     if (!result.success || !result.data) {
       throw new Error('Tournament not found');
     }
-    return result.data;
+    return casualTournamentService.decorateTournament(result.data);
   }
 
   async registerPlayer(tournamentId, userId) {

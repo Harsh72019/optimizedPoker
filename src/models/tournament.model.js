@@ -77,6 +77,26 @@ const tournamentSchema = new Schema(
       enum: ['registering', 'scheduled', 'active', 'completed', 'cancelled', 'paused'],
       default: 'registering',
     },
+    family: {
+      type: String,
+      enum: ['scheduled', 'casual', 'satellite', 'official'],
+      default: 'scheduled',
+      index: true,
+    },
+    rankKey: {
+      type: String,
+      enum: ['humens', 'rats', 'cats', 'dogs', null],
+      default: null,
+      index: true,
+    },
+    rankName: String,
+    templateKey: String,
+    templateName: String,
+    visibilityTier: {
+      type: String,
+      enum: ['A', 'B', 'C'],
+      default: 'A',
+    },
     cancelReason: String,
     cancelledAt: Date,
 
@@ -103,6 +123,67 @@ const tournamentSchema = new Schema(
         percentage: {type: Number, required: true},
       },
     ],
+    buyInBreakdown: {
+      totalBuyIn: Number,
+      fee: Number,
+      prizePoolContribution: Number,
+      bountyContribution: Number,
+      currency: {
+        type: String,
+        default: 'USD',
+      },
+    },
+    quickStartConfig: {
+      enabled: {
+        type: Boolean,
+        default: false,
+      },
+      minPlayers: Number,
+      countdownSeconds: Number,
+      consentRequired: {
+        type: Boolean,
+        default: false,
+      },
+    },
+    startRule: {
+      type: String,
+      enum: ['START_ON_FILL', 'QUICK_START_ALLOWED'],
+      default: 'START_ON_FILL',
+    },
+    preStartAnonymity: {
+      enabled: {
+        type: Boolean,
+        default: false,
+      },
+      revealAt: String,
+    },
+    hotPoolStatus: {
+      ready: {
+        type: Boolean,
+        default: false,
+      },
+      readyInstances: {
+        type: Number,
+        default: 0,
+      },
+      spawnOnDemand: {
+        type: Boolean,
+        default: false,
+      },
+      lastSpawnedAt: Date,
+    },
+    bountyConfig: {
+      model: {
+        type: String,
+        enum: ['flat', 'progressive', null],
+        default: null,
+      },
+      bountyShareOfBuyIn: Number,
+      instantPayout: {
+        type: Boolean,
+        default: false,
+      },
+    },
 
     players: [{type: Schema.Types.ObjectId, ref: 'TournamentPlayer'}],
     waitlist: [{type: Schema.Types.ObjectId, ref: 'TournamentPlayer'}],
