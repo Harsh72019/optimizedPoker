@@ -3,6 +3,10 @@ const ApiError = require('../utils/ApiError');
 const catchAsync = require('../utils/catchAsync');
 const {userService, tournamentGameService} = require('../services');
 const blockchainService = require('../services/blockchain.service');
+const accountWalletService = require('../services/account-wallet.service');
+const custodialWalletService = require('../services/custodial-wallet.service');
+const promoRewardService = require('../services/promo-reward.service');
+const config = require('../config/config');
 // const tableRegistry = require('../services/redis.service');
 const {Table} = require('../models');
 const tableService = require('../services/table.service');
@@ -41,10 +45,18 @@ const deleteAllData = catchAsync(async (req, res) => {
 
 const getBalance = async (req, res) => {
   try {
-    const walletBalance = await blockchainService.getBalance(req.user.walletAddress);
+    const activeWalletAddress = accountWalletService.getActiveWalletAddress(req.user);
+    const rewardStatus = await promoRewardService.getRewardStatus(req.user._id);
+    const walletBalance = activeWalletAddress
+      ? await blockchainService.getBalance(activeWalletAddress)
+      : '0';
+    const custodialBalance = Number(req.user.cashBalance || 0);
     res.status(200).send({
       message: 'The user wallet balance fetched successfully.',
       walletBalance,
+      custodialBalance,
+      activeWalletAddress,
+      rewards: rewardStatus,
       status: true,
     });
   } catch (error) {
@@ -195,6 +207,7 @@ const listTournaments = catchAsync(async (req, res) => {
 });
 
 const registerForTournament = catchAsync(async (req, res) => {
+  custodialWalletService.assertGameModeAllowed(req.user, null, 'TOURNAMENT');
   const registration = await tournamentGameService.registerPlayer(req.params.id, req.user._id.toString());
 
   res.status(httpStatus.OK).json({
@@ -229,8 +242,25 @@ const unregisterFromTournament = catchAsync(async (req, res) => {
 
 const checkTableExistence = async (req, res) => {
   try {
-    const { playerCount, tableTypeId, chipsInPlay, autoRenew, maxBuy, selectedTableId, subTierId } = req.body;
-    const userAddress = req.user.walletAddress;
+    const { playerCount, tableTypeId, chipsInPlay, autoRenew, maxBuy, selectedTableId, subTierId, fundingSource } = req.body;
+    const userAddress = accountWalletService.getActiveWalletAddress(req.user);
+    const effectiveFundingSource = custodialWalletService.getFundingSource(req.user, fundingSource);
+    const blockchainUserAddress = userAddress || config.HOUSE_WALLET_ADDRESS;
+
+    if (effectiveFundingSource === 'CUSTODIAL' && !blockchainUserAddress) {
+      return res.status(500).send({
+        message: 'Custodial play is not configured on this environment yet.',
+        status: false,
+      });
+    }
+
+    if (effectiveFundingSource === 'WEB3' && !userAddress) {
+      return res.status(400).send({
+        message: 'Link a wallet before joining wallet-funded games.',
+        status: false,
+        requiresWalletLink: true,
+      });
+    }
     console.log(`🎮 [checkTableExistence] User ${req.user._id} requesting table`);
     
     // MODE DETECTION
@@ -244,7 +274,7 @@ const checkTableExistence = async (req, res) => {
       
       const matchResult = await matchmakingService.processMatchmaking(
         req.user._id,
-        userAddress,
+        blockchainUserAddress,
         subTierId,
         chipsInPlay
       );
@@ -258,8 +288,10 @@ const checkTableExistence = async (req, res) => {
     
     const tableType = await userService.getTableTypeById(tableTypeId);
 
-    let userBalance = await blockchainService.getBalance(userAddress);
-    userBalance = Math.floor(userBalance);
+    let userBalance = effectiveFundingSource === 'CUSTODIAL'
+      ? Number(req.user.cashBalance || 0)
+      : await blockchainService.getBalance(userAddress);
+    userBalance = Math.floor(Number(userBalance || 0));
 
     if (userBalance < tableType.minBuyIn) {
       return res.status(200).send({
@@ -319,7 +351,7 @@ const checkTableExistence = async (req, res) => {
       const blockchainResult = await blockchainService.prepareTableForJoin(
         selectedTable,
         finalChipsInPlay,
-        userAddress,
+        blockchainUserAddress,
         { transfer: false }
       );
       
@@ -335,7 +367,7 @@ const checkTableExistence = async (req, res) => {
         playerCount,
         tableTypeId,
         finalChipsInPlay,
-        userAddress,
+        blockchainUserAddress,
         req.user._id
       );
     }
@@ -348,6 +380,7 @@ const checkTableExistence = async (req, res) => {
         blockChainTableId: result.tableData.tableBlockchainId,
         tableId: result.tableData._id,
         chipsInPlay: finalChipsInPlay,
+        fundingSource: effectiveFundingSource,
         tableCreated: result.wasCreated,
         autoRenew,
         maxBuy,
@@ -437,6 +470,125 @@ const addReferral = async (req, res) => {
   }
 };
 
+const depositCustodialFunds = async (req, res) => {
+  try {
+    const result = await custodialWalletService.recordDeposit(req.user._id, req.body.amount, {
+      description: req.body.description || null,
+      source: 'USER_CUSTODIAL_DEPOSIT',
+    });
+
+    res.status(200).send({
+      status: true,
+      message: 'Custodial deposit recorded successfully',
+      data: result,
+    });
+  } catch (error) {
+    res.status(400).send({
+      status: false,
+      error: error.message,
+    });
+  }
+};
+
+const requestCustodialWithdrawal = async (req, res) => {
+  try {
+    const result = await custodialWalletService.requestWithdrawal(
+      req.user._id,
+      req.body.amount,
+      req.body.walletAddress || null,
+      { source: 'USER_CUSTODIAL_WITHDRAWAL' }
+    );
+
+    res.status(200).send({
+      status: true,
+      message: 'Custodial withdrawal request submitted successfully',
+      data: result,
+    });
+  } catch (error) {
+    res.status(400).send({
+      status: false,
+      error: error.message,
+    });
+  }
+};
+
+const getWalletSummary = async (req, res) => {
+  try {
+    const wallet = await accountWalletService.getWalletSummaryForUser(req.user._id);
+    res.status(200).send({
+      data: wallet,
+      status: true,
+      message: 'Wallet summary fetched successfully',
+    });
+  } catch (error) {
+    res.status(500).send({
+      error: error.message,
+      status: false,
+    });
+  }
+};
+
+const setActivePayoutWallet = async (req, res) => {
+  try {
+    const wallet = await accountWalletService.setActivePayoutWallet(req.user._id, req.body.walletAddress);
+    res.status(200).send({
+      data: wallet,
+      status: true,
+      message: 'Active payout wallet updated successfully',
+    });
+  } catch (error) {
+    res.status(400).send({
+      error: error.message,
+      status: false,
+    });
+  }
+};
+
+const unlinkWallet = async (req, res) => {
+  try {
+    const wallet = await accountWalletService.unlinkWallet(req.user._id, req.body.walletAddress);
+    res.status(200).send({
+      data: wallet,
+      status: true,
+      message: 'Wallet unlinked successfully',
+    });
+  } catch (error) {
+    res.status(400).send({
+      error: error.message,
+      status: false,
+    });
+  }
+};
+
+const getRewardStatus = catchAsync(async (req, res) => {
+  const rewardStatus = await promoRewardService.getRewardStatus(req.user._id);
+  res.status(httpStatus.OK).json({
+    status: true,
+    message: 'Reward status fetched successfully',
+    data: rewardStatus,
+  });
+});
+
+const grantAdReward = catchAsync(async (req, res) => {
+  const result = await promoRewardService.grantAdReward(req.user._id, req.body.adViewId);
+  res.status(httpStatus.OK).json({
+    status: true,
+    message: result.duplicate ? 'Ad reward already granted for this view' : 'Ad reward granted successfully',
+    data: result,
+  });
+});
+
+const getCustodialReward = catchAsync(async (req, res) => {
+  const result = await custodialWalletService.grantWeb2AdReward(req.user._id, req.body.adViewId);
+  res.status(httpStatus.OK).json({
+    status: true,
+    message: result.duplicate
+      ? 'Reward already granted for this ad view'
+      : 'Reward credited to custodial wallet successfully',
+    data: result,
+  });
+});
+
 module.exports = {
   deleteUser,
   updateUser,
@@ -446,6 +598,11 @@ module.exports = {
   getTables,
   userDetails,
   getUserProfile,
+  getWalletSummary,
+  setActivePayoutWallet,
+  unlinkWallet,
+  depositCustodialFunds,
+  requestCustodialWithdrawal,
   addFriend,
   blockFriend,
   unblockFriend,
@@ -460,4 +617,7 @@ module.exports = {
   deleteAllData,
   setInitialTier,
   addReferral,
+  getRewardStatus,
+  grantAdReward,
+  getCustodialReward,
 };

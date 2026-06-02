@@ -1,5 +1,8 @@
 const mongoHelper = require('../models/customdb');
 const blockchainService = require('./blockchain.service');
+const accountWalletService = require('./account-wallet.service');
+const promoRewardService = require('./promo-reward.service');
+const custodialWalletService = require('./custodial-wallet.service');
 
 class WalletIntegrationService {
   constructor() {
@@ -11,18 +14,7 @@ class WalletIntegrationService {
   }
 
   async resolveUser(userId, role = 'User') {
-    const userResult = await mongoHelper.findById(mongoHelper.COLLECTIONS.USERS, userId);
-
-    if (!userResult.success || !userResult.data) {
-      throw new Error(`${role} not found`);
-    }
-
-    const user = userResult.data;
-    if (!user.walletAddress) {
-      throw new Error(`${role} wallet address not found`);
-    }
-
-    return user;
+    return accountWalletService.ensureWalletAvailable(userId, role);
   }
 
   async findExistingTransaction(type, userId, gameId, idempotencyKey) {
@@ -402,6 +394,22 @@ class WalletIntegrationService {
   }
 
   async queuePlayerTableCashout(userId, amount, gameId, sourceTableId, options = {}) {
+    let effectiveFundingSource = String(options.fundingSource || '').toUpperCase();
+
+    if (!effectiveFundingSource) {
+      const userResult = await mongoHelper.findById(mongoHelper.COLLECTIONS.USERS, userId);
+      if (userResult.success && userResult.data?.currentGameFundingSource) {
+        effectiveFundingSource = String(userResult.data.currentGameFundingSource).toUpperCase();
+      }
+    }
+
+    if (effectiveFundingSource === 'CUSTODIAL') {
+      return custodialWalletService.settleTableCashout(userId, amount, sourceTableId, {
+        gameId,
+        payoutContext: options.payoutContext || 'TABLE_CASHOUT',
+      });
+    }
+
     const user = await this.resolveUser(userId, 'Player');
     const idempotencyKey = options.idempotencyKey || `table_cashout:${sourceTableId}:${userId}`;
     const existingTransaction = await this.findAnyTransaction(
@@ -940,7 +948,53 @@ class WalletIntegrationService {
   }
 
   async chargeBuyInToTable(playerId, amount, gameId, table, options = {}) {
+    if (String(options.fundingSource || '').toUpperCase() === 'CUSTODIAL') {
+      const paymentContext = options.paymentContext || 'NORMAL_TABLE_JOIN';
+      const custodialCharge = await custodialWalletService.chargeBuyIn(playerId, amount, gameId, {
+        tableId: table?._id || null,
+        paymentContext,
+        recordQualifyingCashGame: false,
+      });
+
+      try {
+        const transferResult = await blockchainService.fundCustodialBuyInToTable(table, amount, {
+          playerId,
+          paymentContext,
+        });
+
+        try {
+          await promoRewardService.recordQualifyingCashGame(playerId, amount, {
+            gameId,
+            tableId: table?._id?.toString?.() || null,
+            paymentContext,
+            fundingSource: 'CUSTODIAL',
+            mirroredOnChain: true,
+          });
+        } catch (rewardError) {
+          console.error(`Failed to record custodial qualifying cash game for ${playerId}:`, rewardError.message);
+        }
+
+        return {
+          ...custodialCharge,
+          blockchainPending: !!transferResult.pending,
+          txHash: transferResult.txHash || null,
+          mirroredOnChain: true,
+          houseWalletAddress: transferResult.houseWalletAddress,
+          table: transferResult.table || table,
+        };
+      } catch (error) {
+        await custodialWalletService.reverseBuyInCharge(playerId, amount, gameId, {
+          tableId: table?._id || null,
+          paymentContext,
+          reason: 'CUSTODIAL_TABLE_FUNDING_FAILED',
+          error: error.message,
+        });
+        throw error;
+      }
+    }
+
     const user = await this.resolveUser(playerId, 'Player');
+    await custodialWalletService.markFundingSession(playerId, 'WEB3', table?._id?.toString?.() || gameId || null);
     const currentBalance = await this.getPoolBalance(user.walletAddress);
     if (parseFloat(currentBalance) < amount) {
       throw new Error(`Insufficient balance. Required: ${amount}, Available: ${currentBalance}`);
@@ -1030,6 +1084,16 @@ class WalletIntegrationService {
           confirmedAt: new Date().toISOString()
         }
       });
+
+      try {
+        await promoRewardService.recordQualifyingCashGame(playerId, amount, {
+          gameId,
+          tableId,
+          paymentContext,
+        });
+      } catch (rewardError) {
+        console.error(`Failed to record qualifying cash game for ${playerId}:`, rewardError.message);
+      }
 
       return {
         success: true,

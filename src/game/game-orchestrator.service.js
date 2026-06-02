@@ -199,8 +199,14 @@ class GameOrchestrator {
         );
 
         try {
+            const custodialWalletService = require('../services/custodial-wallet.service');
+            const liveTableState = await tableManager.getTable(tableId);
+            const livePlayer = liveTableState.players.find(player => player.userId === userId);
+            const effectiveFundingSource = livePlayer?.fundingSource
+              || custodialWalletService.getFundingSource(user, null);
             await walletIntegrationService.chargeBuyInToTable(userId, requestedAmount, tableId, tableDoc.data, {
-                paymentContext: 'PRIVATE_TABLE_REBUY'
+                paymentContext: 'PRIVATE_TABLE_REBUY',
+                fundingSource: effectiveFundingSource,
             });
         } catch (error) {
             pendingPlayer.status = 'pending';
@@ -706,16 +712,24 @@ class GameOrchestrator {
                     .map(player => player.userId?.toString?.() || player.id?.toString?.() || player.userId || player.id)
                     .filter(Boolean)
             );
+            const seatedPlayersById = new Map(
+                (tableState.players || []).map(player => [
+                    player.userId?.toString?.() || player.id?.toString?.() || player.userId || player.id,
+                    player
+                ])
+            );
 
             const playersForStandings = (gameState?.players || tableState.players || [])
                 .map(player => {
                     const playerId = player.userId?.toString?.() || player.id?.toString?.() || player.userId || player.id;
                     const isStillSeated = seatedPlayerIds.has(playerId);
+                    const seatedPlayer = seatedPlayersById.get(playerId);
 
                     return {
                         ...player,
                         disconnected: !isStillSeated ? true : !!player.disconnected,
                         chips: !isStillSeated ? 0 : Number(player.chips || 0),
+                        fundingSource: seatedPlayer?.fundingSource || player.fundingSource || null,
                     };
                 })
                 .sort((a, b) => b.chips - a.chips);
@@ -1052,6 +1066,7 @@ class GameOrchestrator {
                     tableId,
                     tableId,
                     {
+                        fundingSource: player.fundingSource || null,
                         payoutContext: 'GAME_COMPLETION',
                         description: `Game completion cashout for table ${tableId}`
                     }

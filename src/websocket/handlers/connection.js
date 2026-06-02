@@ -230,16 +230,21 @@ class ConnectionHandler {
 
     async handleJoinTable(data) {
         try {
-            const { tableId, blockChainTableId, buyIn, chipsInPlay, token, privateTableId } = data;
+            const { tableId, blockChainTableId, buyIn, chipsInPlay, token, privateTableId, fundingSource } = data;
             const user = await verifyEventToken(token, this.socket);
             const userId = user._id.toString();
+            const mongoHelper = require('../../models/customdb');
+            const fullUserResult = await mongoHelper.findById(mongoHelper.COLLECTIONS.USERS, userId);
+            const fullUser = fullUserResult.success && fullUserResult.data ? fullUserResult.data : user;
+            const custodialWalletService = require('../../services/custodial-wallet.service');
 
             this.socket.user = user;
             this.socket.join(`user_${userId}`);
 
             // 🆕 Handle private table join
             if (privateTableId) {
-                return await this.handlePrivateTableJoin(privateTableId, userId, user, buyIn || chipsInPlay);
+                custodialWalletService.assertGameModeAllowed(fullUser, fundingSource, 'PRIVATE_TABLE');
+                return await this.handlePrivateTableJoin(privateTableId, userId, user, buyIn || chipsInPlay, fundingSource);
             }
 
             // Get table ID from blockChainTableId if provided
@@ -298,7 +303,6 @@ class ConnectionHandler {
             }
 
             // Get table and fetch subTier to validate buyIn
-            const mongoHelper = require('../../models/customdb');
             const tableDoc = await mongoHelper.findById(mongoHelper.COLLECTIONS.TABLES, finalTableId);
             
             if (!tableDoc.success || !tableDoc.data) {
@@ -306,8 +310,10 @@ class ConnectionHandler {
             }
 
             const table = tableDoc.data;
+            const effectiveFundingSource = custodialWalletService.getFundingSource(fullUser, fundingSource);
 
             if (table.isTournament || data.tournamentId) {
+                custodialWalletService.assertGameModeAllowed(fullUser, fundingSource, 'TOURNAMENT');
                 return await this.handleTournamentTableJoin(
                     data.tournamentId || table.tournamentId,
                     finalTableId,
@@ -340,7 +346,8 @@ class ConnectionHandler {
             if (!isReconnectEligible) {
                 const walletIntegrationService = require('../../services/wallet-integration.service');
                 await walletIntegrationService.chargeBuyInToTable(userId, finalBuyIn, finalTableId, table, {
-                    paymentContext: 'NORMAL_TABLE_JOIN'
+                    paymentContext: 'NORMAL_TABLE_JOIN',
+                    fundingSource: effectiveFundingSource,
                 });
             }
 
@@ -350,7 +357,8 @@ class ConnectionHandler {
                     userId,
                     username: user.username,
                     chips: finalBuyIn,
-                    socketId: this.socket.id
+                    socketId: this.socket.id,
+                    fundingSource: effectiveFundingSource,
                 }
             );
 
@@ -514,7 +522,7 @@ class ConnectionHandler {
     /**
      * Handle private table join - players join the underlying table after private table starts
      */
-    async handlePrivateTableJoin(privateTableId, userId, user, buyIn) {
+    async handlePrivateTableJoin(privateTableId, userId, user, buyIn, fundingSource = null) {
         try {
             // Get the private table with populated user details
             const privateTableService = require('../../services/private-table.service');
@@ -551,9 +559,13 @@ class ConnectionHandler {
             
             const currentUnderlyingTableState = await tableManager.getTable(underlyingTableId);
             const existingUnderlyingPlayer = currentUnderlyingTableState.players.find(p => p.userId === userId);
+            const mongoHelper = require('../../models/customdb');
+            const fullUserResult = await mongoHelper.findById(mongoHelper.COLLECTIONS.USERS, userId);
+            const fullUser = fullUserResult.success && fullUserResult.data ? fullUserResult.data : user;
+            const custodialWalletService = require('../../services/custodial-wallet.service');
+            const effectiveFundingSource = custodialWalletService.assertGameModeAllowed(fullUser, fundingSource, 'PRIVATE_TABLE');
             
             if (!existingUnderlyingPlayer) {
-                    const mongoHelper = require('../../models/customdb');
                     const underlyingTableDoc = await mongoHelper.findById(mongoHelper.COLLECTIONS.TABLES, underlyingTableId);
                     if (!underlyingTableDoc.success || !underlyingTableDoc.data) {
                         throw new Error('Underlying table document not found');
@@ -561,7 +573,8 @@ class ConnectionHandler {
 
                     const walletIntegrationService = require('../../services/wallet-integration.service');
                     await walletIntegrationService.chargeBuyInToTable(userId, finalBuyIn, underlyingTableId, underlyingTableDoc.data, {
-                        paymentContext: 'PRIVATE_TABLE_JOIN'
+                        paymentContext: 'PRIVATE_TABLE_JOIN',
+                        fundingSource: effectiveFundingSource,
                     });
                     const updatedRegisteredPlayers = (privateTable.registeredPlayers || []).map(player => ({
                         ...player,
@@ -580,7 +593,8 @@ class ConnectionHandler {
                     userId,
                     username: user.username,
                     chips: finalBuyIn,
-                    socketId: this.socket.id
+                    socketId: this.socket.id,
+                    fundingSource: effectiveFundingSource,
                 }
             );
 
@@ -724,10 +738,12 @@ class ConnectionHandler {
 
             // Get full user document for walletAddress
             const userDoc = await mongoHelper.findById(mongoHelper.COLLECTIONS.USERS, userId);
-            const walletAddress = userDoc.success && userDoc.data ? userDoc.data.walletAddress : null;
+            const effectiveFundingSource = userDoc.success && userDoc.data
+                ? (userDoc.data.currentGameFundingSource || playerBefore?.fundingSource || null)
+                : (playerBefore?.fundingSource || null);
             
             if (isPrivateSng || isTournamentTable) {
-            } else if (finalChips > 0 && walletAddress) {
+            } else if (finalChips > 0) {
                 const walletIntegrationService = require('../../services/wallet-integration.service');
                 walletIntegrationService.queuePlayerTableCashout(
                     userId,
@@ -735,6 +751,7 @@ class ConnectionHandler {
                     tableId,
                     tableId,
                     {
+                        fundingSource: effectiveFundingSource,
                         payoutContext: 'PLAYER_LEAVE',
                         description: `Player leave cashout for table ${tableId}`
                     }

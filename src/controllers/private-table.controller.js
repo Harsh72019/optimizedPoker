@@ -4,6 +4,7 @@ const crypto = require("crypto");
 const catchAsync = require("../utils/catchAsync");
 const mongoHelper = require('../models/customdb');
 const privateTableService = require('../services/private-table.service');
+const custodialWalletService = require('../services/custodial-wallet.service');
 const PrivateTableValidator = require('../utils/private-table-validator');
 
 /* ------------------------------------------------ */
@@ -24,6 +25,7 @@ const createPrivateTable = catchAsync(async (req, res) => {
   }
   
   const hostId = req.user._id;
+  custodialWalletService.assertGameModeAllowed(req.user, null, 'PRIVATE_TABLE');
   const tableConfig = req.body;
 
   // Validate table configuration using the same validator as socket handler
@@ -157,6 +159,7 @@ const joinPrivateTable = catchAsync(async (req, res) => {
   const { tableId } = req.params;
   const userId = req.user._id;
   const { password } = req.body;
+  custodialWalletService.assertGameModeAllowed(req.user, null, 'PRIVATE_TABLE');
 
   try {
     // Check password first if required
@@ -207,6 +210,7 @@ const joinPrivateTable = catchAsync(async (req, res) => {
 const startPrivateTable = catchAsync(async (req, res) => {
   const { tableId } = req.params;
   const hostId = req.user._id;
+  custodialWalletService.assertGameModeAllowed(req.user, null, 'PRIVATE_TABLE');
 
   try {
     // Use the same service as socket handler

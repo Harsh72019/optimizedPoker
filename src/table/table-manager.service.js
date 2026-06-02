@@ -251,6 +251,7 @@ class TableManagerService {
                 existing.isBot = typeof player.isBot === 'boolean'
                     ? player.isBot
                     : !!existing.isBot;
+                existing.fundingSource = player.fundingSource || existing.fundingSource || 'WEB3';
 
                 await this.saveTable(tableId, table);
 
@@ -272,6 +273,7 @@ class TableManagerService {
                 isBot: !!player.isBot || (typeof player.userId === 'string' && player.userId.startsWith('bot_')),
                 disconnected: false,
                 socketId: player.socketId,
+                fundingSource: player.fundingSource || 'WEB3',
             });
 
             if (!table.dealerPosition) {

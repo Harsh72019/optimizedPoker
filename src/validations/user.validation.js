@@ -29,6 +29,7 @@ const checkTableExistence = {
       .messages({
         'number.base': 'Chip count must be a number.',
       }),
+    fundingSource: Joi.string().trim().valid('WEB3', 'CUSTODIAL'),
     // tableTypeId: Joi.string()
     //   .required()
     //   .messages({
@@ -143,6 +144,48 @@ const friendUser = {
   }),
 };
 
+const grantAdReward = {
+  body: Joi.object().keys({
+    adViewId: Joi.string()
+      .trim()
+      .min(3)
+      .max(120)
+      .required(),
+  }),
+};
+
+const getCustodialReward = {
+  body: Joi.object().keys({
+    adViewId: Joi.string()
+      .trim()
+      .min(3)
+      .max(120)
+      .required(),
+  }),
+};
+
+const walletAddressAction = {
+  body: Joi.object().keys({
+    walletAddress: Joi.string()
+      .trim()
+      .required(),
+  }),
+};
+
+const custodialDeposit = {
+  body: Joi.object().keys({
+    amount: Joi.number().positive().required(),
+    description: Joi.string().trim().max(160).optional(),
+  }),
+};
+
+const custodialWithdrawal = {
+  body: Joi.object().keys({
+    amount: Joi.number().positive().required(),
+    walletAddress: Joi.string().trim().optional(),
+  }),
+};
+
 module.exports = {
   updateUser,
   deleteUser,
@@ -155,4 +198,9 @@ module.exports = {
   saveTableAddress,
   addReferral,
   friendUser,
+  grantAdReward,
+  getCustodialReward,
+  walletAddressAction,
+  custodialDeposit,
+  custodialWithdrawal,
 };

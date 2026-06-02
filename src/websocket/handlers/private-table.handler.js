@@ -4,6 +4,7 @@ const verifyEventToken = require('../verify-event-token');
 const { emitSuccess, emitError } = require('../socket-emitter');
 const privateTableService = require('../../services/private-table.service');
 const financialIntegrationService = require('../../services/financial-integration.service');
+const custodialWalletService = require('../../services/custodial-wallet.service');
 const PrivateTableValidator = require('../../utils/private-table-validator');
 
 class PrivateTableHandler {
@@ -30,6 +31,7 @@ class PrivateTableHandler {
         try {
             const { token, tableConfig } = data;
             const user = await verifyEventToken(token, this.socket);
+            custodialWalletService.assertGameModeAllowed(user, null, 'PRIVATE_TABLE');
             const hostId = user._id.toString();
 
             // Validate table configuration
@@ -62,6 +64,7 @@ class PrivateTableHandler {
         try {
             const { token, tableId, password } = data;
             const user = await verifyEventToken(token, this.socket);
+            custodialWalletService.assertGameModeAllowed(user, null, 'PRIVATE_TABLE');
             const userId = user._id.toString();
 
             // Check if table exists and is joinable
@@ -162,6 +165,7 @@ class PrivateTableHandler {
         try {
             const { token, tableId } = data;
             const user = await verifyEventToken(token, this.socket);
+            custodialWalletService.assertGameModeAllowed(user, null, 'PRIVATE_TABLE');
             const hostId = user._id.toString();
 
             // Start the private table

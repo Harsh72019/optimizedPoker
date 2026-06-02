@@ -40,6 +40,10 @@ const userSchema = new mongoose.Schema(
       // trim: true,
       // unique: true,
     },
+    password: {
+      type: String,
+      default: null,
+    },
     profilePic: {
       type: {
         key: String,
@@ -54,7 +58,31 @@ const userSchema = new mongoose.Schema(
     walletAddress: {
       type: String,
       default: null,
-      required: true,
+      required: false,
+    },
+    authType: {
+      type: String,
+      enum: ['web3', 'web2', 'hybrid'],
+      default: 'web3',
+    },
+    linkedWallets: [{
+      address: { type: String, default: null },
+      shortAddress: { type: String, default: null },
+      platform: { type: String, default: null },
+      linkedAt: { type: Date, default: Date.now },
+      isPrimary: { type: Boolean, default: false },
+      isActivePayout: { type: Boolean, default: false },
+    }],
+    activePayoutWallet: {
+      type: String,
+      default: null,
+    },
+    pendingWalletLink: {
+      walletAddress: { type: String, default: null },
+      shortWalletAddress: { type: String, default: null },
+      nonceMessage: { type: String, default: null },
+      requestedAt: { type: Date, default: null },
+      platform: { type: String, default: null },
     },
     platform: {
       type: String,
@@ -159,6 +187,43 @@ const userSchema = new mongoose.Schema(
       type: Number,
       default: 0,
       index: true
+    },
+    promoBalance: {
+      type: Number,
+      default: 0,
+    },
+    cashBalance: {
+      type: Number,
+      default: 0,
+    },
+    lockedRewardBalance: {
+      type: Number,
+      default: 0,
+    },
+    rewardUnlocked: {
+      type: Boolean,
+      default: false,
+    },
+    currentGameFundingSource: {
+      type: String,
+      enum: ['WEB3', 'CUSTODIAL'],
+      default: null,
+    },
+    currentGameTableId: {
+      type: String,
+      default: null,
+    },
+    rewardState: {
+      maxRewardCap: { type: Number, default: 2 },
+      unlockDepositThreshold: { type: Number, default: 5 },
+      unlockCashGamesRequired: { type: Number, default: 1 },
+      qualifyingDepositTotal: { type: Number, default: 0 },
+      qualifyingCashGamesPlayed: { type: Number, default: 0 },
+      totalPromoCreditsGranted: { type: Number, default: 0 },
+      totalLockedRewardsEarned: { type: Number, default: 0 },
+      totalUnlockedRewards: { type: Number, default: 0 },
+      lastAdRewardClaimAt: { type: Date, default: null },
+      unlockedAt: { type: Date, default: null },
     },
     
     // Trusted Host fields

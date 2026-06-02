@@ -17,6 +17,31 @@ router.get('/getTables', userController.getTables);
 router.get('/userDetails', authController.protect, authController.checkEmailExistence, userController.userDetails);
 
 router.get('/profile', authController.protect, authController.checkEmailExistence, userController.getUserProfile);
+router.get('/wallets', authController.protect, userController.getWalletSummary);
+router.post(
+  '/custodial/deposit',
+  authController.protect,
+  validate(userValidation.custodialDeposit),
+  userController.depositCustodialFunds
+);
+router.post(
+  '/custodial/withdraw',
+  authController.protect,
+  validate(userValidation.custodialWithdrawal),
+  userController.requestCustodialWithdrawal
+);
+router.post(
+  '/wallets/active',
+  authController.protect,
+  validate(userValidation.walletAddressAction),
+  userController.setActivePayoutWallet
+);
+router.post(
+  '/wallets/unlink',
+  authController.protect,
+  validate(userValidation.walletAddressAction),
+  userController.unlinkWallet
+);
 
 router.get('/friends', authController.protect, authController.checkEmailExistence, userController.getFriends);
 
@@ -106,6 +131,9 @@ router.post(
 
 router.post('/processDistribution', userController.processDistribution);
 router.post('/setInitialTier', authController.protect, userController.setInitialTier);
+router.get('/rewardStatus', authController.protect, userController.getRewardStatus);
+router.post('/grantAdReward', authController.protect, validate(userValidation.grantAdReward), userController.grantAdReward);
+router.post('/custodial/getReward', authController.protect, validate(userValidation.getCustodialReward), userController.getCustodialReward);
 router.post(
   '/addReferral',
   authController.protect,

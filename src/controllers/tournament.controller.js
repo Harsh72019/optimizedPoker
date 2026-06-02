@@ -1,6 +1,7 @@
 const httpStatus = require('http-status');
 const catchAsync = require('../utils/catchAsync');
 const tournamentGameService = require('../services/tournament-game.service');
+const custodialWalletService = require('../services/custodial-wallet.service');
 
 const createTournament = catchAsync(async (req, res) => {
   const adminId = req.admin?._id || req.user?._id || null;
@@ -34,6 +35,7 @@ const getTournamentById = catchAsync(async (req, res) => {
 });
 
 const registerTournament = catchAsync(async (req, res) => {
+  custodialWalletService.assertGameModeAllowed(req.user, null, 'TOURNAMENT');
   const registration = await tournamentGameService.registerPlayer(req.params.id, req.user._id.toString());
 
   res.status(httpStatus.OK).json({

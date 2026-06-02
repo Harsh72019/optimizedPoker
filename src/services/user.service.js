@@ -6,6 +6,8 @@ const { promisify } = require('util');
 const mongoHelper = require('../models/customdb');
 const {  createInitialUserStats} = require('./player.service');
 const { sendWelcomeEmail } = require('./email.service');
+const accountWalletService = require('./account-wallet.service');
+const promoRewardService = require('./promo-reward.service');
 
 //blockchain part
 
@@ -155,13 +157,15 @@ async function getUserProfile(id) {
       _id: user._id,
       username: user.username,
       email: user.email,
-      walletAddress: user.walletAddress,
+      walletAddress: accountWalletService.getActiveWalletAddress(user),
+      wallet: accountWalletService.buildWalletSummary(user),
       profilePic: user.profilePic,
       referralCode: user.referralCode,
       tier: user.accountType,
       chips: user.chips,
       handsFromNextTier: user.handsFromNextTier,
       reputation: user.reputation,
+      rewards: await promoRewardService.getRewardStatus(id),
       invitedBy: user.referredBy
         ? {
             _id: user.referredBy._id,

@@ -1784,26 +1784,54 @@ const removePlayerFromTable = async (tableId, socketId, gameStates, io) => {
                 try {
                     const fullUserResult = await mongoHelper.findById(mongoHelper.COLLECTIONS.USERS, playerToRemove.user._id);
                     if (fullUserResult.success && fullUserResult.data) {
-                        await blockchainService.queueWithdrawal(
-                            fullUserResult.data._id,
-                            table._id,
-                            table.tableBlockchainId,
-                            playerToRemove.chipsInPlay,
-                            fullUserResult.data.walletAddress,
-                            fullUserResult.data.email,
-                            fullUserResult.data.username
-                        );
+                        if (fullUserResult.data.currentGameFundingSource === 'CUSTODIAL') {
+                            const custodialWalletService = require('./custodial-wallet.service');
+                            await custodialWalletService.settleTableCashout(
+                                fullUserResult.data._id,
+                                playerToRemove.chipsInPlay,
+                                table._id,
+                                { source: 'TABLE_LEAVE_AUTO_CASHOUT' }
+                            );
 
-                        io.to(socketId).emit('withdrawalQueued', {
-                            message: `Your withdrawal of ${playerToRemove.chipsInPlay} chips has been queued`,
-                            status: true,
-                            data: { 
-                                amount: playerToRemove.chipsInPlay,
-                                walletAddress: fullUserResult.data.walletAddress 
-                            },
-                        });
+                            io.to(socketId).emit('withdrawalQueued', {
+                                message: `Your ${playerToRemove.chipsInPlay} chips were returned to your custodial balance`,
+                                status: true,
+                                data: {
+                                    amount: playerToRemove.chipsInPlay,
+                                    fundingSource: 'CUSTODIAL',
+                                },
+                            });
+                        } else {
+                            await blockchainService.queueWithdrawal(
+                                fullUserResult.data._id,
+                                table._id,
+                                table.tableBlockchainId,
+                                playerToRemove.chipsInPlay,
+                                fullUserResult.data.walletAddress,
+                                fullUserResult.data.email,
+                                fullUserResult.data.username
+                            );
 
-                        console.log(`? [removePlayerFromTable] Withdrawal queued for ${fullUserResult.data.username}`);
+                            io.to(socketId).emit('withdrawalQueued', {
+                                message: `Your withdrawal of ${playerToRemove.chipsInPlay} chips has been queued`,
+                                status: true,
+                                data: { 
+                                    amount: playerToRemove.chipsInPlay,
+                                    walletAddress: fullUserResult.data.walletAddress 
+                                },
+                            });
+                            await mongoHelper.updateById(
+                                mongoHelper.COLLECTIONS.USERS,
+                                fullUserResult.data._id,
+                                {
+                                    currentGameFundingSource: null,
+                                    currentGameTableId: null,
+                                },
+                                mongoHelper.MODELS.USER
+                            );
+                        }
+
+                        console.log(`? [removePlayerFromTable] Cashout processed for ${fullUserResult.data.username}`);
                     }
                 } catch (withdrawalErr) {
                     console.error(`? [removePlayerFromTable] Withdrawal failed for ${playerToRemove.user.username}:`, withdrawalErr.message);
